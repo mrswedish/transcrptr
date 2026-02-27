@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="sv">
+
+<head>
+  <meta charset="utf-8" />
+  <meta content="width=device-width, initial-scale=1.0" name="viewport" />
+  <title>Transcrptr</title>
+  <script src="https://cdn.tailwindcss.com?plugins=forms,typography,container-queries"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet" />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200"
+    rel="stylesheet" />
+  <script>
+    tailwind.config = {
+      darkMode: "class",
+      theme: {
+        extend: {
+          colors: {
+            primary: "#2DD4BF",
+            "background-light": "#F8FAFC",
+            "background-dark": "#0F172A",
+          },
+          fontFamily: {
+            display: ["Inter", "sans-serif"],
+          },
+          borderRadius: {
+            DEFAULT: "1rem",
+          },
+        },
+      },
+    };
+  </script>
+  <style type="text/tailwindcss">
+    .material-symbols-outlined {
+        font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+      }
+      body {
+        font-family: 'Inter', sans-serif;
+        -webkit-tap-highlight-color: transparent;
+        min-height: max(884px, 100dvh);
+      }
+      .hidden {
+        display: none !important;
+      }
+    </style>
+  <script type="module" src="/main.js" defer></script>
+</head>
+
+<body class="bg-background-light dark:bg-background-dark text-slate-900 dark:text-slate-100 min-h-screen flex flex-col">
+  <div class="h-6 w-full bg-transparent"></div>
+  <main class="flex-1 px-6 pb-12">
+    <header class="flex items-center justify-between mb-8">
+      <div class="flex flex-col gap-0.5">
+        <div class="flex items-center gap-2">
+          <span class="text-primary text-2xl material-symbols-outlined">auto_fix_high</span>
+          <h1 class="text-2xl font-bold tracking-tight text-slate-800 dark:text-white">Transcrptr</h1>
+        </div>
+        <div id="status-badge" class="flex items-center gap-1.5 px-2 py-0.5 w-fit">
+          <div class="w-1.5 h-1.5 rounded-full bg-primary animate-pulse"></div>
+          <span class="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Redo</span>
+        </div>
+      </div>
+      <button id="btn-settings"
+        class="p-2 text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300 transition-colors">
+        <span class="material-symbols-outlined">settings</span>
+      </button>
+    </header>
+    <div
+      class="bg-white dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/50 rounded-3xl p-6 mb-6 shadow-sm">
+      <div class="grid grid-cols-1 gap-4">
+        <button id="btn-record"
+          class="relative group flex items-center justify-center gap-3 py-5 bg-primary hover:bg-teal-500 active:scale-[0.98] transition-all rounded-2xl shadow-lg shadow-primary/20">
+          <span class="material-symbols-outlined text-white text-2xl">mic</span>
+          <span class="text-white font-semibold text-lg btn-text">Starta inspelning</span>
+        </button>
+
+        <div id="recording-indicator" class="hidden flex items-center justify-center gap-2 mt-2">
+          <div class="w-3 h-3 rounded-full bg-red-500 animate-pulse"></div>
+          <span class="text-red-500 font-medium text-sm">Spelar in...</span>
+        </div>
+
+        <div class="flex items-center justify-center gap-4 my-2">
+          <div class="h-px flex-1 bg-slate-200 dark:bg-slate-700"></div>
+          <span class="text-xs font-bold text-slate-400 uppercase tracking-widest">ELLER</span>
+          <div class="h-px flex-1 bg-slate-200 dark:bg-slate-700"></div>
+        </div>
+        <button id="btn-file"
+          class="flex items-center justify-center gap-3 py-5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 active:scale-[0.98] transition-all rounded-2xl">
+          <span class="material-symbols-outlined text-slate-600 dark:text-slate-400 text-2xl">folder_open</span>
+          <span class="text-slate-700 dark:text-slate-300 font-semibold text-lg">Välj ljudfil</span>
+        </button>
+        <input type="file" id="file-input" accept="audio/*" class="hidden" />
+      </div>
+    </div>
+    <section class="flex flex-col flex-1">
+      <div class="flex items-center justify-between mb-4 px-1">
+        <h2 class="text-lg font-bold text-slate-800 dark:text-slate-200">Transkribering</h2>
+        <button id="btn-copy"
+          class="flex items-center gap-1.5 text-sm font-medium text-slate-500 dark:text-slate-400 hover:text-primary transition-colors">
+          <span class="material-symbols-outlined text-lg">content_copy</span>
+          <span>Kopiera</span>
+        </button>
+      </div>
+      <div
+        class="relative flex-1 min-h-[300px] bg-white dark:bg-slate-900/50 border border-slate-200 dark:border-slate-700 rounded-3xl p-6 shadow-sm overflow-hidden flex flex-col">
+        <textarea id="output-text"
+          class="w-full h-full bg-transparent border-none focus:ring-0 p-0 text-slate-600 dark:text-slate-400 placeholder:text-slate-300 dark:placeholder:text-slate-600 resize-none text-base leading-relaxed flex-1"
+          placeholder="Din transkriberade text kommer att visas här..." readonly=""></textarea>
+        <div
+          class="absolute bottom-0 left-0 right-0 h-12 bg-gradient-to-t from-white/50 dark:from-slate-900/50 to-transparent pointer-events-none">
+        </div>
+
+        <!-- Loading overlay -->
+        <div id="loading-overlay"
+          class="hidden absolute inset-0 bg-white/80 dark:bg-slate-900/80 backdrop-blur-sm flex flex-col justify-center items-center z-10 rounded-3xl">
+          <div class="w-10 h-10 border-4 border-primary/30 border-t-primary rounded-full animate-spin mb-4"></div>
+          <span id="loading-text" class="text-primary font-medium mb-4 text-center px-4">Transkriberar...</span>
+          <div id="progress-container"
+            class="hidden w-2/3 max-w-[200px] h-2 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden mb-4">
+            <div id="progress-bar" class="h-full bg-primary transition-all duration-300" style="width: 0%"></div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+  </main>
+  <nav
+    class="sticky bottom-0 bg-white/80 dark:bg-slate-950/80 backdrop-blur-xl border-t border-slate-200 dark:border-slate-800 pb-8 pt-3 hidden">
+  </nav>
+
+  <!-- Settings Modal -->
+  <div id="settings-modal"
+    class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex justify-center items-center">
+    <div class="bg-white dark:bg-slate-800 w-11/12 max-w-md rounded-3xl shadow-xl flex flex-col overflow-hidden">
+      <div class="flex items-center justify-between p-6 border-b border-slate-200 dark:border-slate-700">
+        <h2 class="text-xl font-bold text-slate-800 dark:text-white">Inställningar</h2>
+        <button id="btn-close-settings" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
+          <span class="material-symbols-outlined">close</span>
+        </button>
+      </div>
+      <div class="p-6 flex flex-col gap-5">
+        <div class="flex flex-col gap-2">
+          <label for="model-size" class="text-sm font-medium text-slate-700 dark:text-slate-300">Modellstorlek</label>
+          <select id="model-size"
+            class="p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-700 dark:text-slate-300 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary">
+            <option value="small">Small (Snabbare, Mindre exakt)</option>
+            <option value="medium" selected>Medium (Balanserad)</option>
+            <option value="large">Large (Långsammare, Mycket exakt)</option>
+          </select>
+        </div>
+        <div class="flex flex-col gap-2">
+          <label for="model-quantized"
+            class="text-sm font-medium text-slate-700 dark:text-slate-300">Modellformat</label>
+          <select id="model-quantized"
+            class="p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-700 dark:text-slate-300 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary">
+            <option value="true" selected>Kvantiserad q5_0 (Mindre storlek, ~Samma kvalitet)</option>
+            <option value="false">Standard (Jättestor filstorlek)</option>
+          </select>
+        </div>
+        <p class="text-xs text-slate-500 dark:text-slate-400">Byte av modell kommer att starta en ny nedladdning (~170MB
+          - ~3GB beroende på val) nästa gång du transkriberar.</p>
+      </div>
+      <div class="p-6 bg-slate-50 dark:bg-slate-900/50 border-t border-slate-200 dark:border-slate-700">
+        <button id="btn-save-settings"
+          class="w-full py-4 bg-primary hover:bg-teal-500 text-white font-semibold rounded-xl transition-colors shadow-lg shadow-primary/20">
+          Spara inställningar
+        </button>
+      </div>
+    </div>
+  </div>
+
+</body>
+
+</html>
