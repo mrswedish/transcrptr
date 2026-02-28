@@ -43,3 +43,26 @@ jobs:
           releaseDraft: true
           prerelease: false
           includeRelease: true
+
+      - name: Extract Project Version
+        run: |
+          $VERSION = (Get-Content src-tauri/tauri.conf.json | ConvertFrom-Json).version
+          echo "APP_VERSION=$VERSION" >> $env:GITHUB_ENV
+
+      - name: Copy Portable Executable
+        run: |
+          $exePath = "src-tauri/target/release/transcrptr.exe"
+          if (Test-Path "src-tauri/target/x86_64-pc-windows-msvc/release/transcrptr.exe") {
+            $exePath = "src-tauri/target/x86_64-pc-windows-msvc/release/transcrptr.exe"
+          }
+          if (Test-Path $exePath) {
+            Copy-Item -Path $exePath -Destination "Transcrptr-portable.exe"
+          } else {
+            Write-Error "Could not find transcrptr.exe"
+          }
+
+      - name: Upload Portable Executable to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: transcrptr-v${{ env.APP_VERSION }}
+          files: Transcrptr-portable.exe
