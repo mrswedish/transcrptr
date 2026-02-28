@@ -51,14 +51,25 @@ jobs:
 
       - name: Copy Portable Executable
         run: |
-          $exePath = "src-tauri/target/release/transcrptr.exe"
-          if (Test-Path "src-tauri/target/x86_64-pc-windows-msvc/release/transcrptr.exe") {
-            $exePath = "src-tauri/target/x86_64-pc-windows-msvc/release/transcrptr.exe"
+          $exePaths = @(
+            "src-tauri/target/release/tauri-app.exe",
+            "src-tauri/target/release/Transcrptr.exe",
+            "src-tauri/target/x86_64-pc-windows-msvc/release/tauri-app.exe",
+            "src-tauri/target/x86_64-pc-windows-msvc/release/Transcrptr.exe"
+          )
+          
+          $found = $false
+          foreach ($p in $exePaths) {
+            if (Test-Path $p) {
+              Copy-Item -Path $p -Destination "Transcrptr-portable.exe"
+              $found = $true
+              break
+            }
           }
-          if (Test-Path $exePath) {
-            Copy-Item -Path $exePath -Destination "Transcrptr-portable.exe"
-          } else {
-            Write-Error "Could not find transcrptr.exe"
+          
+          if (-not $found) {
+            Get-ChildItem -Path src-tauri/target -Filter "*.exe" -Recurse | Select-Object FullName
+            Write-Error "Could not find the executable."
           }
 
       - name: Upload Portable Executable to Release
