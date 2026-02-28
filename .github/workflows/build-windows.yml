@@ -42,3 +42,15 @@ jobs:
           releaseBody: 'See the assets to download this version and install.'
           releaseDraft: true
           prerelease: false
+
+      - name: Upload Portable Executable
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $VERSION = (Get-Content src-tauri/tauri.conf.json | ConvertFrom-Json).version
+          $exePath = "src-tauri/target/release/transcrptr.exe"
+          if (Test-Path "src-tauri/target/x86_64-pc-windows-msvc/release/transcrptr.exe") {
+            $exePath = "src-tauri/target/x86_64-pc-windows-msvc/release/transcrptr.exe"
+          }
+          Copy-Item -Path $exePath -Destination "Transcrptr-portable.exe"
+          gh release upload "transcrptr-v$VERSION" Transcrptr-portable.exe
