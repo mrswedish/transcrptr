@@ -34,6 +34,12 @@ jobs:
         with:
           version: latest
 
+      - name: Set Vulkan Env Vars for CMake
+        run: |
+          echo "Vulkan_ROOT=$env:VULKAN_SDK" >> $env:GITHUB_ENV
+          echo "VK_SDK_PATH=$env:VULKAN_SDK" >> $env:GITHUB_ENV
+          Get-ChildItem -Path $env:VULKAN_SDK -Depth 2 | Select-Object FullName
+
       - name: Install frontend dependencies
         run: npm install
 
