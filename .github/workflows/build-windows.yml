@@ -51,6 +51,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CMAKE_GENERATOR: Ninja
+          CARGO_TARGET_DIR: D:\t
         with:
           tagName: transcrptr-v__VERSION__
           releaseName: 'Transcrptr v__VERSION__'
@@ -65,12 +66,15 @@ jobs:
           echo "APP_VERSION=$VERSION" >> $env:GITHUB_ENV
 
       - name: Copy Portable Executable
+        env:
+          CARGO_TARGET_DIR: D:\t
         run: |
+          $targetPath = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { "src-tauri/target" }
           $exePaths = @(
-            "src-tauri/target/release/tauri-app.exe",
-            "src-tauri/target/release/Transcrptr.exe",
-            "src-tauri/target/x86_64-pc-windows-msvc/release/tauri-app.exe",
-            "src-tauri/target/x86_64-pc-windows-msvc/release/Transcrptr.exe"
+            "$targetPath/release/tauri-app.exe",
+            "$targetPath/release/Transcrptr.exe",
+            "$targetPath/x86_64-pc-windows-msvc/release/tauri-app.exe",
+            "$targetPath/x86_64-pc-windows-msvc/release/Transcrptr.exe"
           )
           
           $found = $false
