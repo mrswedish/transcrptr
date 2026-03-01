@@ -52,9 +52,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CMAKE_GENERATOR: Ninja
           CARGO_TARGET_DIR: D:\t
-          RUSTFLAGS: "-C target-feature=+crt-static"
-          CMAKE_C_FLAGS: "/MT"
-          CMAKE_CXX_FLAGS: "/MT"
         with:
           tagName: transcrptr-v__VERSION__
           releaseName: 'Transcrptr v__VERSION__'
