@@ -37,6 +37,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           WHISPER_NO_I8MM: 1
+          MACOSX_DEPLOYMENT_TARGET: "11.0"
         with:
           tagName: transcrptr-v__VERSION__
           releaseName: 'Transcrptr v__VERSION__'
