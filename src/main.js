@@ -22,6 +22,8 @@ const btnCloseSettings = document.getElementById("btn-close-settings");
 const btnSaveSettings = document.getElementById("btn-save-settings");
 const selModelSize = document.getElementById("model-size");
 const selModelQuantized = document.getElementById("model-quantized");
+const selMic = document.getElementById("mic-select");
+const audioLevelBar = document.getElementById("audio-level-bar");
 
 // State
 let isRecording = false;
@@ -29,16 +31,57 @@ let mediaRecorder = null;
 let audioChunks = [];
 let modelSize = "medium";
 let modelQuantized = true;
+let selectedMicId = "default";
+let audioContext = null;
+let analyzer = null;
+let micStream = null;
+let animationFrameId = null;
 
 // Load config from local storage
 function loadSettings() {
   const size = localStorage.getItem("modelSize");
   const quantized = localStorage.getItem("modelQuantized");
+  const micId = localStorage.getItem("selectedMicId");
+
   if (size) modelSize = size;
   if (quantized !== null) modelQuantized = quantized === "true";
+  if (micId) selectedMicId = micId;
 
   selModelSize.value = modelSize;
   selModelQuantized.value = modelQuantized.toString();
+}
+
+// Load available microphones
+async function loadMicrophones() {
+  if (!selMic) return;
+  try {
+    // Request permission first, otherwise labels might be empty
+    await navigator.mediaDevices.getUserMedia({ audio: true });
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const audioInputDevices = devices.filter(device => device.kind === 'audioinput');
+
+    selMic.innerHTML = '';
+
+    // Add default option
+    const defaultOption = document.createElement("option");
+    defaultOption.value = "default";
+    defaultOption.text = "Systemets standardmikrofon";
+    selMic.appendChild(defaultOption);
+
+    audioInputDevices.forEach(device => {
+      // Skip the duplicated default entry usually provided by browsers
+      if (device.deviceId === "default" || device.deviceId === "communications") return;
+
+      const option = document.createElement("option");
+      option.value = device.deviceId;
+      option.text = device.label || `Mikrofon ${selMic.length}`;
+      selMic.appendChild(option);
+    });
+
+    selMic.value = selectedMicId;
+  } catch (err) {
+    console.warn("Kunde inte ladda mikrofoner:", err);
+  }
 }
 
 // Setup Event Listeners from Rust
@@ -75,6 +118,7 @@ async function setupEventListeners() {
 // Initialize Application
 async function initialize() {
   loadSettings();
+  await loadMicrophones();
   setupEventListeners();
   await ensureModelReady();
 }
@@ -149,12 +193,15 @@ btnCloseSettings.addEventListener("click", () => {
 btnSaveSettings.addEventListener("click", async () => {
   const newSize = selModelSize.value;
   const newQuant = selModelQuantized.value === "true";
+  const newMicId = selMic ? selMic.value : "default";
 
   localStorage.setItem("modelSize", newSize);
   localStorage.setItem("modelQuantized", newQuant.toString());
+  localStorage.setItem("selectedMicId", newMicId);
 
   modelSize = newSize;
   modelQuantized = newQuant;
+  selectedMicId = newMicId;
 
   settingsModal.classList.add("hidden");
 
@@ -175,10 +222,61 @@ btnRecord.addEventListener("click", async () => {
 
 async function startRecording() {
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    // Use an audio format that is broadly compatible
-    mediaRecorder = new MediaRecorder(stream);
+    const audioConstraints = selectedMicId === "default"
+      ? { audio: true }
+      : { audio: { deviceId: { exact: selectedMicId } } };
+
+    micStream = await navigator.mediaDevices.getUserMedia(audioConstraints);
+
+    // Set a lower bitrate (e.g. 64kbps) to save RAM on long recordings
+    const mrOptions = {
+      audioBitsPerSecond: 64000
+    };
+
+    try {
+      mediaRecorder = new MediaRecorder(micStream, mrOptions);
+    } catch (e) {
+      // Fallback if the browser doesn't support setting the bitrate or codec
+      console.warn("Kunde inte sätta bitrate, använder standard.", e);
+      mediaRecorder = new MediaRecorder(micStream);
+    }
+
     audioChunks = [];
+
+    // --- Visualizer Setup ---
+    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    analyzer = audioContext.createAnalyser();
+    const source = audioContext.createMediaStreamSource(micStream);
+    source.connect(analyzer);
+
+    // Fast fourier transform size, higher = more detailed, lower = faster
+    analyzer.fftSize = 256;
+    const bufferLength = analyzer.frequencyBinCount;
+    const dataArray = new Uint8Array(bufferLength);
+
+    function drawVisualizer() {
+      if (!isRecording) return;
+      animationFrameId = requestAnimationFrame(drawVisualizer);
+
+      analyzer.getByteFrequencyData(dataArray);
+
+      // Calculate overall volume (average)
+      let sum = 0;
+      for (let i = 0; i < bufferLength; i++) {
+        sum += dataArray[i];
+      }
+      const average = sum / bufferLength;
+
+      // Scale the UI dot based on average volume (e.g., scale between 1 and 1.8)
+      if (audioLevelBar) {
+        // average usually ranges from 0 to ~100 in normal speech
+        const scale = 1 + (average / 150);
+        // clamp scale to reasonable sizes
+        const clampedScale = Math.min(Math.max(scale, 1), 2.2);
+        audioLevelBar.style.transform = `scale(${clampedScale})`;
+      }
+    }
+    // ------------------------
 
     mediaRecorder.ondataavailable = event => {
       audioChunks.push(event.data);
@@ -189,8 +287,9 @@ async function startRecording() {
       await processAudioBlob(audioBlob);
     };
 
-    mediaRecorder.start();
+    mediaRecorder.start(1000); // Collect data in 1 second chunks for streaming/safety conceptually
     isRecording = true;
+    drawVisualizer(); // Start the visualizer loop
 
     // UI Updates
     btnRecord.classList.add("recording");
@@ -207,8 +306,23 @@ async function startRecording() {
 function stopRecording() {
   if (mediaRecorder && mediaRecorder.state !== "inactive") {
     mediaRecorder.stop();
-    // Stop tracks to release mic
-    mediaRecorder.stream.getTracks().forEach(track => track.stop());
+  }
+
+  if (micStream) {
+    micStream.getTracks().forEach(track => track.stop());
+  }
+
+  if (audioContext && audioContext.state !== "closed") {
+    audioContext.close();
+  }
+
+  if (animationFrameId) {
+    cancelAnimationFrame(animationFrameId);
+  }
+
+  // reset visualizer dot
+  if (audioLevelBar) {
+    audioLevelBar.style.transform = `scale(1)`;
   }
 
   isRecording = false;
