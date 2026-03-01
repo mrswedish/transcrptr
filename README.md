@@ -2,7 +2,7 @@
 
 Transcrptr is a blazing fast, privacy-first desktop application for audio transcription powered by OpenAI's Whisper AI model running completely locally on your hardware.
 
-![Transcrptr Screenshot](assets/screenshot.png) *(Placeholder for macOS screenshot)*
+![Transcrptr Screenshot](public/screenshot-mac.png)
 
 ## Features
 - **100% Local Processing:** Your audio files and voice data never leave your computer.
@@ -44,3 +44,22 @@ npm run tauri dev
 # Build for production
 npm run tauri build
 ```
+
+## Troubleshooting
+
+### macOS says "Transcrptr.app is damaged and can't be opened"
+
+Since Transcrptr is distributed without an official, paid Apple Developer signature, macOS Gatekeeper applies a quarantine flag to the application when downloaded from the internet. This causes macOS to mistakenly warn that the app is "damaged" and should be moved to the Trash.
+
+**The app is not actually damaged.** 
+
+To fix this and allow the app to run safely, you just need to clear the quarantine flag via Terminal.
+
+**Solution:**
+1. Move `Transcrptr.app` to your `Applications` folder.
+2. Open the **Terminal** app.
+3. Run the following command:
+   ```bash
+   xattr -cr /Applications/Transcrptr.app
+   ```
+4. You can now open Transcrptr normally!
