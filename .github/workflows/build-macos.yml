@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [macos-13]
+        platform: [macos-14]
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -36,6 +36,7 @@ jobs:
         uses: tauri-apps/tauri-action@v0.6.1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WHISPER_NO_I8MM: 1
         with:
           tagName: transcrptr-v__VERSION__
           releaseName: 'Transcrptr v__VERSION__'
