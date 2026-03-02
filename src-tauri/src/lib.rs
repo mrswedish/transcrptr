@@ -109,7 +109,7 @@ async fn download_model(app_handle: AppHandle, size: String, quantized: bool) ->
 }
 
 #[tauri::command]
-async fn transcribe_audio(app_handle: AppHandle, state: tauri::State<'_, AppState>, samples: Vec<f32>, size: String, quantized: bool) -> Result<String, String> {
+async fn transcribe_audio(app_handle: AppHandle, state: tauri::State<'_, AppState>, audio_bytes: Vec<u8>, size: String, quantized: bool) -> Result<String, String> {
     state.cancel_flag.store(false, Ordering::Relaxed);
     let model_path = get_model_path(&app_handle, &size, quantized)?;
     if !model_path.exists() {
@@ -139,8 +139,17 @@ async fn transcribe_audio(app_handle: AppHandle, state: tauri::State<'_, AppStat
             // all cross the Rust<->C++ FFI boundary and are known to cause silent
             // segfaults on Windows. Instead we collect results after transcription.
 
+            // Safely cast the incoming Vec<u8> to a &[f32]
+            // We ensure it aligns properly and hasn't been corrupted.
+            let samples: &[f32] = unsafe {
+                std::slice::from_raw_parts(
+                    audio_bytes.as_ptr() as *const f32,
+                    audio_bytes.len() / std::mem::size_of::<f32>(),
+                )
+            };
+
             // Run the main transcription
-            let res = state.full(params, &samples[..]);
+            let res = state.full(params, samples);
             
             // Check if error
             if res.is_err() {

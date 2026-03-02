@@ -372,18 +372,20 @@ async function processAudioBlob(blob) {
     const audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
     const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
 
-    // Get PCM samples from first channel (mono)
+    // Convert Float32Array directly to an array of bytes (Uint8Array)
+    // This stops browser from creating a 57-million-item JS Array which crashes JSON stringification
     const float32Data = audioBuffer.getChannelData(0);
-    const samples = Array.from(float32Data);
+    const byteData = new Uint8Array(float32Data.buffer, float32Data.byteOffset, float32Data.byteLength);
+    const byteDataArray = Array.from(byteData); // Uint8Array to regular array of bytes
 
-    loadingText.innerText = `Transkriberar i bakgrunden... (${samples.length} ljudprover)`;
+    loadingText.innerText = `Transkriberar i bakgrunden... (${float32Data.length} ljudprover)`;
 
-    console.log(`Sending ${samples.length} samples to Rust for transcription.`);
+    console.log(`Sending ${float32Data.length} samples (${byteDataArray.length} bytes) to Rust for transcription.`);
 
     // Invoke Rust Command
     // The event listener for 'transcription_segment' will append text as it processes
     const finalTranscribedText = await invoke("transcribe_audio", {
-      samples: samples,
+      audioBytes: byteDataArray,
       size: modelSize,
       quantized: modelQuantized
     });
