@@ -48,6 +48,9 @@ jobs:
           CMAKE_GENERATOR: Ninja
           CARGO_TARGET_DIR: D:\t
           RUSTFLAGS: -C target-feature=+crt-static
+          CFLAGS: /MT
+          CXXFLAGS: /MT
+          CMAKE_MSVC_RUNTIME_LIBRARY: MultiThreaded
         with:
           tagName: transcrptr-v__VERSION__
           releaseName: 'Transcrptr v__VERSION__'
