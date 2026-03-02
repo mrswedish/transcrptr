@@ -353,14 +353,19 @@ fileInput.addEventListener("change", async (e) => {
 });
 
 // -------------------------------------------------------------
-// Audio Processing and Transcription
+// Audio Processing and Transcription (chunked for large files)
 // -------------------------------------------------------------
+
+// Max chunk size: 5 minutes of audio at 16kHz mono
+const CHUNK_DURATION_SECONDS = 300; // 5 minutes
+const CHUNK_SAMPLES = 16000 * CHUNK_DURATION_SECONDS;
+
 async function processAudioBlob(blob) {
   try {
     // Show Loading
     loadingText.innerText = "Bearbetar ljud...";
     loadingOverlay.classList.remove("hidden");
-    if (progressContainer) progressContainer.classList.add("hidden"); // disable progress bar initially
+    if (progressContainer) progressContainer.classList.add("hidden");
 
     // Clear previous output text before starting
     outputText.value = "";
@@ -369,31 +374,67 @@ async function processAudioBlob(blob) {
     const arrayBuffer = await blob.arrayBuffer();
 
     // Resample to 16kHz Float32 for whisper-rs
-    const audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
-    const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+    const decodeCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+    const audioBuffer = await decodeCtx.decodeAudioData(arrayBuffer);
 
-    // Convert Float32Array directly to an array of bytes (Uint8Array)
-    // This stops browser from creating a 57-million-item JS Array which crashes JSON stringification
+    // Get PCM samples from first channel (mono)
     const float32Data = audioBuffer.getChannelData(0);
-    const byteData = new Uint8Array(float32Data.buffer, float32Data.byteOffset, float32Data.byteLength);
-    const byteDataArray = Array.from(byteData); // Uint8Array to regular array of bytes
+    const totalSamples = float32Data.length;
+    const totalDuration = (totalSamples / 16000).toFixed(0);
 
-    loadingText.innerText = `Transkriberar i bakgrunden... (${float32Data.length} ljudprover)`;
+    console.log(`Audio decoded: ${totalSamples} samples (${totalDuration}s)`);
 
-    console.log(`Sending ${float32Data.length} samples (${byteDataArray.length} bytes) to Rust for transcription.`);
+    // Calculate number of chunks
+    const numChunks = Math.ceil(totalSamples / CHUNK_SAMPLES);
 
-    // Invoke Rust Command
-    // The event listener for 'transcription_segment' will append text as it processes
-    const finalTranscribedText = await invoke("transcribe_audio", {
-      audioBytes: byteDataArray,
-      size: modelSize,
-      quantized: modelQuantized
-    });
+    loadingText.innerText = `Transkriberar... (${totalDuration}s ljud, ${numChunks} del${numChunks > 1 ? 'ar' : ''})`;
+    if (progressContainer) progressContainer.classList.remove("hidden");
+    if (progressBar) progressBar.style.width = "0%";
 
-    // As a fallback to guarantee we didn't miss anything, we can set it at the end.
-    // However, since we're streaming with newlines now, let's just make sure it's fully populated.
+    let fullResult = "";
+
+    for (let chunkIdx = 0; chunkIdx < numChunks; chunkIdx++) {
+      const start = chunkIdx * CHUNK_SAMPLES;
+      const end = Math.min(start + CHUNK_SAMPLES, totalSamples);
+      const chunkFloat32 = float32Data.slice(start, end);
+
+      // Convert Float32Array chunk to byte array for Rust
+      const chunkBytes = new Uint8Array(chunkFloat32.buffer, chunkFloat32.byteOffset, chunkFloat32.byteLength);
+      const chunkBytesArray = Array.from(chunkBytes);
+
+      const chunkProgress = Math.round(((chunkIdx) / numChunks) * 100);
+      loadingText.innerText = `Transkriberar del ${chunkIdx + 1} av ${numChunks}... (${chunkProgress}%)`;
+      if (progressBar) progressBar.style.width = `${chunkProgress}%`;
+
+      console.log(`Sending chunk ${chunkIdx + 1}/${numChunks}: ${chunkFloat32.length} samples (${chunkBytesArray.length} bytes)`);
+
+      try {
+        const chunkText = await invoke("transcribe_audio", {
+          audioBytes: chunkBytesArray,
+          size: modelSize,
+          quantized: modelQuantized
+        });
+
+        if (chunkText && chunkText.trim()) {
+          if (fullResult) fullResult += "\n";
+          fullResult += chunkText.trim();
+          outputText.value = fullResult;
+          outputText.scrollTop = outputText.scrollHeight;
+        }
+      } catch (chunkErr) {
+        console.error(`Chunk ${chunkIdx + 1} failed:`, chunkErr);
+        const errorMsg = typeof chunkErr === 'string' ? chunkErr : chunkErr.message || String(chunkErr);
+        outputText.value += `\n\n[Fel i del ${chunkIdx + 1}: ${errorMsg}]`;
+        // Continue with next chunk instead of aborting entirely
+      }
+    }
+
+    // Final progress
+    if (progressBar) progressBar.style.width = "100%";
+    loadingText.innerText = "Klar!";
+
     if (!outputText.value.trim()) {
-      outputText.value = finalTranscribedText;
+      outputText.value = fullResult || "[Ingen text transkriberad]";
     }
 
   } catch (err) {
@@ -401,7 +442,8 @@ async function processAudioBlob(blob) {
     if (typeof err === 'string' && err.includes("canceled")) {
       outputText.value += "\n\n[Transkribering avbruten]";
     } else {
-      await message(`Transkribering misslyckades: ${err}`, { title: 'Fel', kind: 'error' });
+      const errorMsg = typeof err === 'string' ? err : err.message || String(err);
+      await message(`Transkribering misslyckades: ${errorMsg}`, { title: 'Fel', kind: 'error' });
     }
   } finally {
     loadingOverlay.classList.add("hidden");

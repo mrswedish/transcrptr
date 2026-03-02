@@ -117,9 +117,14 @@ async fn transcribe_audio(app_handle: AppHandle, state: tauri::State<'_, AppStat
     let cancel_flag = Arc::clone(&state.cancel_flag);
 
     // Run transcribe in a blocking thread since whisper-rs is CPU bound
+    let audio_len = audio_bytes.len();
     let text = tokio::task::spawn_blocking(move || {
         // Wrap everything in catch_unwind to prevent silent crashes (segfaults in whisper.cpp)
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let num_samples = audio_len / std::mem::size_of::<f32>();
+            eprintln!("[transcrptr] Transcribing {} bytes ({} samples, {:.1}s of audio)",
+                audio_len, num_samples, num_samples as f64 / 16000.0);
+
             let ctx = WhisperContext::new_with_params(
                 &model_path.to_string_lossy(),
                 WhisperContextParameters::default()
@@ -188,8 +193,8 @@ async fn transcribe_audio(app_handle: AppHandle, state: tauri::State<'_, AppStat
             poller_handle.abort();
 
             // Check if error
-            if res.is_err() {
-                return Err("Transcription failed.".to_string());
+            if let Err(e) = res {
+                return Err(format!("Transcription failed: {:?}", e));
             }
             
             // Emit 100% progress when done
@@ -212,9 +217,18 @@ async fn transcribe_audio(app_handle: AppHandle, state: tauri::State<'_, AppStat
 
         match result {
             Ok(inner) => inner,
-            Err(_) => Err("Transcription crashed unexpectedly. This may be a compatibility issue with your system.".to_string()),
+            Err(panic_info) => {
+                let panic_msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
+                    s.to_string()
+                } else if let Some(s) = panic_info.downcast_ref::<String>() {
+                    s.clone()
+                } else {
+                    "Unknown panic".to_string()
+                };
+                Err(format!("Transkriberingen kraschade: {}. Prova en kortare ljudfil eller en mindre modell.", panic_msg))
+            },
         }
-    }).await.map_err(|e| e.to_string())??;
+    }).await.map_err(|e| format!("Transcription task failed: {}", e))??;
 
     Ok(text)
 }
