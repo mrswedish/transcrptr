@@ -6,8 +6,9 @@ use std::io::Write;
 use tauri::{AppHandle, Manager, Emitter};
 use serde::Serialize;
 use whisper_rs::{WhisperContext, WhisperContextParameters, FullParams, SamplingStrategy};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 pub struct AppState {
     pub cancel_flag: Arc<AtomicBool>,
@@ -25,10 +26,6 @@ struct ProgressPayload {
     total: u64,
 }
 
-#[derive(Serialize, Clone)]
-struct SegmentPayload {
-    text: String,
-}
 
 #[derive(Serialize, Clone)]
 struct TranscriptionProgressPayload {
@@ -116,6 +113,9 @@ async fn transcribe_audio(app_handle: AppHandle, state: tauri::State<'_, AppStat
         return Err("Model not found. Please download it first.".to_string());
     }
 
+    // Extract the cancel flag Arc before moving into the closure
+    let cancel_flag = Arc::clone(&state.cancel_flag);
+
     // Run transcribe in a blocking thread since whisper-rs is CPU bound
     let text = tokio::task::spawn_blocking(move || {
         // Wrap everything in catch_unwind to prevent silent crashes (segfaults in whisper.cpp)
@@ -125,7 +125,7 @@ async fn transcribe_audio(app_handle: AppHandle, state: tauri::State<'_, AppStat
                 WhisperContextParameters::default()
             ).map_err(|e| format!("Failed to load model: {}", e))?;
             
-            let mut state = ctx.create_state().map_err(|e| format!("Failed to create state: {}", e))?;
+            let mut transcriber_state = ctx.create_state().map_err(|e| format!("Failed to create state: {}", e))?;
             
             let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
             params.set_language(Some("sv"));
@@ -134,10 +134,43 @@ async fn transcribe_audio(app_handle: AppHandle, state: tauri::State<'_, AppStat
             params.set_print_realtime(false);
             params.set_print_timestamps(false);
             
-            // NOTE: We intentionally do NOT set any FFI callbacks here.
-            // set_segment_callback, set_progress_callback, and set_abort_callback
-            // all cross the Rust<->C++ FFI boundary and are known to cause silent
-            // segfaults on Windows. Instead we collect results after transcription.
+
+            // SAFE PROGRESS TRACKING
+            // We use an AtomicI32 because it is 100% thread-safe and requires no memory allocation.
+            // This prevents the FFI-boundary silent crashes we saw previously when emitting Tauri events directly from C++.
+            let progress = Arc::new(AtomicI32::new(0));
+            
+            let progress_clone = Arc::clone(&progress);
+            params.set_progress_callback_safe(move |p| {
+                progress_clone.store(p, Ordering::Relaxed);
+            });
+
+            // Start a polling task to emit progress to the frontend
+            let app_handle_clone = app_handle.clone();
+            let progress_poller = Arc::clone(&progress);
+            let cancel_poller = Arc::clone(&cancel_flag);
+            
+            let poller_handle = tokio::spawn(async move {
+                let mut last_emitted = -1;
+                loop {
+                    // Check if transcription is cancelled to stop polling early
+                    if cancel_poller.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    
+                    let current_progress = progress_poller.load(Ordering::Relaxed);
+                    
+                    if current_progress != last_emitted {
+                        let _ = app_handle_clone.emit("transcription_progress", TranscriptionProgressPayload { progress: current_progress });
+                        last_emitted = current_progress;
+                    }
+
+                    if current_progress >= 100 {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                }
+            });
 
             // Safely cast the incoming Vec<u8> to a &[f32]
             // We ensure it aligns properly and hasn't been corrupted.
@@ -149,17 +182,23 @@ async fn transcribe_audio(app_handle: AppHandle, state: tauri::State<'_, AppStat
             };
 
             // Run the main transcription
-            let res = state.full(params, samples);
+            let res = transcriber_state.full(params, samples);
             
+            // Abort poller just in case
+            poller_handle.abort();
+
             // Check if error
             if res.is_err() {
                 return Err("Transcription failed.".to_string());
             }
             
-            let num_segments = state.full_n_segments();
+            // Emit 100% progress when done
+            let _ = app_handle.emit("transcription_progress", TranscriptionProgressPayload { progress: 100 });
+            
+            let num_segments = transcriber_state.full_n_segments();
             let mut result = String::new();
             for i in 0..num_segments {
-                let segment_obj = state.get_segment(i).ok_or("Failed to get segment")?;
+                let segment_obj = transcriber_state.get_segment(i).ok_or("Failed to get segment")?;
                 let segment = segment_obj.to_str_lossy().map_err(|e| format!("Failed to get text: {}", e))?;
                 let trimmed = segment.trim();
                 if !trimmed.is_empty() {
