@@ -118,59 +118,54 @@ async fn transcribe_audio(app_handle: AppHandle, state: tauri::State<'_, AppStat
 
     // Run transcribe in a blocking thread since whisper-rs is CPU bound
     let text = tokio::task::spawn_blocking(move || {
-        let ctx = WhisperContext::new_with_params(
-            &model_path.to_string_lossy(),
-            WhisperContextParameters::default()
-        ).map_err(|e| format!("Failed to load model: {}", e))?;
-        
-        let mut state = ctx.create_state().map_err(|e| format!("Failed to create state: {}", e))?;
-        
-        let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
-        params.set_language(Some("sv"));
-        params.set_print_progress(false);
-        params.set_print_special(false);
-        params.set_print_realtime(false);
-        params.set_print_timestamps(false);
-        
-        // Define streaming callback to emit pieces to the UI dynamically
-        let em_handle = app_handle.clone();
-        use whisper_rs::SegmentCallbackData;
-        params.set_segment_callback_safe_lossy(move |data: SegmentCallbackData| {
-            let trimmed = data.text.trim().to_string();
-            if !trimmed.is_empty() {
-               let _ = em_handle.emit("transcription_segment", SegmentPayload { text: trimmed });
+        // Wrap everything in catch_unwind to prevent silent crashes (segfaults in whisper.cpp)
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let ctx = WhisperContext::new_with_params(
+                &model_path.to_string_lossy(),
+                WhisperContextParameters::default()
+            ).map_err(|e| format!("Failed to load model: {}", e))?;
+            
+            let mut state = ctx.create_state().map_err(|e| format!("Failed to create state: {}", e))?;
+            
+            let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
+            params.set_language(Some("sv"));
+            params.set_print_progress(false);
+            params.set_print_special(false);
+            params.set_print_realtime(false);
+            params.set_print_timestamps(false);
+            
+            // NOTE: We intentionally do NOT set any FFI callbacks here.
+            // set_segment_callback, set_progress_callback, and set_abort_callback
+            // all cross the Rust<->C++ FFI boundary and are known to cause silent
+            // segfaults on Windows. Instead we collect results after transcription.
+
+            // Run the main transcription
+            let res = state.full(params, &samples[..]);
+            
+            // Check if error
+            if res.is_err() {
+                return Err("Transcription failed.".to_string());
             }
-        });
-
-        // Define progress callback to emit percentage completed dynamically
-        let prog_handle = app_handle.clone();
-        params.set_progress_callback_safe(move |progress| {
-            let _ = prog_handle.emit("transcription_progress", TranscriptionProgressPayload { progress });
-        });
-
-        // NOT setting abort callback as it falsely triggers "failed to encode" across FFI
-
-        // Run the main transcription
-        let res = state.full(params, &samples[..]);
-        
-        // Check if error
-        if res.is_err() {
-            return Err("Transcription failed.".to_string());
-        }
-        
-        let num_segments = state.full_n_segments();
-        let mut result = String::new();
-        for i in 0..num_segments {
-            let segment_obj = state.get_segment(i).ok_or("Failed to get segment")?;
-            let segment = segment_obj.to_str_lossy().map_err(|e| format!("Failed to get text: {}", e))?;
-            let trimmed = segment.trim();
-            if !trimmed.is_empty() {
-                result.push_str(trimmed);
-                result.push('\n');
+            
+            let num_segments = state.full_n_segments();
+            let mut result = String::new();
+            for i in 0..num_segments {
+                let segment_obj = state.get_segment(i).ok_or("Failed to get segment")?;
+                let segment = segment_obj.to_str_lossy().map_err(|e| format!("Failed to get text: {}", e))?;
+                let trimmed = segment.trim();
+                if !trimmed.is_empty() {
+                    result.push_str(trimmed);
+                    result.push('\n');
+                }
             }
+            
+            Ok::<String, String>(result.trim().to_string())
+        }));
+
+        match result {
+            Ok(inner) => inner,
+            Err(_) => Err("Transcription crashed unexpectedly. This may be a compatibility issue with your system.".to_string()),
         }
-        
-        Ok::<String, String>(result.trim().to_string())
     }).await.map_err(|e| e.to_string())??;
 
     Ok(text)
