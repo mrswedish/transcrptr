@@ -1,6 +1,6 @@
 [package]
 name = "tauri-app"
-version = "0.1.25"
+version = "0.1.26"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -32,5 +32,5 @@ tauri-plugin-dialog = "2"
 whisper-rs = { version = "0.15.1", features = ["metal"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-whisper-rs = { version = "0.15.1", features = ["vulkan"] }
+whisper-rs = "0.15.1"
 

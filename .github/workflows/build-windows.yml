@@ -34,12 +34,6 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
 
-      - name: Install Vulkan SDK
-        uses: humbletim/setup-vulkan-sdk@v1.2.1
-        with:
-          vulkan-query-version: 1.3.268.0
-          vulkan-components: Vulkan-Headers, Vulkan-Loader
-          vulkan-use-cache: true
 
       - name: Install Ninja
         run: choco install ninja
@@ -53,9 +47,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CMAKE_GENERATOR: Ninja
           CARGO_TARGET_DIR: D:\t
-          WHISPER_NO_AVX2: 1
-          WHISPER_NO_FMA: 1
-          WHISPER_NO_F16C: 1
         with:
           tagName: transcrptr-v__VERSION__
           releaseName: 'Transcrptr v__VERSION__'
