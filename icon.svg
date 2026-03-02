@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#334155" />
+      <stop offset="100%" stop-color="#0f172a" />
+    </linearGradient>
+    <linearGradient id="wave" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8" />
+      <stop offset="100%" stop-color="#0284c7" />
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#bg)" rx="224" ry="224" />
+  <g fill="url(#wave)">
+    <rect x="260" y="440" width="60" height="144" rx="30" />
+    <rect x="360" y="340" width="60" height="344" rx="30" />
+    <rect x="460" y="190" width="60" height="644" rx="30" />
+    <rect x="560" y="270" width="60" height="484" rx="30" />
+    <rect x="660" y="390" width="60" height="244" rx="30" />
+  </g>
+</svg>
