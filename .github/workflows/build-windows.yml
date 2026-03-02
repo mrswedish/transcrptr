@@ -50,6 +50,7 @@ jobs:
           RUSTFLAGS: -C target-feature=+crt-static
           CFLAGS: /MT
           CXXFLAGS: /MT
+          CMAKE_POLICY_DEFAULT_CMP0091: NEW
           CMAKE_MSVC_RUNTIME_LIBRARY: MultiThreaded
         with:
           tagName: transcrptr-v__VERSION__
