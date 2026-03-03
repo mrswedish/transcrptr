@@ -456,6 +456,10 @@ async function processAudioBlob(blob) {
     const elapsedStr = elapsedMin > 0 ? `${elapsedMin}m ${elapsedRemSec}s` : `${elapsedSec}s`;
     loadingText.innerText = `Klar! (${elapsedStr})`;
 
+    // Show elapsed time in the output text so user can see it
+    outputText.value += `\n\n[Transkribering klar: ${elapsedStr}]`;
+    outputText.scrollTop = outputText.scrollHeight;
+
     if (!outputText.value.trim()) {
       outputText.value = fullResult || "[Ingen text transkriberad]";
     }
