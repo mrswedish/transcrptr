@@ -235,7 +235,6 @@ btnRecord.addEventListener("click", async () => {
   if (!isRecording && !isPaused) {
     await startRecording();
   } else {
-    // Stop = finish entire session (whether recording or paused)
     await stopSession();
   }
 });
@@ -338,16 +337,29 @@ async function startRecording() {
     btnRecord.querySelector(".btn-text").textContent = "Stoppa inspelning";
     recordingIndicator.classList.remove("hidden");
     if (recordingStatusText) recordingStatusText.textContent = "Spelar in...";
-    btnPause.classList.remove("hidden");
-    btnPause.querySelector(".btn-pause-text").textContent = "Pausa";
-    btnPause.querySelector(".material-symbols-outlined").textContent = "pause";
+    if (btnPause) {
+      btnPause.classList.remove("hidden");
+      btnPause.querySelector(".btn-pause-text").textContent = "Pausa";
+      btnPause.querySelector(".material-symbols-outlined").textContent = "pause";
+    }
     if (segmentBadge) segmentBadge.classList.add("hidden");
     disableControls();
     btnRecord.disabled = false;
-    btnPause.disabled = false;
+    if (btnPause) btnPause.disabled = false;
   } catch (err) {
-    console.error("Error accessing microphone:", err);
-    await message("Nekad mikrofonåtkomst eller så uppstod ett fel.", { title: 'Fel', kind: 'error' });
+    console.error("startRecording error:", err);
+    // Clean up on error
+    if (micStream) {
+      micStream.getTracks().forEach(track => track.stop());
+      micStream = null;
+    }
+    if (audioContext && audioContext.state !== "closed") {
+      audioContext.close();
+    }
+    isRecording = false;
+    isPaused = false;
+    enableControls();
+    await message("Nekad mikrofonåtkomst eller så uppstod ett fel: " + (err.message || err), { title: 'Fel', kind: 'error' });
   }
 }
 
