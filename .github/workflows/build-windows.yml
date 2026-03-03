@@ -38,7 +38,7 @@ jobs:
       - name: Install Vulkan SDK
         uses: humbletim/install-vulkan-sdk@v1.2
         with:
-          version: latest
+          version: 1.4.309.0
           cache: true
 
       - name: Install Ninja
