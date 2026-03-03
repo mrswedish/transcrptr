@@ -35,6 +35,10 @@ let selectedMicId = "default";
 let audioContext = null;
 let analyzer = null;
 let micStream = null;
+
+// Chunk progress state (used by transcription_progress listener)
+let currentChunkIdx = 0;
+let totalChunks = 1;
 let animationFrameId = null;
 
 // Load config from local storage
@@ -109,9 +113,15 @@ async function setupEventListeners() {
 
   await listen("transcription_progress", (event) => {
     const { progress } = event.payload;
+    // Calculate overall progress across all chunks
+    const overallProgress = Math.round((currentChunkIdx * 100 + progress) / totalChunks);
     if (progressContainer) progressContainer.classList.remove("hidden");
-    if (progressBar) progressBar.style.width = `${progress}%`;
-    loadingText.innerText = `Transkriberar... ${progress}%`;
+    if (progressBar) progressBar.style.width = `${overallProgress}%`;
+    if (totalChunks > 1) {
+      loadingText.innerText = `Transkriberar del ${currentChunkIdx + 1} av ${totalChunks}... (${overallProgress}%)`;
+    } else {
+      loadingText.innerText = `Transkriberar... ${overallProgress}%`;
+    }
   });
 }
 
@@ -387,13 +397,25 @@ async function processAudioBlob(blob) {
     // Calculate number of chunks
     const numChunks = Math.ceil(totalSamples / CHUNK_SAMPLES);
 
-    loadingText.innerText = `Transkriberar... (${totalDuration}s ljud, ${numChunks} del${numChunks > 1 ? 'ar' : ''})`;
+    // Set global chunk state for the progress listener
+    totalChunks = numChunks;
+    currentChunkIdx = 0;
+
+    const durationMin = Math.floor(totalDuration / 60);
+    const durationSec = totalDuration % 60;
+    const durationStr = durationMin > 0 ? `${durationMin}m ${durationSec}s` : `${durationSec}s`;
+    loadingText.innerText = `Transkriberar ${durationStr} ljud...`;
     if (progressContainer) progressContainer.classList.remove("hidden");
     if (progressBar) progressBar.style.width = "0%";
+
+    // Start timer
+    const startTime = performance.now();
 
     let fullResult = "";
 
     for (let chunkIdx = 0; chunkIdx < numChunks; chunkIdx++) {
+      currentChunkIdx = chunkIdx;
+
       const start = chunkIdx * CHUNK_SAMPLES;
       const end = Math.min(start + CHUNK_SAMPLES, totalSamples);
       const chunkFloat32 = float32Data.slice(start, end);
@@ -401,10 +423,6 @@ async function processAudioBlob(blob) {
       // Convert Float32Array chunk to byte array for Rust
       const chunkBytes = new Uint8Array(chunkFloat32.buffer, chunkFloat32.byteOffset, chunkFloat32.byteLength);
       const chunkBytesArray = Array.from(chunkBytes);
-
-      const chunkProgress = Math.round(((chunkIdx) / numChunks) * 100);
-      loadingText.innerText = `Transkriberar del ${chunkIdx + 1} av ${numChunks}... (${chunkProgress}%)`;
-      if (progressBar) progressBar.style.width = `${chunkProgress}%`;
 
       console.log(`Sending chunk ${chunkIdx + 1}/${numChunks}: ${chunkFloat32.length} samples (${chunkBytesArray.length} bytes)`);
 
@@ -429,9 +447,14 @@ async function processAudioBlob(blob) {
       }
     }
 
-    // Final progress
+    // Final progress + elapsed time
     if (progressBar) progressBar.style.width = "100%";
-    loadingText.innerText = "Klar!";
+    const elapsedMs = performance.now() - startTime;
+    const elapsedSec = Math.round(elapsedMs / 1000);
+    const elapsedMin = Math.floor(elapsedSec / 60);
+    const elapsedRemSec = elapsedSec % 60;
+    const elapsedStr = elapsedMin > 0 ? `${elapsedMin}m ${elapsedRemSec}s` : `${elapsedSec}s`;
+    loadingText.innerText = `Klar! (${elapsedStr})`;
 
     if (!outputText.value.trim()) {
       outputText.value = fullResult || "[Ingen text transkriberad]";

@@ -1,65 +1,63 @@
 # Transcrptr
 
-Transcrptr is a blazing fast, privacy-first desktop application for audio transcription powered by OpenAI's Whisper AI model running completely locally on your hardware.
+Transcrptr är en lokal, integritetsfokuserad skrivbordsapp för transkribering av ljud. Driven av OpenAI:s Whisper-modell som körs helt på din egen dator — inga molntjänster, inga API-nycklar, ingen data som lämnar din maskin.
 
 ![Transcrptr Screenshot](public/screenshot-mac.png)
 
-## Features
-- **100% Local Processing:** Your audio files and voice data never leave your computer.
-- **Hardware Accelerated:** Uses Vulkan on Windows and Metal on macOS to dramatically speed up transcription.
-- **Flexible Inputs:** Record directly using any available microphone with a real-time visualizer, or transcribe existing audio files.
-- **Model Choice:** Choose between Small, Medium, and Large models depending on your need for speed vs absolute accuracy.
+## ✨ Funktioner
+- **🔒 100% Lokalt:** Ditt ljud och din röstdata stannar på din dator. Inget skickas till externa servrar — din integritet är garanterad.
+- **⚡ Hårdvaruaccelererad:** Vulkan (Windows) och Metal (macOS) för snabb transkribering via GPU.
+- **🎙️ Flexibel inspelning:** Spela in direkt med valfri mikrofon (med realtidsvisualiserare) eller transkribera befintliga ljudfiler.
+- **📦 Modellval:** Välj mellan Small, Medium och Large beroende på om du prioriterar hastighet eller noggrannhet.
+- **📊 Smart hantering:** Stora ljudfiler delas automatiskt upp i hanterbara delar — inga minneskrascher.
 
-## Download & Install
-Head over to the [Releases](https://github.com/mrswedish/transcrptr/releases) page to download the latest version for your platform:
+## 📥 Ladda ner
+Gå till [Releases](https://github.com/mrswedish/transcrptr/releases) för att hämta senaste versionen:
 
-- **Windows:** Download `Transcrptr-portable.exe` and run it directly. No installation required.
-- **macOS:** Download the `.dmg` or `.app` from the release assets. *(Note: macOS builds may require bypassing Gatekeeper on first launch as the app is currently unsigned).*
+- **Windows:** Ladda ner `Transcrptr-portable.exe` och kör direkt. Ingen installation krävs.
+- **macOS:** Ladda ner `.dmg` eller `.app` från release-sidan. *(macOS kan visa en varning vid första start — se felsökning nedan).*
 
-## Architecture
-Transcrptr is built with:
-- **Tauri** (Rust backend, web frontend)
-- **Whisper.cpp** via `whisper-rs` for C++ optimized transcription
-- **Vanilla JS + Tailwind CSS** for a snappy, gorgeous UI
+## 🏗️ Arkitektur
+- **Tauri** (Rust-backend, webbfrontend)
+- **Whisper.cpp** via `whisper-rs` för C++-optimerad transkribering
+- **Vanilla JS + CSS** för ett snabbt och snyggt gränssnitt
 
-## Building from source
+## 🛠️ Bygga från källkod
 
-### Prerequisites
+### Förutsättningar
 - [Node.js](https://nodejs.org/) (v20+)
 - [Rust](https://www.rust-lang.org/tools/install)
 - [CMake](https://cmake.org/)
 
-### Setup
+### Kom igång
 ```bash
-# Clone the repository
+# Klona repot
 git clone https://github.com/mrswedish/transcrptr.git
 cd transcrptr
 
-# Install frontend dependencies
+# Installera frontend-beroenden
 npm install
 
-# Run in development mode
+# Kör i utvecklingsläge
 npm run tauri dev
 
-# Build for production
+# Bygg för produktion
 npm run tauri build
 ```
 
-## Troubleshooting
+## ❓ Felsökning
 
-### macOS says "Transcrptr.app is damaged and can't be opened"
+### macOS: "Transcrptr.app är skadad och kan inte öppnas"
 
-Since Transcrptr is distributed without an official, paid Apple Developer signature, macOS Gatekeeper applies a quarantine flag to the application when downloaded from the internet. This causes macOS to mistakenly warn that the app is "damaged" and should be moved to the Trash.
+Eftersom Transcrptr distribueras utan en officiell Apple Developer-signatur lägger macOS Gatekeeper en karantänflagga på appen vid nedladdning. macOS varnar felaktigt att appen är "skadad".
 
-**The app is not actually damaged.** 
+**Appen är inte skadad.**
 
-To fix this and allow the app to run safely, you just need to clear the quarantine flag via Terminal.
-
-**Solution:**
-1. Move `Transcrptr.app` to your `Applications` folder.
-2. Open the **Terminal** app.
-3. Run the following command:
+Lösning:
+1. Flytta `Transcrptr.app` till mappen `Program`.
+2. Öppna **Terminal**.
+3. Kör:
    ```bash
    xattr -cr /Applications/Transcrptr.app
    ```
-4. You can now open Transcrptr normally!
+4. Nu kan du öppna Transcrptr som vanligt!
