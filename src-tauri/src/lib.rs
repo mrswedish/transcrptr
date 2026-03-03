@@ -9,6 +9,7 @@ use whisper_rs::{WhisperContext, WhisperContextParameters, FullParams, SamplingS
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
+use tauri_plugin_dialog::DialogExt;
 
 pub struct AppState {
     pub cancel_flag: Arc<AtomicBool>,
@@ -233,6 +234,30 @@ async fn transcribe_audio(app_handle: AppHandle, state: tauri::State<'_, AppStat
     Ok(text)
 }
 
+#[tauri::command]
+async fn save_text_file(app_handle: AppHandle, content: String) -> Result<(), String> {
+    use tauri_plugin_dialog::FilePath;
+    
+    let file_path = app_handle.dialog()
+        .file()
+        .set_title("Spara transkribering")
+        .set_file_name("transkribering.txt")
+        .add_filter("Textfil", &["txt"])
+        .blocking_save_file();
+
+    match file_path {
+        Some(path) => {
+            let path_str = match path {
+                FilePath::Path(p) => p,
+                _ => return Err("Ogiltigt filformat".to_string()),
+            };
+            fs::write(&path_str, &content).map_err(|e| format!("Kunde inte spara: {}", e))?;
+            Ok(())
+        },
+        None => Err("cancelled".to_string()),
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -245,7 +270,8 @@ pub fn run() {
             check_model_exists,
             download_model,
             transcribe_audio,
-            cancel_transcription
+            cancel_transcription,
+            save_text_file
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

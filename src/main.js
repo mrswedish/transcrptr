@@ -5,11 +5,15 @@ const message = window.__TAURI__.dialog ? window.__TAURI__.dialog.message : wind
 // UI Elements
 const badge = document.getElementById("status-badge");
 const btnRecord = document.getElementById("btn-record");
+const btnPause = document.getElementById("btn-pause");
 const btnFile = document.getElementById("btn-file");
 const fileInput = document.getElementById("file-input");
 const btnCopy = document.getElementById("btn-copy");
+const btnSave = document.getElementById("btn-save");
 const outputText = document.getElementById("output-text");
 const recordingIndicator = document.getElementById("recording-indicator");
+const recordingStatusText = document.getElementById("recording-status-text");
+const segmentBadge = document.getElementById("segment-badge");
 const loadingOverlay = document.getElementById("loading-overlay");
 const loadingText = document.getElementById("loading-text");
 const progressContainer = document.getElementById("progress-container");
@@ -27,6 +31,7 @@ const audioLevelBar = document.getElementById("audio-level-bar");
 
 // State
 let isRecording = false;
+let isPaused = false;
 let mediaRecorder = null;
 let audioChunks = [];
 let modelSize = "small";
@@ -35,6 +40,10 @@ let selectedMicId = "default";
 let audioContext = null;
 let analyzer = null;
 let micStream = null;
+
+// Session/Segment state
+let sessionSegments = [];       // Array of Blob segments (completed)
+let currentSegmentChunks = [];  // Chunks for the currently-recording segment
 
 // Chunk progress state (used by transcription_progress listener)
 let currentChunkIdx = 0;
@@ -220,15 +229,67 @@ btnSaveSettings.addEventListener("click", async () => {
 });
 
 // -------------------------------------------------------------
-// Audio Recording Logic using Web Audio API to convert to 16kHz
+// Audio Recording Logic – Session/Segment model
 // -------------------------------------------------------------
 btnRecord.addEventListener("click", async () => {
-  if (!isRecording) {
+  if (!isRecording && !isPaused) {
     await startRecording();
   } else {
-    stopRecording();
+    // Stop = finish entire session (whether recording or paused)
+    await stopSession();
   }
 });
+
+// Pause/Resume button
+btnPause.addEventListener("click", async () => {
+  if (!isRecording && !isPaused) return;
+
+  if (isRecording && !isPaused) {
+    // Currently recording → Pause (save current segment)
+    pauseSession();
+  } else if (isPaused) {
+    // Currently paused → Resume (start new segment)
+    resumeSession();
+  }
+});
+
+// Creates a new MediaRecorder on the existing micStream
+function createRecorder() {
+  const mrOptions = { audioBitsPerSecond: 64000 };
+  let recorder;
+  try {
+    recorder = new MediaRecorder(micStream, mrOptions);
+  } catch (e) {
+    console.warn("Kunde inte sätta bitrate, använder standard.", e);
+    recorder = new MediaRecorder(micStream);
+  }
+
+  currentSegmentChunks = [];
+
+  recorder.ondataavailable = event => {
+    currentSegmentChunks.push(event.data);
+  };
+
+  // When recorder stops, save the segment blob
+  recorder.onstop = () => {
+    if (currentSegmentChunks.length > 0) {
+      const segmentBlob = new Blob(currentSegmentChunks);
+      sessionSegments.push(segmentBlob);
+      console.log(`Segment ${sessionSegments.length} saved (${segmentBlob.size} bytes)`);
+      updateSegmentBadge();
+    }
+    currentSegmentChunks = [];
+  };
+
+  return recorder;
+}
+
+function updateSegmentBadge() {
+  if (segmentBadge && sessionSegments.length > 0) {
+    segmentBadge.classList.remove("hidden");
+    segmentBadge.textContent = `${sessionSegments.length} segment`;
+  }
+}
 
 async function startRecording() {
   try {
@@ -238,28 +299,15 @@ async function startRecording() {
 
     micStream = await navigator.mediaDevices.getUserMedia(audioConstraints);
 
-    // Set a lower bitrate (e.g. 64kbps) to save RAM on long recordings
-    const mrOptions = {
-      audioBitsPerSecond: 64000
-    };
-
-    try {
-      mediaRecorder = new MediaRecorder(micStream, mrOptions);
-    } catch (e) {
-      // Fallback if the browser doesn't support setting the bitrate or codec
-      console.warn("Kunde inte sätta bitrate, använder standard.", e);
-      mediaRecorder = new MediaRecorder(micStream);
-    }
-
-    audioChunks = [];
+    // Reset session state
+    sessionSegments = [];
+    currentSegmentChunks = [];
 
     // --- Visualizer Setup ---
     audioContext = new (window.AudioContext || window.webkitAudioContext)();
     analyzer = audioContext.createAnalyser();
     const source = audioContext.createMediaStreamSource(micStream);
     source.connect(analyzer);
-
-    // Fast fourier transform size, higher = more detailed, lower = faster
     analyzer.fftSize = 256;
     const bufferLength = analyzer.frequencyBinCount;
     const dataArray = new Uint8Array(bufferLength);
@@ -267,57 +315,124 @@ async function startRecording() {
     function drawVisualizer() {
       if (!isRecording) return;
       animationFrameId = requestAnimationFrame(drawVisualizer);
-
       analyzer.getByteFrequencyData(dataArray);
-
-      // Calculate overall volume (average)
       let sum = 0;
-      for (let i = 0; i < bufferLength; i++) {
-        sum += dataArray[i];
-      }
+      for (let i = 0; i < bufferLength; i++) sum += dataArray[i];
       const average = sum / bufferLength;
-
-      // Scale the UI dot based on average volume (e.g., scale between 1 and 1.8)
       if (audioLevelBar) {
-        // average usually ranges from 0 to ~100 in normal speech
         const scale = 1 + (average / 150);
-        // clamp scale to reasonable sizes
         const clampedScale = Math.min(Math.max(scale, 1), 2.2);
         audioLevelBar.style.transform = `scale(${clampedScale})`;
       }
     }
     // ------------------------
 
-    mediaRecorder.ondataavailable = event => {
-      audioChunks.push(event.data);
-    };
-
-    mediaRecorder.onstop = async () => {
-      const audioBlob = new Blob(audioChunks);
-      await processAudioBlob(audioBlob);
-    };
-
-    mediaRecorder.start(1000); // Collect data in 1 second chunks for streaming/safety conceptually
+    mediaRecorder = createRecorder();
+    mediaRecorder.start(1000);
     isRecording = true;
-    drawVisualizer(); // Start the visualizer loop
+    isPaused = false;
+    drawVisualizer();
 
     // UI Updates
     btnRecord.classList.add("recording");
     btnRecord.querySelector(".btn-text").textContent = "Stoppa inspelning";
     recordingIndicator.classList.remove("hidden");
+    if (recordingStatusText) recordingStatusText.textContent = "Spelar in...";
+    btnPause.classList.remove("hidden");
+    btnPause.querySelector(".btn-pause-text").textContent = "Pausa";
+    btnPause.querySelector(".material-symbols-outlined").textContent = "pause";
+    if (segmentBadge) segmentBadge.classList.add("hidden");
     disableControls();
-    btnRecord.disabled = false; // Re-enable so we can stop
+    btnRecord.disabled = false;
+    btnPause.disabled = false;
   } catch (err) {
     console.error("Error accessing microphone:", err);
     await message("Nekad mikrofonåtkomst eller så uppstod ett fel.", { title: 'Fel', kind: 'error' });
   }
 }
 
-function stopRecording() {
+function pauseSession() {
+  if (!mediaRecorder || mediaRecorder.state === "inactive") return;
+
+  // Stop the current recorder – onstop handler saves the segment
+  mediaRecorder.stop();
+  isRecording = false;
+  isPaused = true;
+
+  // Stop visualizer but keep micStream alive
+  if (animationFrameId) cancelAnimationFrame(animationFrameId);
+  if (audioLevelBar) audioLevelBar.style.transform = `scale(1)`;
+
+  // UI Updates
+  if (recordingStatusText) {
+    recordingStatusText.textContent = "Pausad";
+    recordingStatusText.classList.remove("text-red-500");
+    recordingStatusText.classList.add("text-amber-500");
+  }
+  if (audioLevelBar) {
+    audioLevelBar.classList.remove("bg-red-500");
+    audioLevelBar.classList.add("bg-amber-500");
+  }
+  btnPause.querySelector(".btn-pause-text").textContent = "Fortsätt";
+  btnPause.querySelector(".material-symbols-outlined").textContent = "play_arrow";
+}
+
+function resumeSession() {
+  if (!micStream) return;
+
+  // Create a new recorder on the same mic stream
+  mediaRecorder = createRecorder();
+  mediaRecorder.start(1000);
+  isRecording = true;
+  isPaused = false;
+
+  // Restart visualizer
+  const bufferLength = analyzer.frequencyBinCount;
+  const dataArray = new Uint8Array(bufferLength);
+  function drawVisualizer() {
+    if (!isRecording) return;
+    animationFrameId = requestAnimationFrame(drawVisualizer);
+    analyzer.getByteFrequencyData(dataArray);
+    let sum = 0;
+    for (let i = 0; i < bufferLength; i++) sum += dataArray[i];
+    const average = sum / bufferLength;
+    if (audioLevelBar) {
+      const scale = 1 + (average / 150);
+      const clampedScale = Math.min(Math.max(scale, 1), 2.2);
+      audioLevelBar.style.transform = `scale(${clampedScale})`;
+    }
+  }
+  drawVisualizer();
+
+  // UI Updates
+  if (recordingStatusText) {
+    recordingStatusText.textContent = "Spelar in...";
+    recordingStatusText.classList.remove("text-amber-500");
+    recordingStatusText.classList.add("text-red-500");
+  }
+  if (audioLevelBar) {
+    audioLevelBar.classList.remove("bg-amber-500");
+    audioLevelBar.classList.add("bg-red-500");
+  }
+  btnPause.querySelector(".btn-pause-text").textContent = "Pausa";
+  btnPause.querySelector(".material-symbols-outlined").textContent = "pause";
+}
+
+async function stopSession() {
+  // If still recording (not paused), stop the recorder first to capture last segment
   if (mediaRecorder && mediaRecorder.state !== "inactive") {
-    mediaRecorder.stop();
+    // Wrap in a promise so we wait for the onstop handler to fire
+    await new Promise(resolve => {
+      const origOnstop = mediaRecorder.onstop;
+      mediaRecorder.onstop = () => {
+        origOnstop();
+        resolve();
+      };
+      mediaRecorder.stop();
+    });
   }
 
+  // Release microphone
   if (micStream) {
     micStream.getTracks().forEach(track => track.stop());
   }
@@ -326,23 +441,39 @@ function stopRecording() {
     audioContext.close();
   }
 
-  if (animationFrameId) {
-    cancelAnimationFrame(animationFrameId);
-  }
-
-  // reset visualizer dot
-  if (audioLevelBar) {
-    audioLevelBar.style.transform = `scale(1)`;
-  }
+  if (animationFrameId) cancelAnimationFrame(animationFrameId);
+  if (audioLevelBar) audioLevelBar.style.transform = `scale(1)`;
 
   isRecording = false;
+  isPaused = false;
 
-  // UI Updates
+  // UI Updates – reset
   btnRecord.classList.remove("recording");
   const btnText = btnRecord.querySelector(".btn-text");
   if (btnText) btnText.textContent = "Starta inspelning";
   recordingIndicator.classList.add("hidden");
-  disableControls(); // Re-disabled until processing finishes
+  btnPause.classList.add("hidden");
+  if (recordingStatusText) {
+    recordingStatusText.textContent = "Spelar in...";
+    recordingStatusText.classList.remove("text-amber-500");
+    recordingStatusText.classList.add("text-red-500");
+  }
+  if (audioLevelBar) {
+    audioLevelBar.classList.remove("bg-amber-500");
+    audioLevelBar.classList.add("bg-red-500");
+  }
+  if (segmentBadge) segmentBadge.classList.add("hidden");
+  disableControls();
+
+  // Merge all session segments into one blob and process
+  if (sessionSegments.length > 0) {
+    console.log(`Session complete: ${sessionSegments.length} segment(s), merging...`);
+    const mergedBlob = new Blob(sessionSegments);
+    sessionSegments = [];
+    await processAudioBlob(mergedBlob);
+  } else {
+    enableControls();
+  }
 }
 
 // -------------------------------------------------------------
@@ -490,6 +621,23 @@ btnCopy.addEventListener("click", () => {
         btnCopy.innerHTML = prevIcon;
       }, 2000);
     });
+  }
+});
+
+// -------------------------------------------------------------
+// Save to File Logic
+// -------------------------------------------------------------
+btnSave.addEventListener("click", async () => {
+  if (!outputText.value || !outputText.value.trim()) return;
+  try {
+    const content = outputText.value;
+    await invoke("save_text_file", { content });
+  } catch (err) {
+    console.error("Save error:", err);
+    const errorMsg = typeof err === 'string' ? err : err.message || String(err);
+    if (!errorMsg.includes("cancelled") && !errorMsg.includes("canceled")) {
+      await message(`Kunde inte spara filen: ${errorMsg}`, { title: 'Fel', kind: 'error' });
+    }
   }
 });
 

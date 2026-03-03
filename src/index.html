@@ -74,10 +74,18 @@
           <span class="text-white font-semibold text-lg btn-text">Starta inspelning</span>
         </button>
 
+        <button id="btn-pause"
+          class="hidden flex items-center justify-center gap-3 py-3 bg-amber-500 hover:bg-amber-600 active:scale-[0.98] transition-all rounded-2xl shadow-lg shadow-amber-500/20">
+          <span class="material-symbols-outlined text-white text-xl">pause</span>
+          <span class="text-white font-semibold text-base btn-pause-text">Pausa</span>
+        </button>
+
         <div id="recording-indicator" class="hidden flex items-center justify-center gap-2 mt-2">
           <div id="audio-level-bar"
             class="w-3 h-3 rounded-full bg-red-500 animate-pulse transition-transform duration-75 ease-out"></div>
-          <span class="text-red-500 font-medium text-sm">Spelar in...</span>
+          <span id="recording-status-text" class="text-red-500 font-medium text-sm">Spelar in...</span>
+          <span id="segment-badge"
+            class="hidden ml-2 px-2 py-0.5 bg-slate-700/50 text-slate-300 text-xs font-bold rounded-full"></span>
         </div>
 
         <div class="flex items-center justify-center gap-4 my-2">
@@ -96,11 +104,18 @@
     <section class="flex flex-col flex-1">
       <div class="flex items-center justify-between mb-4 px-1">
         <h2 class="text-lg font-bold text-slate-800 dark:text-slate-200">Transkribering</h2>
-        <button id="btn-copy"
-          class="flex items-center gap-1.5 text-sm font-medium text-slate-500 dark:text-slate-400 hover:text-primary transition-colors">
-          <span class="material-symbols-outlined text-lg">content_copy</span>
-          <span>Kopiera</span>
-        </button>
+        <div class="flex items-center gap-3">
+          <button id="btn-save"
+            class="flex items-center gap-1.5 text-sm font-medium text-slate-500 dark:text-slate-400 hover:text-primary transition-colors">
+            <span class="material-symbols-outlined text-lg">save</span>
+            <span>Spara</span>
+          </button>
+          <button id="btn-copy"
+            class="flex items-center gap-1.5 text-sm font-medium text-slate-500 dark:text-slate-400 hover:text-primary transition-colors">
+            <span class="material-symbols-outlined text-lg">content_copy</span>
+            <span>Kopiera</span>
+          </button>
+        </div>
       </div>
       <div
         class="relative flex-1 min-h-[300px] bg-white dark:bg-slate-900/50 border border-slate-200 dark:border-slate-700 rounded-3xl p-6 shadow-sm overflow-hidden flex flex-col">
