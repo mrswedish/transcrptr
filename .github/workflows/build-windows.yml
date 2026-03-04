@@ -97,8 +97,39 @@ jobs:
             Write-Error "Could not find the executable."
           }
 
-      - name: Upload Portable Executable to Release
+      - name: Copy NSIS Installer
+        env:
+          CARGO_TARGET_DIR: D:\t
+        run: |
+          $targetPath = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { "src-tauri/target" }
+          $nsisPattern = "*-setup*.exe"
+          $searchPaths = @(
+            "$targetPath/release/bundle/nsis",
+            "$targetPath/x86_64-pc-windows-msvc/release/bundle/nsis"
+          )
+          
+          $found = $false
+          foreach ($dir in $searchPaths) {
+            if (Test-Path $dir) {
+              $installer = Get-ChildItem -Path $dir -Filter $nsisPattern | Select-Object -First 1
+              if ($installer) {
+                Copy-Item -Path $installer.FullName -Destination "Transcrptr_x64-setup.exe"
+                Write-Host "Found NSIS installer: $($installer.FullName)"
+                $found = $true
+                break
+              }
+            }
+          }
+          
+          if (-not $found) {
+            Write-Warning "NSIS installer not found, only portable exe will be uploaded."
+          }
+
+      - name: Upload Release Assets
         uses: softprops/action-gh-release@v2
         with:
           tag_name: transcrptr-v${{ env.APP_VERSION }}
-          files: Transcrptr-portable.exe
+          files: |
+            Transcrptr-portable.exe
+            Transcrptr_x64-setup.exe
+          make_latest: true
