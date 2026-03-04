@@ -18,6 +18,8 @@ Tack vare denna träning är modellen ovanligt träffsäker på svenska — den 
 - **🔒 Integritet först:** Ditt ljud stannar på din dator. Inget skickas till externa servrar — din integritet är garanterad.
 - **⚡ Hårdvaruaccelererad:** Vulkan (Windows) och Metal (macOS) utnyttjar din GPU för snabbare transkribering.
 - **🎙️ Flexibel inspelning:** Spela in direkt med valfri mikrofon (med realtidsvisualiserare) eller transkribera befintliga ljudfiler.
+- **⏸️ Pausa inspelning:** Pausa och återuppta inspelningen för kortare avbrott — fikapaus, teknisk paus, eller samtal som inte ska vara med i transkriberingen. Varje del tidsstämplas automatiskt.
+- **💾 Spara och kopiera:** Exportera transkriberingen som `.txt`-fil eller kopiera direkt till urklipp.
 - **📊 Smart hantering:** Stora ljudfiler delas automatiskt upp i hanterbara delar — inga minneskrascher.
 
 ## 📦 Välj rätt modell

@@ -302,6 +302,12 @@ function updateSegmentBadge() {
   }
 }
 
+// Build a summary string like "Del 1, Del 2, Del 3"
+function getRecordedPartsLabel() {
+  if (sessionSegments.length === 0) return "";
+  return sessionSegments.map((_, i) => `Del ${i + 1}`).join(", ");
+}
+
 async function startRecording() {
   try {
     const audioConstraints = selectedMicId === "default"
@@ -348,10 +354,10 @@ async function startRecording() {
     btnRecord.classList.add("recording");
     btnRecord.querySelector(".btn-text").textContent = "Stoppa inspelning";
     recordingIndicator.classList.remove("hidden");
-    if (recordingStatusText) recordingStatusText.textContent = "Spelar in...";
+    if (recordingStatusText) recordingStatusText.textContent = "Spelar in Del 1";
     if (btnPause) {
       btnPause.classList.remove("hidden");
-      btnPause.querySelector(".btn-pause-text").textContent = "Pausa";
+      btnPause.querySelector(".btn-pause-text").textContent = "Pausa inspelning";
       btnPause.querySelector(".material-symbols-outlined").textContent = "pause";
     }
     if (segmentBadge) segmentBadge.classList.add("hidden");
@@ -388,8 +394,9 @@ function pauseSession() {
   if (audioLevelBar) audioLevelBar.style.transform = `scale(1)`;
 
   // UI Updates
+  const partsLabel = getRecordedPartsLabel();
   if (recordingStatusText) {
-    recordingStatusText.textContent = "Pausad";
+    recordingStatusText.textContent = `Inspelning pausad | Inspelat: ${partsLabel}`;
     recordingStatusText.classList.remove("text-red-500");
     recordingStatusText.classList.add("text-amber-500");
   }
@@ -397,7 +404,7 @@ function pauseSession() {
     audioLevelBar.classList.remove("bg-red-500");
     audioLevelBar.classList.add("bg-amber-500");
   }
-  btnPause.querySelector(".btn-pause-text").textContent = "Fortsätt";
+  btnPause.querySelector(".btn-pause-text").textContent = "Fortsätt inspelning";
   btnPause.querySelector(".material-symbols-outlined").textContent = "play_arrow";
 }
 
@@ -429,8 +436,12 @@ function resumeSession() {
   drawVisualizer();
 
   // UI Updates
+  const nextPart = sessionSegments.length + 1;
+  const partsLabel = getRecordedPartsLabel();
   if (recordingStatusText) {
-    recordingStatusText.textContent = "Spelar in...";
+    recordingStatusText.textContent = partsLabel
+      ? `Spelar in Del ${nextPart} | Inspelat: ${partsLabel}`
+      : `Spelar in Del ${nextPart}`;
     recordingStatusText.classList.remove("text-amber-500");
     recordingStatusText.classList.add("text-red-500");
   }
@@ -438,7 +449,7 @@ function resumeSession() {
     audioLevelBar.classList.remove("bg-amber-500");
     audioLevelBar.classList.add("bg-red-500");
   }
-  btnPause.querySelector(".btn-pause-text").textContent = "Pausa";
+  btnPause.querySelector(".btn-pause-text").textContent = "Pausa inspelning";
   btnPause.querySelector(".material-symbols-outlined").textContent = "pause";
 }
 
