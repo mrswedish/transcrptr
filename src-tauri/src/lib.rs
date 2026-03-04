@@ -107,7 +107,7 @@ async fn download_model(app_handle: AppHandle, size: String, quantized: bool) ->
 }
 
 #[tauri::command]
-async fn transcribe_audio(app_handle: AppHandle, state: tauri::State<'_, AppState>, audio_bytes: Vec<u8>, size: String, quantized: bool) -> Result<String, String> {
+async fn transcribe_audio(app_handle: AppHandle, state: tauri::State<'_, AppState>, audio_bytes: Vec<u8>, size: String, quantized: bool, language: String) -> Result<String, String> {
     state.cancel_flag.store(false, Ordering::Relaxed);
     let model_path = get_model_path(&app_handle, &size, quantized)?;
     if !model_path.exists() {
@@ -123,8 +123,8 @@ async fn transcribe_audio(app_handle: AppHandle, state: tauri::State<'_, AppStat
         // Wrap everything in catch_unwind to prevent silent crashes (segfaults in whisper.cpp)
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let num_samples = audio_len / std::mem::size_of::<f32>();
-            eprintln!("[transcrptr] Transcribing {} bytes ({} samples, {:.1}s of audio)",
-                audio_len, num_samples, num_samples as f64 / 16000.0);
+            eprintln!("[transcrptr] Transcribing {} bytes ({} samples, {:.1}s of audio, lang={})",
+                audio_len, num_samples, num_samples as f64 / 16000.0, language);
 
             let ctx = WhisperContext::new_with_params(
                 &model_path.to_string_lossy(),
@@ -134,7 +134,23 @@ async fn transcribe_audio(app_handle: AppHandle, state: tauri::State<'_, AppStat
             let mut transcriber_state = ctx.create_state().map_err(|e| format!("Failed to create state: {}", e))?;
             
             let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
-            params.set_language(Some("sv"));
+            
+            // Set language and initial prompt based on user selection
+            match language.as_str() {
+                "sv" => {
+                    params.set_language(Some("sv"));
+                    params.set_initial_prompt("Följande är en transkribering på svenska.");
+                }
+                "en" => {
+                    params.set_language(Some("en"));
+                    params.set_initial_prompt("The following is a transcription in English.");
+                }
+                _ => {
+                    // "auto" — let whisper detect the language
+                    params.set_language(None);
+                }
+            }
+            
             params.set_print_progress(false);
             params.set_print_special(false);
             params.set_print_realtime(false);

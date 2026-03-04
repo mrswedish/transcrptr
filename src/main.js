@@ -26,6 +26,7 @@ const btnCloseSettings = document.getElementById("btn-close-settings");
 const btnSaveSettings = document.getElementById("btn-save-settings");
 const selModelSize = document.getElementById("model-size");
 const selModelQuantized = document.getElementById("model-quantized");
+const selLanguage = document.getElementById("transcription-language");
 const selMic = document.getElementById("mic-select");
 const audioLevelBar = document.getElementById("audio-level-bar");
 
@@ -41,6 +42,7 @@ let mediaRecorder = null;
 let audioChunks = [];
 let modelSize = "small";
 let modelQuantized = true;
+let transcriptionLanguage = "sv";
 let selectedMicId = "default";
 let audioContext = null;
 let analyzer = null;
@@ -60,14 +62,17 @@ let animationFrameId = null;
 function loadSettings() {
   const size = localStorage.getItem("modelSize");
   const quantized = localStorage.getItem("modelQuantized");
+  const lang = localStorage.getItem("transcriptionLanguage");
   const micId = localStorage.getItem("selectedMicId");
 
   if (size) modelSize = size;
   if (quantized !== null) modelQuantized = quantized === "true";
+  if (lang) transcriptionLanguage = lang;
   if (micId) selectedMicId = micId;
 
   selModelSize.value = modelSize;
   selModelQuantized.value = modelQuantized.toString();
+  if (selLanguage) selLanguage.value = transcriptionLanguage;
 }
 
 // Load available microphones
@@ -218,14 +223,17 @@ btnCloseSettings.addEventListener("click", () => {
 btnSaveSettings.addEventListener("click", async () => {
   const newSize = selModelSize.value;
   const newQuant = selModelQuantized.value === "true";
+  const newLang = selLanguage ? selLanguage.value : "sv";
   const newMicId = selMic ? selMic.value : "default";
 
   localStorage.setItem("modelSize", newSize);
   localStorage.setItem("modelQuantized", newQuant.toString());
+  localStorage.setItem("transcriptionLanguage", newLang);
   localStorage.setItem("selectedMicId", newMicId);
 
   modelSize = newSize;
   modelQuantized = newQuant;
+  transcriptionLanguage = newLang;
   selectedMicId = newMicId;
 
   settingsModal.classList.add("hidden");
@@ -631,7 +639,8 @@ async function transcribeBlob(blob, label) {
       const chunkText = await invoke("transcribe_audio", {
         audioBytes: chunkBytesArray,
         size: modelSize,
-        quantized: modelQuantized
+        quantized: modelQuantized,
+        language: transcriptionLanguage
       });
       if (chunkText && chunkText.trim()) {
         if (result) result += "\n";
@@ -731,7 +740,8 @@ async function processAudioBlob(blob) {
         const chunkText = await invoke("transcribe_audio", {
           audioBytes: chunkBytesArray,
           size: modelSize,
-          quantized: modelQuantized
+          quantized: modelQuantized,
+          language: transcriptionLanguage
         });
 
         if (chunkText && chunkText.trim()) {
