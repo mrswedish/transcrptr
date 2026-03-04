@@ -29,6 +29,11 @@ const selModelQuantized = document.getElementById("model-quantized");
 const selMic = document.getElementById("mic-select");
 const audioLevelBar = document.getElementById("audio-level-bar");
 
+// Confirm modal elements
+const confirmModal = document.getElementById("confirm-modal");
+const confirmOk = document.getElementById("confirm-ok");
+const confirmCancel = document.getElementById("confirm-cancel");
+
 // State
 let isRecording = false;
 let isPaused = false;
@@ -236,20 +241,31 @@ btnRecord.addEventListener("click", async () => {
   if (!isRecording && !isPaused) {
     // If there's existing transcription, warn the user
     if (outputText.value && outputText.value.trim()) {
-      const ask = window.__TAURI__.dialog ? window.__TAURI__.dialog.ask : null;
-      if (ask) {
-        const confirmed = await ask(
-          "Du har en transkribering som inte sparats.\n\nEn ny inspelning kommer att ersätta den. Vill du fortsätta?",
-          { title: "Ny inspelning", kind: "warning", okLabel: "Fortsätt", cancelLabel: "Avbryt" }
-        );
-        if (!confirmed) return;
-      }
+      const confirmed = await showConfirm();
+      if (!confirmed) return;
     }
     await startRecording();
   } else {
     await stopSession();
   }
 });
+
+// Show custom HTML confirm dialog, returns a Promise<boolean>
+function showConfirm() {
+  return new Promise(resolve => {
+    if (!confirmModal) { resolve(true); return; }
+    confirmModal.classList.remove("hidden");
+    const onOk = () => { cleanup(); resolve(true); };
+    const onCancel = () => { cleanup(); resolve(false); };
+    const cleanup = () => {
+      confirmModal.classList.add("hidden");
+      confirmOk.removeEventListener("click", onOk);
+      confirmCancel.removeEventListener("click", onCancel);
+    };
+    confirmOk.addEventListener("click", onOk);
+    confirmCancel.addEventListener("click", onCancel);
+  });
+}
 
 // Pause/Resume button
 btnPause.addEventListener("click", async () => {
