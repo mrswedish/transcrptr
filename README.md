@@ -15,7 +15,7 @@ Tack vare denna träning är modellen ovanligt träffsäker på svenska — den 
 📰 [Läs mer om KB-whisper på Kungliga bibliotekets hemsida](https://www.kb.se/om-oss/nyheter/nyhetsarkiv/2025-02-20-valtranad-ai-modell-forvandlar-tal-till-text.html)
 
 ## ✨ Funktioner
-- **🔒 Integritet först:** Ditt ljud stannar på din dator. Inget skickas till externa servrar — din integritet är garanterad.
+- **🔒 Integritet först:** Ditt ljud stannar på din dator. Inget skickas till externa servrar — din integritet är garanterad. [Läs vår integritetspolicy](PRIVACY.md)
 - **⚡ Hårdvaruaccelererad:** Vulkan (Windows) och Metal (macOS) utnyttjar din GPU för snabbare transkribering.
 - **🎙️ Flexibel inspelning:** Spela in direkt med valfri mikrofon (med realtidsvisualiserare) eller transkribera befintliga ljudfiler.
 - **⏸️ Pausa inspelning:** Pausa och återuppta inspelningen för kortare avbrott — fikapaus, teknisk paus, eller samtal som inte ska vara med i transkriberingen. Varje del tidsstämplas automatiskt.
