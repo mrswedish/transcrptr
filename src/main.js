@@ -42,8 +42,9 @@ let analyzer = null;
 let micStream = null;
 
 // Session/Segment state
-let sessionSegments = [];       // Array of Blob segments (completed)
+let sessionSegments = [];       // Array of {blob, startTime} objects
 let currentSegmentChunks = [];  // Chunks for the currently-recording segment
+let currentSegmentStartTime = null; // When the current segment started
 
 // Chunk progress state (used by transcription_progress listener)
 let currentChunkIdx = 0;
@@ -264,17 +265,21 @@ function createRecorder() {
   }
 
   currentSegmentChunks = [];
+  currentSegmentStartTime = new Date();
 
   recorder.ondataavailable = event => {
     currentSegmentChunks.push(event.data);
   };
 
-  // When recorder stops, save the segment blob
+  // When recorder stops, save the segment blob with metadata
   recorder.onstop = () => {
     if (currentSegmentChunks.length > 0) {
       const segmentBlob = new Blob(currentSegmentChunks);
-      sessionSegments.push(segmentBlob);
-      console.log(`Segment ${sessionSegments.length} saved (${segmentBlob.size} bytes)`);
+      sessionSegments.push({
+        blob: segmentBlob,
+        startTime: currentSegmentStartTime
+      });
+      console.log(`Del ${sessionSegments.length} sparad (${segmentBlob.size} bytes)`);
       updateSegmentBadge();
     }
     currentSegmentChunks = [];
@@ -283,10 +288,17 @@ function createRecorder() {
   return recorder;
 }
 
+function formatTimestamp(date) {
+  return date.toLocaleString('sv-SE', {
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit'
+  });
+}
+
 function updateSegmentBadge() {
   if (segmentBadge && sessionSegments.length > 0) {
     segmentBadge.classList.remove("hidden");
-    segmentBadge.textContent = `${sessionSegments.length} segment`;
+    segmentBadge.textContent = `Del ${sessionSegments.length}`;
   }
 }
 
@@ -433,7 +445,6 @@ function resumeSession() {
 async function stopSession() {
   // If still recording (not paused), stop the recorder first to capture last segment
   if (mediaRecorder && mediaRecorder.state !== "inactive") {
-    // Wrap in a promise so we wait for the onstop handler to fire
     await new Promise(resolve => {
       const origOnstop = mediaRecorder.onstop;
       mediaRecorder.onstop = () => {
@@ -477,15 +488,124 @@ async function stopSession() {
   if (segmentBadge) segmentBadge.classList.add("hidden");
   disableControls();
 
-  // Merge all session segments into one blob and process
+  // Process segments
   if (sessionSegments.length > 0) {
-    console.log(`Session complete: ${sessionSegments.length} segment(s), merging...`);
-    const mergedBlob = new Blob(sessionSegments);
+    const segments = [...sessionSegments];
     sessionSegments = [];
-    await processAudioBlob(mergedBlob);
+    const multiSegment = segments.length > 1;
+
+    if (multiSegment) {
+      // Multiple segments: process each with section headers
+      await processSegments(segments);
+    } else {
+      // Single segment (no pauses): process normally without headers
+      await processAudioBlob(segments[0].blob);
+    }
   } else {
     enableControls();
   }
+}
+
+// Process multiple segments with section headers
+async function processSegments(segments) {
+  try {
+    loadingText.innerText = "Bearbetar ljud...";
+    loadingOverlay.classList.remove("hidden");
+    if (progressContainer) progressContainer.classList.add("hidden");
+    outputText.value = "";
+
+    const startTime = performance.now();
+
+    for (let i = 0; i < segments.length; i++) {
+      const seg = segments[i];
+      const partNum = i + 1;
+      const timestamp = formatTimestamp(seg.startTime);
+
+      loadingText.innerText = `Transkriberar Del ${partNum} av ${segments.length}...`;
+
+      // Add section header
+      if (outputText.value) outputText.value += "\n\n";
+      outputText.value += `// Start Del ${partNum} (${timestamp})\n\n`;
+      outputText.scrollTop = outputText.scrollHeight;
+
+      // Transcribe this segment
+      const segmentText = await transcribeBlob(seg.blob, `Del ${partNum}`);
+
+      if (segmentText && segmentText.trim()) {
+        outputText.value += segmentText.trim();
+      } else {
+        outputText.value += "[Ingen text transkriberad]";
+      }
+
+      // Add section footer
+      outputText.value += `\n\n// Slut Del ${partNum}`;
+      outputText.scrollTop = outputText.scrollHeight;
+    }
+
+    // Final elapsed time
+    const elapsedMs = performance.now() - startTime;
+    const elapsedSec = Math.round(elapsedMs / 1000);
+    const elapsedMin = Math.floor(elapsedSec / 60);
+    const elapsedRemSec = elapsedSec % 60;
+    const elapsedStr = elapsedMin > 0 ? `${elapsedMin}m ${elapsedRemSec}s` : `${elapsedSec}s`;
+
+    if (progressBar) progressBar.style.width = "100%";
+    loadingText.innerText = `Klar! (${elapsedStr})`;
+    outputText.value += `\n\n[Transkribering klar: ${segments.length} delar, ${elapsedStr}]`;
+    outputText.scrollTop = outputText.scrollHeight;
+
+  } catch (err) {
+    console.error("processSegments error:", err);
+    const errorMsg = typeof err === 'string' ? err : err.message || String(err);
+    await message(`Transkribering misslyckades: ${errorMsg}`, { title: 'Fel', kind: 'error' });
+  } finally {
+    loadingOverlay.classList.add("hidden");
+    enableControls();
+  }
+}
+
+// Transcribe a single blob and return the text (used by processSegments)
+async function transcribeBlob(blob, label) {
+  const arrayBuffer = await blob.arrayBuffer();
+  const decodeCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+  const audioBuffer = await decodeCtx.decodeAudioData(arrayBuffer);
+  const float32Data = audioBuffer.getChannelData(0);
+  const totalSamples = float32Data.length;
+
+  const numChunks = Math.ceil(totalSamples / CHUNK_SAMPLES);
+  totalChunks = numChunks;
+  currentChunkIdx = 0;
+
+  if (progressContainer) progressContainer.classList.remove("hidden");
+  if (progressBar) progressBar.style.width = "0%";
+
+  let result = "";
+
+  for (let chunkIdx = 0; chunkIdx < numChunks; chunkIdx++) {
+    currentChunkIdx = chunkIdx;
+    const start = chunkIdx * CHUNK_SAMPLES;
+    const end = Math.min(start + CHUNK_SAMPLES, totalSamples);
+    const chunkFloat32 = float32Data.slice(start, end);
+    const chunkBytes = new Uint8Array(chunkFloat32.buffer, chunkFloat32.byteOffset, chunkFloat32.byteLength);
+    const chunkBytesArray = Array.from(chunkBytes);
+
+    try {
+      const chunkText = await invoke("transcribe_audio", {
+        audioBytes: chunkBytesArray,
+        size: modelSize,
+        quantized: modelQuantized
+      });
+      if (chunkText && chunkText.trim()) {
+        if (result) result += "\n";
+        result += chunkText.trim();
+      }
+    } catch (chunkErr) {
+      console.error(`${label} chunk ${chunkIdx + 1} failed:`, chunkErr);
+      result += `\n[Fel i ${label}, del ${chunkIdx + 1}: ${chunkErr}]`;
+    }
+  }
+
+  return result;
 }
 
 // -------------------------------------------------------------
