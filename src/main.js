@@ -234,6 +234,15 @@ btnSaveSettings.addEventListener("click", async () => {
 // -------------------------------------------------------------
 btnRecord.addEventListener("click", async () => {
   if (!isRecording && !isPaused) {
+    // If there's existing transcription, warn the user
+    if (outputText.value && outputText.value.trim()) {
+      const confirmed = window.confirm(
+        "Du har en transkribering som inte sparats.\n\n" +
+        "En ny inspelning kommer att ersätta den.\n" +
+        "Vill du fortsätta?"
+      );
+      if (!confirmed) return;
+    }
     await startRecording();
   } else {
     await stopSession();
@@ -352,7 +361,7 @@ async function startRecording() {
 
     // UI Updates
     btnRecord.classList.add("recording");
-    btnRecord.querySelector(".btn-text").textContent = "Stoppa inspelning";
+    btnRecord.querySelector(".btn-text").textContent = "Stoppa & transkribera";
     recordingIndicator.classList.remove("hidden");
     if (recordingStatusText) recordingStatusText.textContent = "Spelar in Del 1";
     if (btnPause) {
@@ -484,7 +493,7 @@ async function stopSession() {
   // UI Updates – reset
   btnRecord.classList.remove("recording");
   const btnText = btnRecord.querySelector(".btn-text");
-  if (btnText) btnText.textContent = "Starta inspelning";
+  if (btnText) btnText.textContent = "Starta ny inspelning";
   recordingIndicator.classList.add("hidden");
   btnPause.classList.add("hidden");
   if (recordingStatusText) {
