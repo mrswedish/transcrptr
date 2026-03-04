@@ -2,7 +2,7 @@
 
 Transcrptr är en lokal, integritetsfokuserad skrivbordsapp som omvandlar tal till text — helt utan molntjänster. Allt sker på din egen dator, vilket betyder att ditt ljud och din röstdata aldrig lämnar din maskin.
 
-![Transcrptr Screenshot](public/screenshot-mac.png)
+![Transcrptr Screenshot](public/screenshoot-windows.png)
 
 ## 🇸🇪 Fokus på svenska
 
