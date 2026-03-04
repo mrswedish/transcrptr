@@ -236,12 +236,14 @@ btnRecord.addEventListener("click", async () => {
   if (!isRecording && !isPaused) {
     // If there's existing transcription, warn the user
     if (outputText.value && outputText.value.trim()) {
-      const confirmed = window.confirm(
-        "Du har en transkribering som inte sparats.\n\n" +
-        "En ny inspelning kommer att ersätta den.\n" +
-        "Vill du fortsätta?"
-      );
-      if (!confirmed) return;
+      const ask = window.__TAURI__.dialog ? window.__TAURI__.dialog.ask : null;
+      if (ask) {
+        const confirmed = await ask(
+          "Du har en transkribering som inte sparats.\n\nEn ny inspelning kommer att ersätta den. Vill du fortsätta?",
+          { title: "Ny inspelning", kind: "warning", okLabel: "Fortsätt", cancelLabel: "Avbryt" }
+        );
+        if (!confirmed) return;
+      }
     }
     await startRecording();
   } else {
