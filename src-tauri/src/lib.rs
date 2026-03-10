@@ -22,7 +22,7 @@ pub struct AppState {
 
 #[tauri::command]
 fn cancel_transcription(state: tauri::State<AppState>) {
-    state.cancel_flag.store(true, Ordering::Relaxed);
+    state.inner().cancel_flag.store(true, Ordering::Relaxed);
 }
 
 #[derive(Serialize, Clone)]
@@ -191,7 +191,7 @@ async fn get_disk_info(app_handle: AppHandle) -> Result<DiskInfo, String> {
     let models_dir = app_data_dir.join("models");
     let models_dir_size = get_dir_size(&models_dir);
 
-    let mut disks = Disks::new_with_refreshed_list();
+    let disks = Disks::new_with_refreshed_list();
     
     // Find the disk where app data is located
     // For simplicity on macOS/Windows, we look for the disk that contains the app data dir.
@@ -213,14 +213,14 @@ async fn get_disk_info(app_handle: AppHandle) -> Result<DiskInfo, String> {
 
 #[tauri::command]
 async fn transcribe_audio(app_handle: AppHandle, state: tauri::State<'_, AppState>, audio_bytes: Vec<u8>, size: String, quantized: bool, language: String) -> Result<String, String> {
-    state.cancel_flag.store(false, Ordering::Relaxed);
+    state.inner().cancel_flag.store(false, Ordering::Relaxed);
     let model_path = get_model_path(&app_handle, &size, quantized)?;
     if !model_path.exists() {
         return Err("Model not found. Please download it first.".to_string());
     }
 
     // Extract the cancel flag Arc before moving into the closure
-    let cancel_flag = Arc::clone(&state.cancel_flag);
+    let cancel_flag = Arc::clone(&state.inner().cancel_flag);
 
     // Run transcribe in a blocking thread since whisper-rs is CPU bound
     let audio_len = audio_bytes.len();
@@ -357,13 +357,13 @@ async fn transcribe_audio(app_handle: AppHandle, state: tauri::State<'_, AppStat
 
 #[tauri::command]
 async fn start_backend_recording(state: tauri::State<'_, AppState>) -> Result<(), String> {
-    let mut recorder = state.audio_recorder.lock().unwrap();
+    let mut recorder = state.inner().audio_recorder.lock().unwrap();
     recorder.start_recording()
 }
 
 #[tauri::command]
 async fn stop_backend_recording(state: tauri::State<'_, AppState>) -> Result<Vec<u8>, String> {
-    let mut recorder = state.audio_recorder.lock().unwrap();
+    let mut recorder = state.inner().audio_recorder.lock().unwrap();
     Ok(recorder.stop_recording())
 }
 

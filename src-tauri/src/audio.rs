@@ -1,10 +1,16 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{Sample, SampleFormat, Stream, StreamConfig};
+use cpal::{Stream, StreamConfig};
 use std::sync::{Arc, Mutex};
 
+// cpal::Stream is not Send on Windows because it can contain COM objects.
+// In our case, we only drop it to stop the stream, which is safe.
+struct SendStream(Stream);
+unsafe impl Send for SendStream {}
+unsafe impl Sync for SendStream {}
+
 pub struct AudioRecorder {
-    mic_stream: Option<Stream>,
-    loopback_stream: Option<Stream>,
+    mic_stream: Option<SendStream>,
+    loopback_stream: Option<SendStream>,
     pub recorded_samples: Arc<Mutex<Vec<f32>>>,
 }
 
@@ -34,7 +40,7 @@ impl AudioRecorder {
             .map_err(|e| e.to_string())?.into();
         
         // Target format for Whisper: 16kHz mono f32
-        let target_sample_rate = 16000;
+        let _target_sample_rate = 16000;
         
         let recorded_samples_clone = Arc::clone(&recorded_samples);
         let mic_stream = mic_device.build_input_stream(
@@ -81,12 +87,12 @@ impl AudioRecorder {
                 ).map_err(|e| e.to_string())?;
                 
                 loopback_stream.play().map_err(|e| e.to_string())?;
-                self.loopback_stream = Some(loopback_stream);
+                self.loopback_stream = Some(SendStream(loopback_stream));
             }
         }
 
         mic_stream.play().map_err(|e| e.to_string())?;
-        self.mic_stream = Some(mic_stream);
+        self.mic_stream = Some(SendStream(mic_stream));
 
         Ok(())
     }
