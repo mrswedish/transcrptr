@@ -7,12 +7,17 @@ use tauri::{AppHandle, Manager, Emitter};
 use serde::Serialize;
 use whisper_rs::{WhisperContext, WhisperContextParameters, FullParams, SamplingStrategy};
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri_plugin_dialog::DialogExt;
+use sysinfo::Disks;
+
+mod audio;
+use audio::AudioRecorder;
 
 pub struct AppState {
     pub cancel_flag: Arc<AtomicBool>,
+    pub audio_recorder: Mutex<AudioRecorder>,
 }
 
 #[tauri::command]
@@ -31,6 +36,20 @@ struct ProgressPayload {
 #[derive(Serialize, Clone)]
 struct TranscriptionProgressPayload {
     progress: i32,
+}
+
+#[derive(Serialize)]
+struct ModelInfo {
+    name: String,
+    size_bytes: u64,
+    downloaded: bool,
+}
+
+#[derive(Serialize)]
+struct DiskInfo {
+    total_space: u64,
+    available_space: u64,
+    models_dir_size: u64,
 }
 
 fn get_model_info(size: &str, quantized: bool) -> (String, String) {
@@ -104,6 +123,92 @@ async fn download_model(app_handle: AppHandle, size: String, quantized: bool) ->
     std::fs::rename(tmp_path, &model_path).map_err(|e| e.to_string())?;
 
     Ok(model_path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+async fn get_available_models(app_handle: AppHandle) -> Result<Vec<ModelInfo>, String> {
+    let sizes = ["tiny", "base", "small", "medium", "large-v3-turbo", "large-v3"];
+    let mut models = Vec::new();
+
+    for size in sizes {
+        // We check both quantized and non-quantized
+        for quantized in [true, false] {
+            let model_path = get_model_path(&app_handle, size, quantized)?;
+            let name = if quantized { format!("{} (quantized)", size) } else { size.to_string() };
+            
+            let (downloaded, size_bytes) = if model_path.exists() {
+                let meta = fs::metadata(&model_path).map_err(|e| e.to_string())?;
+                (true, meta.len())
+            } else {
+                (false, 0)
+            };
+
+            models.push(ModelInfo {
+                name,
+                size_bytes,
+                downloaded,
+            });
+        }
+    }
+
+    Ok(models)
+}
+
+#[tauri::command]
+async fn delete_model(app_handle: AppHandle, name: String) -> Result<(), String> {
+    // Determine size and quantized from name
+    let (size, quantized) = if name.contains(" (quantized)") {
+        (name.replace(" (quantized)", ""), true)
+    } else {
+        (name, false)
+    };
+
+    let model_path = get_model_path(&app_handle, &size, quantized)?;
+    if model_path.exists() {
+        fs::remove_file(model_path).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+fn get_dir_size(path: &PathBuf) -> u64 {
+    let mut size = 0;
+    if let Ok(entries) = fs::read_dir(path) {
+        for entry in entries.flatten() {
+            let metadata = entry.metadata().unwrap();
+            if metadata.is_dir() {
+                size += get_dir_size(&entry.path());
+            } else {
+                size += metadata.len();
+            }
+        }
+    }
+    size
+}
+
+#[tauri::command]
+async fn get_disk_info(app_handle: AppHandle) -> Result<DiskInfo, String> {
+    let app_data_dir = app_handle.path().app_data_dir().map_err(|e| e.to_string())?;
+    let models_dir = app_data_dir.join("models");
+    let models_dir_size = get_dir_size(&models_dir);
+
+    let mut disks = Disks::new_with_refreshed_list();
+    
+    // Find the disk where app data is located
+    // For simplicity on macOS/Windows, we look for the disk that contains the app data dir.
+    // On Windows it might be C:, on macOS typically /
+    let disk = disks.iter().find(|d| {
+        app_data_dir.starts_with(d.mount_point())
+    }).or_else(|| disks.get(0));
+
+    if let Some(d) = disk {
+        Ok(DiskInfo {
+            total_space: d.total_space(),
+            available_space: d.available_space(),
+            models_dir_size,
+        })
+    } else {
+        Err("Could not get disk info".to_string())
+    }
 }
 
 #[tauri::command]
@@ -251,6 +356,18 @@ async fn transcribe_audio(app_handle: AppHandle, state: tauri::State<'_, AppStat
 }
 
 #[tauri::command]
+async fn start_backend_recording(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let mut recorder = state.audio_recorder.lock().unwrap();
+    recorder.start_recording()
+}
+
+#[tauri::command]
+async fn stop_backend_recording(state: tauri::State<'_, AppState>) -> Result<Vec<u8>, String> {
+    let mut recorder = state.audio_recorder.lock().unwrap();
+    Ok(recorder.stop_recording())
+}
+
+#[tauri::command]
 async fn save_text_file(app_handle: AppHandle, content: String) -> Result<(), String> {
     use tauri_plugin_dialog::FilePath;
     
@@ -279,12 +396,18 @@ pub fn run() {
     tauri::Builder::default()
         .manage(AppState {
             cancel_flag: Arc::new(AtomicBool::new(false)),
+            audio_recorder: Mutex::new(AudioRecorder::new()),
         })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             check_model_exists,
             download_model,
+            get_available_models,
+            delete_model,
+            get_disk_info,
+            start_backend_recording,
+            stop_backend_recording,
             transcribe_audio,
             cancel_transcription,
             save_text_file

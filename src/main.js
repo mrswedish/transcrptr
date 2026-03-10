@@ -19,6 +19,17 @@ const loadingText = document.getElementById("loading-text");
 const progressContainer = document.getElementById("progress-container");
 const progressBar = document.getElementById("progress-bar");
 
+// New UI Elements
+const recordingTimer = document.getElementById("recording-timer");
+const recordingSize = document.getElementById("recording-size");
+const diskForecast = document.getElementById("disk-forecast");
+const footerMic = document.getElementById("footer-mic");
+const footerModel = document.getElementById("footer-model");
+const footerDisk = document.getElementById("footer-disk");
+const modelList = document.getElementById("model-list");
+const smallModelWarning = document.getElementById("small-model-warning");
+const btnRedo = document.getElementById("btn-redo");
+
 // Settings Elements
 const btnSettings = document.getElementById("btn-settings");
 const settingsModal = document.getElementById("settings-modal");
@@ -58,6 +69,12 @@ let currentChunkIdx = 0;
 let totalChunks = 1;
 let animationFrameId = null;
 
+// New Recording Metrics State
+let recordingStartTime = null;
+let recordingTimerInterval = null;
+let estimatedRecordingSize = 0;
+let lastRecordedSegments = []; // Store for "Redo" feature
+
 // Load config from local storage
 function loadSettings() {
   const size = localStorage.getItem("modelSize");
@@ -73,6 +90,47 @@ function loadSettings() {
   selModelSize.value = modelSize;
   selModelQuantized.value = modelQuantized.toString();
   if (selLanguage) selLanguage.value = transcriptionLanguage;
+  
+  // Show/hide small model warning
+  if (smallModelWarning) {
+    if (modelSize === "small") {
+      smallModelWarning.classList.remove("hidden");
+    } else {
+      smallModelWarning.classList.add("hidden");
+    }
+  }
+
+  updateFooter();
+}
+
+// Update the footer information bar
+function updateFooter() {
+  if (footerMic) {
+    const micLabel = Array.from(selMic.options).find(opt => opt.value === selectedMicId)?.text || "Standardmikrofon";
+    footerMic.innerText = micLabel;
+  }
+  if (footerModel) {
+    const fmtName = modelQuantized ? `${modelSize} (kvantiserad)` : modelSize;
+    footerModel.innerText = fmtName;
+  }
+  updateDiskInfo();
+}
+
+async function updateDiskInfo() {
+  try {
+    const info = await invoke("get_disk_info");
+    if (footerDisk) {
+      const freeGb = (info.available_space / (1024 * 1024 * 1024)).toFixed(1);
+      footerDisk.innerText = `Ledigt: ${freeGb} GB`;
+    }
+    
+    // Update forecast if we are recording
+    if (isRecording) {
+      updateDiskForecast(info.available_space);
+    }
+  } catch (err) {
+    console.warn("Kunde inte ladda diskinfo:", err);
+  }
 }
 
 // Load available microphones
@@ -91,6 +149,12 @@ async function loadMicrophones() {
     defaultOption.value = "default";
     defaultOption.text = "Systemets standardmikrofon";
     selMic.appendChild(defaultOption);
+
+    // Add WASAPI option (Windows focus)
+    const wasapiOption = document.createElement("option");
+    wasapiOption.value = "wasapi";
+    wasapiOption.text = "Möte (Systemljud + Mikrofon)";
+    selMic.appendChild(wasapiOption);
 
     audioInputDevices.forEach(device => {
       // Skip the duplicated default entry usually provided by browsers
@@ -150,7 +214,114 @@ async function initialize() {
   loadSettings();
   await loadMicrophones();
   setupEventListeners();
+  updateFooter();
+  refreshModelList();
   await ensureModelReady();
+}
+
+async function refreshModelList() {
+  if (!modelList) return;
+  try {
+    const models = await invoke("get_available_models");
+    modelList.innerHTML = "";
+    
+    if (models.length === 0) {
+      modelList.innerHTML = '<p class="text-xs text-slate-400 italic">Inga modeller hittades.</p>';
+      return;
+    }
+
+    models.forEach(m => {
+      const div = document.createElement("div");
+      div.className = "flex items-center justify-between p-2 bg-slate-50 dark:bg-slate-900/80 rounded-lg border border-slate-200 dark:border-slate-700/50";
+      
+      const info = document.createElement("div");
+      info.className = "flex flex-col";
+      
+      const name = document.createElement("span");
+      name.className = "text-xs font-semibold text-slate-700 dark:text-slate-300";
+      name.innerText = m.name;
+      
+      const size = document.createElement("span");
+      size.className = "text-[10px] text-slate-500 dark:text-slate-500";
+      size.innerText = m.downloaded ? formatSize(m.size_bytes) : "Ej nedladdad";
+      
+      info.appendChild(name);
+      info.appendChild(size);
+      
+      div.appendChild(info);
+      
+      if (m.downloaded) {
+        const delBtn = document.createElement("button");
+        delBtn.className = "p-1.5 text-slate-400 hover:text-red-500 transition-colors";
+        delBtn.innerHTML = '<span class="material-symbols-outlined text-sm">delete</span>';
+        delBtn.onclick = async () => {
+          if (confirm(`Är du säker på att du vill ta bort ${m.name}?`)) {
+            await invoke("delete_model", { name: m.name });
+            refreshModelList();
+            updateFooter();
+          }
+        };
+        div.appendChild(delBtn);
+      }
+      
+      modelList.appendChild(div);
+    });
+  } catch (err) {
+    console.error("Kunde inte ladda modellistan:", err);
+  }
+}
+
+function formatSize(bytes) {
+  if (bytes === 0) return "0 B";
+  const k = 1024;
+  const sizes = ["B", "KB", "MB", "GB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
+}
+
+function updateDiskForecast(availableBytes) {
+  if (!diskForecast) return;
+  // whisper audio is 16kHz mono 32-bit float = 16000 * 4 bytes per second
+  const bytesPerSec = 16000 * 4;
+  const totalSeconds = availableBytes / bytesPerSec;
+  const totalHours = Math.floor(totalSeconds / 3600);
+  
+  if (totalHours > 24) {
+    diskForecast.innerText = `Prognos: >24h kvar`;
+  } else {
+    diskForecast.innerText = `Prognos: ~${totalHours}h kvar`;
+  }
+}
+
+function startRecordingMetrics() {
+  recordingStartTime = Date.now();
+  estimatedRecordingSize = 0;
+  
+  if (recordingTimer) recordingTimer.innerText = "00:00:00";
+  if (recordingSize) recordingSize.innerText = "0.0 MB";
+  
+  recordingTimerInterval = setInterval(() => {
+    const elapsedMs = Date.now() - recordingStartTime;
+    const sec = Math.floor(elapsedMs / 1000);
+    const hrs = Math.floor(sec / 3600).toString().padStart(2, '0');
+    const mins = Math.floor((sec % 3600) / 60).toString().padStart(2, '0');
+    const s = (sec % 60).toString().padStart(2, '0');
+    
+    if (recordingTimer) recordingTimer.innerText = `${hrs}:${mins}:${s}`;
+    
+    // Estimate size
+    estimatedRecordingSize = (elapsedMs / 1000) * (16000 * 4); // 16kHz mono f32
+    if (recordingSize) {
+      recordingSize.innerText = (estimatedRecordingSize / (1024 * 1024)).toFixed(1) + " MB";
+    }
+  }, 1000);
+}
+
+function stopRecordingMetrics() {
+  if (recordingTimerInterval) {
+    clearInterval(recordingTimerInterval);
+    recordingTimerInterval = null;
+  }
 }
 
 async function ensureModelReady() {
@@ -238,8 +409,36 @@ btnSaveSettings.addEventListener("click", async () => {
 
   settingsModal.classList.add("hidden");
 
+  // Show/hide small model warning
+  if (smallModelWarning) {
+    if (modelSize === "small") {
+      smallModelWarning.classList.remove("hidden");
+    } else {
+      smallModelWarning.classList.add("hidden");
+    }
+  }
+
+  updateFooter();
+  refreshModelList();
+
   // Re-check and download if needed
   await ensureModelReady();
+});
+
+// Redo transcription with different model
+btnRedo.addEventListener("click", async () => {
+  if (lastRecordedSegments.length === 0) return;
+  
+  const confirmed = await showConfirm("Vill du göra om transkriberingen med nuvarande inställningar?");
+  if (!confirmed) return;
+  
+  btnRedo.classList.add("hidden");
+  
+  if (lastRecordedSegments.length > 1) {
+    await processSegments([...lastRecordedSegments]);
+  } else {
+    await processAudioBlob(lastRecordedSegments[0].blob);
+  }
 });
 
 // -------------------------------------------------------------
@@ -259,9 +458,12 @@ btnRecord.addEventListener("click", async () => {
 });
 
 // Show custom HTML confirm dialog, returns a Promise<boolean>
-function showConfirm() {
+function showConfirm(msg) {
   return new Promise(resolve => {
     if (!confirmModal) { resolve(true); return; }
+    if (msg) {
+      confirmModal.querySelector("p").innerText = msg;
+    }
     confirmModal.classList.remove("hidden");
     const onOk = () => { cleanup(); resolve(true); };
     const onCancel = () => { cleanup(); resolve(false); };
@@ -345,60 +547,73 @@ function getRecordedPartsLabel() {
 
 async function startRecording() {
   try {
-    const audioConstraints = selectedMicId === "default"
-      ? { audio: true }
-      : { audio: { deviceId: { exact: selectedMicId } } };
+    if (selectedMicId === "wasapi") {
+      // Backend recording mode
+      await invoke("start_backend_recording");
+      isRecording = true;
+      isPaused = false;
+      startRecordingMetrics();
+    } else {
+      const audioConstraints = selectedMicId === "default"
+        ? { audio: true }
+        : { audio: { deviceId: { exact: selectedMicId } } };
 
-    micStream = await navigator.mediaDevices.getUserMedia(audioConstraints);
+      micStream = await navigator.mediaDevices.getUserMedia(audioConstraints);
 
-    // Reset session state
-    sessionSegments = [];
-    currentSegmentChunks = [];
+      // Reset session state
+      sessionSegments = [];
+      currentSegmentChunks = [];
 
-    // --- Visualizer Setup ---
-    audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    analyzer = audioContext.createAnalyser();
-    const source = audioContext.createMediaStreamSource(micStream);
-    source.connect(analyzer);
-    analyzer.fftSize = 256;
-    const bufferLength = analyzer.frequencyBinCount;
-    const dataArray = new Uint8Array(bufferLength);
+      // --- Visualizer Setup ---
+      audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      analyzer = audioContext.createAnalyser();
+      const source = audioContext.createMediaStreamSource(micStream);
+      source.connect(analyzer);
+      analyzer.fftSize = 256;
+      const bufferLength = analyzer.frequencyBinCount;
+      const dataArray = new Uint8Array(bufferLength);
 
-    function drawVisualizer() {
-      if (!isRecording) return;
-      animationFrameId = requestAnimationFrame(drawVisualizer);
-      analyzer.getByteFrequencyData(dataArray);
-      let sum = 0;
-      for (let i = 0; i < bufferLength; i++) sum += dataArray[i];
-      const average = sum / bufferLength;
-      if (audioLevelBar) {
-        const scale = 1 + (average / 150);
-        const clampedScale = Math.min(Math.max(scale, 1), 2.2);
-        audioLevelBar.style.transform = `scale(${clampedScale})`;
+      function drawVisualizer() {
+        if (!isRecording) return;
+        animationFrameId = requestAnimationFrame(drawVisualizer);
+        analyzer.getByteFrequencyData(dataArray);
+        let sum = 0;
+        for (let i = 0; i < bufferLength; i++) sum += dataArray[i];
+        const average = sum / bufferLength;
+        if (audioLevelBar) {
+          const scale = 1 + (average / 150);
+          const clampedScale = Math.min(Math.max(scale, 1), 2.2);
+          audioLevelBar.style.transform = `scale(${clampedScale})`;
+        }
       }
-    }
-    // ------------------------
+      // ------------------------
 
-    mediaRecorder = createRecorder();
-    mediaRecorder.start(1000);
-    isRecording = true;
-    isPaused = false;
-    drawVisualizer();
+      mediaRecorder = createRecorder();
+      mediaRecorder.start(1000);
+      isRecording = true;
+      isPaused = false;
+      drawVisualizer();
+      startRecordingMetrics();
+    }
 
     // UI Updates
     btnRecord.classList.add("recording");
     btnRecord.querySelector(".btn-text").textContent = "Stoppa & transkribera";
     recordingIndicator.classList.remove("hidden");
-    if (recordingStatusText) recordingStatusText.textContent = "Spelar in Del 1";
+    if (recordingStatusText) recordingStatusText.textContent = "Spelar in...";
     if (btnPause) {
-      btnPause.classList.remove("hidden");
-      btnPause.querySelector(".btn-pause-text").textContent = "Pausa inspelning";
-      btnPause.querySelector(".material-symbols-outlined").textContent = "pause";
+      if (selectedMicId !== "wasapi") {
+        btnPause.classList.remove("hidden");
+        btnPause.querySelector(".btn-pause-text").textContent = "Pausa inspelning";
+        btnPause.querySelector(".material-symbols-outlined").textContent = "pause";
+      } else {
+        btnPause.classList.add("hidden"); // Pause not supported for WASAPI for now
+      }
     }
     if (segmentBadge) segmentBadge.classList.add("hidden");
     disableControls();
     btnRecord.disabled = false;
-    if (btnPause) btnPause.disabled = false;
+    if (btnPause && selectedMicId !== "wasapi") btnPause.disabled = false;
   } catch (err) {
     console.error("startRecording error:", err);
     // Clean up on error
@@ -489,6 +704,37 @@ function resumeSession() {
 }
 
 async function stopSession() {
+  if (selectedMicId === "wasapi") {
+    isRecording = false;
+    isPaused = false;
+    stopRecordingMetrics();
+    
+    btnRecord.classList.remove("recording");
+    const btnText = btnRecord.querySelector(".btn-text");
+    if (btnText) btnText.textContent = "Starta ny inspelning";
+    recordingIndicator.classList.add("hidden");
+    btnPause.classList.add("hidden");
+    disableControls();
+
+    loadingText.innerText = "Hämtar ljud från backend...";
+    loadingOverlay.classList.remove("hidden");
+
+    try {
+      const audioBytes = await invoke("stop_backend_recording");
+      const blob = new Blob([new Uint8Array(audioBytes)], { type: 'audio/pcm' });
+      lastRecordedSegments = [{ blob, startTime: new Date() }];
+      btnRedo.classList.remove("hidden");
+      await processAudioBlob(blob);
+    } catch (err) {
+      console.error("WASAPI stop error:", err);
+      await message("Kunde inte hämta ljud från backend: " + err, { title: 'Fel', kind: 'error' });
+    } finally {
+      loadingOverlay.classList.add("hidden");
+      enableControls();
+    }
+    return;
+  }
+
   // If still recording (not paused), stop the recorder first to capture last segment
   if (mediaRecorder && mediaRecorder.state !== "inactive") {
     await new Promise(resolve => {
@@ -515,6 +761,7 @@ async function stopSession() {
 
   isRecording = false;
   isPaused = false;
+  stopRecordingMetrics();
 
   // UI Updates – reset
   btnRecord.classList.remove("recording");
@@ -536,9 +783,12 @@ async function stopSession() {
 
   // Process segments
   if (sessionSegments.length > 0) {
+    lastRecordedSegments = [...sessionSegments];
     const segments = [...sessionSegments];
     sessionSegments = [];
     const multiSegment = segments.length > 1;
+    
+    btnRedo.classList.remove("hidden");
 
     if (multiSegment) {
       // Multiple segments: process each with section headers

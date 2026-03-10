@@ -17,22 +17,30 @@ Tack vare denna träning är modellen ovanligt träffsäker på svenska — den 
 ## ✨ Funktioner
 - **🔒 Integritet först:** Ditt ljud stannar på din dator. Inget skickas till externa servrar — din integritet är garanterad. [Läs vår integritetspolicy](PRIVACY.md)
 - **⚡ Hårdvaruaccelererad:** Vulkan (Windows) och Metal (macOS) utnyttjar din GPU för snabbare transkribering.
-- **🎙️ Flexibel inspelning:** Spela in direkt med valfri mikrofon (med realtidsvisualiserare) eller transkribera befintliga ljudfiler.
-- **⏸️ Pausa inspelning:** Pausa och återuppta inspelningen för kortare avbrott — fikapaus, teknisk paus, eller samtal som inte ska vara med i transkriberingen. Varje del tidsstämplas automatiskt.
+- **🎙️ Mötesinspelning (Windows):** Spela in både din mikrofon och systemljud (WASAPI) från videomöten direkt i appen.
+- **⏸️ Pausa inspelning:** Pausa och återuppta inspelningen för kortare avbrott. Varje del tidsstämplas automatiskt.
+- **🔄 Gör om transkribering:** Upptäckte du att modellen var för liten? Gör om transkriberingen med en större modell utan att behöva spela in ljudet på nytt.
 - **💾 Spara och kopiera:** Exportera transkriberingen som `.txt`-fil eller kopiera direkt till urklipp.
-- **📊 Smart hantering:** Stora ljudfiler delas automatiskt upp i hanterbara delar — inga minneskrascher.
+- **📊 Hantering av modeller:** Se vilka modeller du laddat ner, hur mycket plats de tar och radera de du inte använder.
+- **🛡️ Mer minne:** Automatiskt uppdelning av stora filer för att undvika minnesbrist.
 
 ## 📦 Välj rätt modell
 
 Transcrptr erbjuder tre storlekar av språkmodellen. Du byter modell genom att klicka på **kugghjulet** (⚙️) i appen:
 
-| Modell | Storlek | Hastighet | Träffsäkerhet | Bäst för |
+| Modell | Storlek | Hastighet | Kvalitet | Bäst för |
 |--------|---------|-----------|---------------|----------|
-| **Small** *(standard)* | ~200 MB | ⚡⚡⚡ Snabb | Bra | Vardagliga inspelningar, möten, anteckningar |
-| **Medium** | ~800 MB | ⚡⚡ Medel | Mycket bra | Föreläsningar, intervjuer |
-| **Large** | ~1.6 GB | ⚡ Långsam | Bäst | Svåra dialekter, brusigt ljud, maximal noggrannhet |
+| **Tiny** | ~75 MB | ⚡⚡⚡⚡ | Grundläggande | Mycket snabba anteckningar |
+| **Base** | ~140 MB | ⚡⚡⚡ | Bra | Korta röstmeddelanden |
+| **Small** | ~460 MB | ⚡⚡ | Okej | Enkla anteckningar, ensamtal |
+| **Medium** | ~1.5 GB | ⚡ | Mycket bra | Föreläsningar, intervjuer |
+| **Large v3 Turbo** | ~1.6 GB | ⚡ | Utmärkt | Möten, professionella sammanhang |
+| **Large v3** | ~3.0 GB | 🐢 | Bäst | Svåra dialekter, brusigt ljud |
 
-> **Tips:** Börja med **Small** — den räcker ofta gott och är betydligt snabbare. Om resultatet inte blir tillräckligt bra, prova Medium eller Large. Skillnaden i hastighet beror på att större modeller har fler parametrar att beräkna, vilket kräver mer tid och datorkraft.
+> [!WARNING]
+> **Small-modellen** rekommenderas inte för möten eller samtal med flera deltagare. Kvaliteten på transkriberingen blir ofta för låg för att vara användbar i professionella sammanhang. För möten rekommenderas minst **Medium** eller **Large v3 Turbo**.
+
+> **Tips:** Om resultatet inte blir tillräckligt bra, prova en större modell. Skillnaden i kvalitet är markant mellan t.ex. Small och Large.
 
 ## 📥 Ladda ner
 Gå till [Releases](https://github.com/mrswedish/transcrptr/releases) för att hämta senaste versionen:
