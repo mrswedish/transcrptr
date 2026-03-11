@@ -170,6 +170,50 @@ async fn delete_model(app_handle: AppHandle, name: String) -> Result<(), String>
     Ok(())
 }
 
+#[tauri::command]
+async fn save_audio_file(app_handle: AppHandle, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    use tauri_plugin_dialog::FilePath;
+    use hound::{WavWriter, WavSpec, SampleFormat};
+
+    // Get current recorded samples
+    let samples: Vec<f32> = state.inner().audio_recorder.lock().unwrap()
+        .recorded_samples.lock().unwrap().clone();
+
+    if samples.is_empty() {
+        return Err("Ingen inspelning att spara".to_string());
+    }
+
+    let file_path = app_handle.dialog()
+        .file()
+        .set_title("Spara inspelning")
+        .set_file_name("inspelning.wav")
+        .add_filter("WAV-fil", &["wav"])
+        .blocking_save_file();
+
+    match file_path {
+        Some(path) => {
+            let path_str = match path {
+                FilePath::Path(p) => p,
+                _ => return Err("Ogiltigt filformat".to_string()),
+            };
+            let spec = WavSpec {
+                channels: 1,
+                sample_rate: 16000,
+                bits_per_sample: 32,
+                sample_format: SampleFormat::Float,
+            };
+            let mut writer = WavWriter::create(&path_str, spec)
+                .map_err(|e| format!("Kunde inte skapa WAV-fil: {e}"))?;
+            for &s in &samples {
+                writer.write_sample(s).map_err(|e| format!("Skrivfel: {e}"))?;
+            }
+            writer.finalize().map_err(|e| format!("Fel vid finalisering: {e}"))?;
+            Ok(())
+        },
+        None => Err("cancelled".to_string()),
+    }
+}
+
 fn get_dir_size(path: &PathBuf) -> u64 {
     let mut size = 0;
     if let Ok(entries) = fs::read_dir(path) {
@@ -410,7 +454,8 @@ pub fn run() {
             stop_backend_recording,
             transcribe_audio,
             cancel_transcription,
-            save_text_file
+            save_text_file,
+            save_audio_file
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

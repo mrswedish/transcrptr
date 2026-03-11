@@ -314,6 +314,13 @@ function startRecordingMetrics() {
     if (recordingSize) {
       recordingSize.innerText = (estimatedRecordingSize / (1024 * 1024)).toFixed(1) + " MB";
     }
+
+    // Warn at 25 minutes
+    if (sec === 25 * 60) {
+      if (typeof message === "function") {
+        message("Du har spelat in i 25 minuter. Kom ihåg att avsluta inspelningen i tid — längre inspelningar kräver mer minne och kan ta längre tid att transkribera.", { title: "Lång inspelning", kind: "warning" });
+      }
+    }
   }, 1000);
 }
 
@@ -724,6 +731,8 @@ async function stopSession() {
       const blob = new Blob([new Uint8Array(audioBytes)], { type: 'audio/pcm' });
       lastRecordedSegments = [{ blob, startTime: new Date() }];
       btnRedo.classList.remove("hidden");
+      btnRedo.style.display = "inline-flex";
+      if (btnSaveAudio) { btnSaveAudio.classList.remove("hidden"); btnSaveAudio.style.display = "inline-flex"; }
       await processAudioBlob(blob);
     } catch (err) {
       console.error("WASAPI stop error:", err);
@@ -789,6 +798,8 @@ async function stopSession() {
     const multiSegment = segments.length > 1;
     
     btnRedo.classList.remove("hidden");
+    btnRedo.style.display = "inline-flex";
+    if (btnSaveAudio) { btnSaveAudio.classList.remove("hidden"); btnSaveAudio.style.display = "inline-flex"; }
 
     if (multiSegment) {
       // Multiple segments: process each with section headers
@@ -1071,5 +1082,100 @@ btnSave.addEventListener("click", async () => {
   }
 });
 
+
 // Run Init
 window.addEventListener("DOMContentLoaded", initialize);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Search & Replace
+// ─────────────────────────────────────────────────────────────────────────────
+const searchBar = document.getElementById("search-bar");
+const searchInput = document.getElementById("search-input");
+const replaceInput = document.getElementById("replace-input");
+const btnSearch = document.getElementById("btn-search");
+const btnReplaceOne = document.getElementById("btn-replace-one");
+const btnReplaceAll = document.getElementById("btn-replace-all");
+const btnCloseSearch = document.getElementById("btn-close-search");
+
+function openSearch() {
+  searchBar.classList.remove("hidden");
+  searchInput.focus();
+  searchInput.select();
+}
+function closeSearch() {
+  searchBar.classList.add("hidden");
+  searchInput.value = "";
+  replaceInput.value = "";
+}
+
+btnSearch && btnSearch.addEventListener("click", openSearch);
+btnCloseSearch && btnCloseSearch.addEventListener("click", closeSearch);
+
+document.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === "f") {
+    e.preventDefault();
+    openSearch();
+  }
+  if (e.key === "Escape" && !searchBar.classList.contains("hidden")) {
+    closeSearch();
+  }
+});
+
+btnReplaceOne && btnReplaceOne.addEventListener("click", () => {
+  const needle = searchInput.value;
+  if (!needle) return;
+  const text = outputText.value;
+  const idx = text.indexOf(needle);
+  if (idx === -1) { searchInput.style.color = "red"; setTimeout(() => searchInput.style.color = "", 800); return; }
+  outputText.value = text.slice(0, idx) + (replaceInput.value || "") + text.slice(idx + needle.length);
+});
+
+btnReplaceAll && btnReplaceAll.addEventListener("click", () => {
+  const needle = searchInput.value;
+  if (!needle || !outputText.value) return;
+  const count = (outputText.value.split(needle).length - 1);
+  outputText.value = outputText.value.split(needle).join(replaceInput.value || "");
+  searchInput.placeholder = `Ersatte ${count} förekomster`;
+  setTimeout(() => { searchInput.placeholder = "Sök..."; }, 2000);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Stereo Mix Guide Modal
+// ─────────────────────────────────────────────────────────────────────────────
+const stereoMixModal = document.getElementById("stereo-mix-modal");
+const btnStereoMixHelp = document.getElementById("btn-stereo-mix-help");
+const btnCloseStereoMix = document.getElementById("btn-close-stereo-mix");
+const btnCloseStereoMixOk = document.getElementById("btn-close-stereo-mix-ok");
+
+btnStereoMixHelp && btnStereoMixHelp.addEventListener("click", () => {
+  settingsModal.classList.add("hidden");
+  stereoMixModal.classList.remove("hidden");
+});
+btnCloseStereoMix && btnCloseStereoMix.addEventListener("click", () => stereoMixModal.classList.add("hidden"));
+btnCloseStereoMixOk && btnCloseStereoMixOk.addEventListener("click", () => stereoMixModal.classList.add("hidden"));
+stereoMixModal && stereoMixModal.addEventListener("click", (e) => {
+  if (e.target === stereoMixModal) stereoMixModal.classList.add("hidden");
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Save Audio File
+// ─────────────────────────────────────────────────────────────────────────────
+const btnSaveAudio = document.getElementById("btn-save-audio");
+
+btnSaveAudio && btnSaveAudio.addEventListener("click", async () => {
+  try {
+    await invoke("save_audio_file");
+  } catch (err) {
+    const msg = typeof err === "string" ? err : err.message || String(err);
+    if (!msg.includes("cancelled") && !msg.includes("canceled")) {
+      await message(`Kunde inte spara ljudfilen: ${msg}`, { title: "Fel", kind: "error" });
+    }
+  }
+});
+
+// Show Save Audio button after recording completes (hooked into existing flow)
+// We patch the existing transcription end so the button shows
+const _origShowRedo = () => {
+  btnRedo && btnRedo.classList.remove("hidden");
+  btnRedo && (btnRedo.style.display = "inline-flex");
+};
