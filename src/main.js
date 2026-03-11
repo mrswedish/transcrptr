@@ -134,11 +134,15 @@ async function updateDiskInfo() {
 }
 
 // Load available microphones
+let firstMicDeviceId = null; // Actual deviceId of first real mic
+
 async function loadMicrophones() {
   if (!selMic) return;
   try {
-    // Request permission first, otherwise labels might be empty
-    await navigator.mediaDevices.getUserMedia({ audio: true });
+    // Request permission first; stop the stream immediately after
+    const permStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    permStream.getTracks().forEach(t => t.stop());
+
     const devices = await navigator.mediaDevices.enumerateDevices();
     const audioInputDevices = devices.filter(device => device.kind === 'audioinput');
 
@@ -157,8 +161,13 @@ async function loadMicrophones() {
     selMic.appendChild(wasapiOption);
 
     audioInputDevices.forEach(device => {
-      // Skip the duplicated default entry usually provided by browsers
+      // Skip the duplicated default/communications entries
       if (device.deviceId === "default" || device.deviceId === "communications") return;
+
+      // Remember the first real mic for use when "default" is selected
+      if (!firstMicDeviceId && device.deviceId) {
+        firstMicDeviceId = device.deviceId;
+      }
 
       const option = document.createElement("option");
       option.value = device.deviceId;
@@ -660,9 +669,15 @@ async function startRecording() {
       isPaused = false;
       startRecordingMetrics();
     } else {
-      const audioConstraints = selectedMicId === "default"
+      // For "default", use the actual firstMicDeviceId if we found one,
+      // because Tauri/WebView2 on Windows doesn't reliably handle implicit default
+      let resolvedMicId = selectedMicId;
+      if (selectedMicId === "default" && firstMicDeviceId) {
+        resolvedMicId = firstMicDeviceId;
+      }
+      const audioConstraints = resolvedMicId === "default"
         ? { audio: true }
-        : { audio: { deviceId: { exact: selectedMicId } } };
+        : { audio: { deviceId: { exact: resolvedMicId } } };
 
       micStream = await navigator.mediaDevices.getUserMedia(audioConstraints);
 
