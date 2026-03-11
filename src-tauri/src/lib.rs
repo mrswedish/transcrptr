@@ -404,9 +404,9 @@ struct RecordingStartResult {
 }
 
 #[tauri::command]
-async fn start_backend_recording(state: tauri::State<'_, AppState>, mic_device_name: Option<String>) -> Result<RecordingStartResult, String> {
+async fn start_backend_recording(state: tauri::State<'_, AppState>, loopback_only: bool) -> Result<RecordingStartResult, String> {
     let mut recorder = state.inner().audio_recorder.lock().unwrap();
-    recorder.start_recording(mic_device_name)?;
+    recorder.start_recording(loopback_only)?;
     Ok(RecordingStartResult { loopback_active: recorder.loopback_active })
 }
 

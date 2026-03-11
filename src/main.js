@@ -667,15 +667,51 @@ function getRecordedPartsLabel() {
 async function startRecording() {
   try {
     if (wasapiEnabled) {
-      // Backend recording mode (WASAPI loopback + selected mic)
-      const micLabel = selMic && selMic.selectedIndex >= 0
-        ? selMic.options[selMic.selectedIndex].text
-        : null;
-      const result = await invoke("start_backend_recording", { micDeviceName: micLabel });
+      // Hybrid mode: browser records mic (reliable), Rust backend records loopback only.
+      // Both are decoded and mixed in JS at stop time.
+      let resolvedMicId = selectedMicId;
+      if (selectedMicId === "default" && firstMicDeviceId) resolvedMicId = firstMicDeviceId;
+      const audioConstraints = resolvedMicId === "default"
+        ? { audio: true }
+        : { audio: { deviceId: { exact: resolvedMicId } } };
+
+      micStream = await navigator.mediaDevices.getUserMedia(audioConstraints);
+
+      sessionSegments = [];
+      currentSegmentChunks = [];
+
+      audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      analyzer = audioContext.createAnalyser();
+      const wasapiSource = audioContext.createMediaStreamSource(micStream);
+      wasapiSource.connect(analyzer);
+      analyzer.fftSize = 256;
+      const wasapiBufLen = analyzer.frequencyBinCount;
+      const wasapiDataArr = new Uint8Array(wasapiBufLen);
+
+      function drawVisualizer() {
+        if (!isRecording) return;
+        animationFrameId = requestAnimationFrame(drawVisualizer);
+        analyzer.getByteFrequencyData(wasapiDataArr);
+        let sum = 0;
+        for (let i = 0; i < wasapiBufLen; i++) sum += wasapiDataArr[i];
+        const average = sum / wasapiBufLen;
+        if (audioLevelBar) {
+          const clampedScale = Math.min(Math.max(1 + average / 150, 1), 2.2);
+          audioLevelBar.style.transform = `scale(${clampedScale})`;
+        }
+      }
+
+      mediaRecorder = createRecorder();
+      mediaRecorder.start(1000);
+
+      // Start loopback-only capture in backend (no mic there)
+      const result = await invoke("start_backend_recording", { loopbackOnly: true });
+
       isRecording = true;
       isPaused = false;
+      drawVisualizer();
       startRecordingMetrics();
-      // Inform user if loopback (system audio) could not be captured
+
       if (!result.loopback_active && recordingStatusText) {
         recordingStatusText.textContent = "Spelar in (mikrofon — systemljud ej tillgängligt)";
       }
@@ -840,7 +876,7 @@ async function stopSession() {
     isRecording = false;
     isPaused = false;
     stopRecordingMetrics();
-    
+
     btnRecord.classList.remove("recording");
     const btnText = btnRecord.querySelector(".btn-text");
     if (btnText) btnText.textContent = "Starta ny inspelning";
@@ -848,20 +884,51 @@ async function stopSession() {
     btnPause.classList.add("hidden");
     disableControls();
 
-    loadingText.innerText = "Hämtar ljud från backend...";
+    // Flush the last mic chunk from MediaRecorder
+    if (mediaRecorder && mediaRecorder.state !== "inactive") {
+      await new Promise(resolve => {
+        const origOnstop = mediaRecorder.onstop;
+        mediaRecorder.onstop = () => { origOnstop(); resolve(); };
+        mediaRecorder.stop();
+      });
+    }
+
+    if (micStream) micStream.getTracks().forEach(t => t.stop());
+    if (audioContext && audioContext.state !== "closed") {
+      audioContext.close();
+      audioContext = null;
+    }
+
+    loadingText.innerText = "Hämtar systemljud...";
     loadingOverlay.classList.remove("hidden");
 
     try {
-      const audioBytes = await invoke("stop_backend_recording");
-      const blob = new Blob([new Uint8Array(audioBytes)], { type: 'audio/pcm' });
-      lastRecordedSegments = [{ blob, startTime: new Date() }];
+      const loopbackBytes = await invoke("stop_backend_recording");
+
+      const micBlobs = sessionSegments.map(s => s.blob);
+      const hasMic = micBlobs.length > 0;
+      const hasLoopback = loopbackBytes && loopbackBytes.length > 44;
+
+      let finalBlob;
+      if (hasMic && hasLoopback) {
+        const micBlob = new Blob(micBlobs, { type: micBlobs[0].type });
+        const loopbackBlob = new Blob([new Uint8Array(loopbackBytes)], { type: 'audio/wav' });
+        loadingText.innerText = "Mixar ljud...";
+        finalBlob = await mixAudioBlobs(micBlob, loopbackBlob);
+      } else if (hasMic) {
+        finalBlob = new Blob(micBlobs, { type: micBlobs[0].type });
+      } else {
+        finalBlob = new Blob([new Uint8Array(loopbackBytes)], { type: 'audio/wav' });
+      }
+
+      lastRecordedSegments = [{ blob: finalBlob, startTime: new Date() }];
       btnRedo.classList.remove("hidden");
       btnRedo.style.display = "inline-flex";
       if (btnSaveAudio) { btnSaveAudio.classList.remove("hidden"); btnSaveAudio.style.display = "inline-flex"; }
-      await processAudioBlob(blob);
+      await processAudioBlob(finalBlob);
     } catch (err) {
       console.error("WASAPI stop error:", err);
-      await message("Kunde inte hämta ljud från backend: " + err, { title: 'Fel', kind: 'error' });
+      await message("Kunde inte hämta ljud: " + err, { title: 'Fel', kind: 'error' });
     } finally {
       loadingOverlay.classList.add("hidden");
       enableControls();
@@ -1059,6 +1126,54 @@ fileInput.addEventListener("change", async (e) => {
 });
 
 // -------------------------------------------------------------
+// Audio mixing helpers (used by WASAPI hybrid mode)
+// -------------------------------------------------------------
+
+async function decodeAudioToFloat32(blob) {
+  const arrayBuffer = await blob.arrayBuffer();
+  const ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+  const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+  ctx.close();
+  return audioBuffer.getChannelData(0);
+}
+
+function float32ToWavBlob(samples, sampleRate) {
+  const numSamples = samples.length;
+  const buffer = new ArrayBuffer(44 + numSamples * 4);
+  const view = new DataView(buffer);
+  const writeStr = (off, str) => { for (let i = 0; i < str.length; i++) view.setUint8(off + i, str.charCodeAt(i)); };
+  writeStr(0, 'RIFF');
+  view.setUint32(4, 36 + numSamples * 4, true);
+  writeStr(8, 'WAVE');
+  writeStr(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 3, true);  // IEEE float
+  view.setUint16(22, 1, true);  // mono
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 4, true);
+  view.setUint16(32, 4, true);
+  view.setUint16(34, 32, true);
+  writeStr(36, 'data');
+  view.setUint32(40, numSamples * 4, true);
+  for (let i = 0; i < numSamples; i++) view.setFloat32(44 + i * 4, samples[i], true);
+  return new Blob([buffer], { type: 'audio/wav' });
+}
+
+async function mixAudioBlobs(blobA, blobB) {
+  const [dataA, dataB] = await Promise.all([
+    decodeAudioToFloat32(blobA),
+    decodeAudioToFloat32(blobB)
+  ]);
+  const len = Math.max(dataA.length, dataB.length);
+  const mixed = new Float32Array(len);
+  for (let i = 0; i < len; i++) {
+    const a = i < dataA.length ? dataA[i] : 0;
+    const b = i < dataB.length ? dataB[i] : 0;
+    mixed[i] = Math.max(-1, Math.min(1, a + b));
+  }
+  return float32ToWavBlob(mixed, 16000);
+}
+
 // Audio Processing and Transcription (chunked for large files)
 // -------------------------------------------------------------
 

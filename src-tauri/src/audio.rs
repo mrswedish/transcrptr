@@ -69,7 +69,8 @@ impl AudioRecorder {
         }
     }
 
-    pub fn start_recording(&mut self, mic_device_name: Option<String>) -> Result<(), String> {
+    /// `loopback_only`: when true, skip the mic stream — the browser handles mic capture.
+    pub fn start_recording(&mut self, loopback_only: bool) -> Result<(), String> {
         let host = cpal::default_host();
 
         // Clear all buffers
@@ -77,56 +78,37 @@ impl AudioRecorder {
         self.mic_samples.lock().unwrap().clear();
         self.loopback_samples.lock().unwrap().clear();
 
-        // ── 1. Microphone stream ──────────────────────────────────────────────
-        // If a device name is provided, try to find a matching input device.
-        // The browser label (e.g. "Mikrofon (Realtek Audio)") and the cpal name
-        // are usually identical or very similar on Windows, so we do a
-        // case-insensitive substring match in both directions as a fallback.
-        let mic_device = if let Some(ref name) = mic_device_name {
-            let name_lower = name.to_lowercase();
-            let found = host.input_devices()
-                .ok()
-                .and_then(|mut devs| devs.find(|d| {
-                    d.name().map(|n| {
-                        let n_lower = n.to_lowercase();
-                        n_lower.contains(&name_lower) || name_lower.contains(&n_lower)
-                    }).unwrap_or(false)
-                }));
-            if let Some(dev) = found {
-                eprintln!("[audio] Mic matched by name: {:?}", dev.name());
-                dev
-            } else {
-                eprintln!("[audio] No mic match for {:?}, using default", name);
-                host.default_input_device().ok_or("Ingen mikrofonenhet hittades")?
-            }
-        } else {
-            host.default_input_device().ok_or("Ingen mikrofonenhet hittades")?
-        };
+        // ── 1. Microphone stream (skipped in loopback_only mode) ──────────────
+        if !loopback_only {
+            let mic_device = host
+                .default_input_device()
+                .ok_or("Ingen mikrofonenhet hittades")?;
 
-        let mic_config = mic_device
-            .default_input_config()
-            .map_err(|e| format!("Mic config: {e}"))?;
+            let mic_config = mic_device
+                .default_input_config()
+                .map_err(|e| format!("Mic config: {e}"))?;
 
-        let mic_channels = mic_config.channels();
-        let mic_rate = mic_config.sample_rate().0;
-        eprintln!("[audio] Mic: {mic_channels}ch @ {mic_rate} Hz");
+            let mic_channels = mic_config.channels();
+            let mic_rate = mic_config.sample_rate().0;
+            eprintln!("[audio] Mic: {mic_channels}ch @ {mic_rate} Hz");
 
-        let mic_buf = Arc::clone(&self.mic_samples);
-        let mic_stream = mic_device
-            .build_input_stream(
-                &mic_config.into(),
-                move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                    let mono = to_mono(data, mic_channels);
-                    let resampled = resample_to_16k(&mono, mic_rate);
-                    mic_buf.lock().unwrap().extend_from_slice(&resampled);
-                },
-                |err| eprintln!("[audio] Mic error: {err}"),
-                None,
-            )
-            .map_err(|e| format!("Mic stream: {e}"))?;
+            let mic_buf = Arc::clone(&self.mic_samples);
+            let mic_stream = mic_device
+                .build_input_stream(
+                    &mic_config.into(),
+                    move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                        let mono = to_mono(data, mic_channels);
+                        let resampled = resample_to_16k(&mono, mic_rate);
+                        mic_buf.lock().unwrap().extend_from_slice(&resampled);
+                    },
+                    |err| eprintln!("[audio] Mic error: {err}"),
+                    None,
+                )
+                .map_err(|e| format!("Mic stream: {e}"))?;
 
-        mic_stream.play().map_err(|e| format!("Mic play: {e}"))?;
-        self.mic_stream = Some(SendStream(mic_stream));
+            mic_stream.play().map_err(|e| format!("Mic play: {e}"))?;
+            self.mic_stream = Some(SendStream(mic_stream));
+        }
 
         // ── 2. WASAPI Loopback stream (Windows only) ──────────────────────────
         // cpal's WASAPI backend auto-enables AUDCLNT_STREAMFLAGS_LOOPBACK when
