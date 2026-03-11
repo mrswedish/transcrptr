@@ -164,6 +164,11 @@ async function loadMicrophones() {
       // Skip the duplicated default/communications entries
       if (device.deviceId === "default" || device.deviceId === "communications") return;
 
+      // Skip virtual capture devices (Stereo Mix, What U Hear, etc.)
+      // They must be set as Windows default mic and used via "Systemets standardmikrofon"
+      const lbl = (device.label || "").toLowerCase();
+      if (lbl.includes("stereo mix") || lbl.includes("what u hear") || lbl.includes("wat u hoort")) return;
+
       // Remember the first real mic for use when "default" is selected
       if (!firstMicDeviceId && device.deviceId) {
         firstMicDeviceId = device.deviceId;

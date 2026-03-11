@@ -44,37 +44,35 @@ Det finns två sätt att spela in både mikrofon och datorns systemljud (Teams, 
 
 | | **WASAPI** *(inbyggt)* | **Stereo Mix** *(Windows-funktion)* |
 |---|---|---|
-| **Kräver installation** | Nej | Ja (engångsinställning) |
+| **Kräver inställning** | Nej | Ja (engångsinställning) |
 | **Pausa inspelning** | Nej | Ja |
-| **Mikrofon** | Valfri mikrofon | Valfri mikrofon |
+| **Välj mikrofon i appen** | Ja | Nej (styrs av Windows) |
 | **Systemljud** | Ja | Ja |
 | **Drivrutinsstöd** | Beror på ljudkortet | Beror på ljudkortet |
 
 ### Alternativ 1: WASAPI (inbyggt, ingen installation)
 
-Välj **"Systemljud + Mikrofon"** i mikrofondropplistan i appen. Transcrptr spelar automatiskt in datorns systemljud via WASAPI loopback.
-
-> [!IMPORTANT]
-> Välj önskad mikrofon i mikrofonlistan i appen innan du aktiverar WASAPI-toggle. Mikrofon och systemljud mixas automatiskt.
+Aktivera **"Spela in systemljud (WASAPI)"** i inställningarna (⚙️) i appen. Transcrptr spelar in datorns systemljud automatiskt och mixar det med den mikrofon du valt i listan.
 
 > [!NOTE]
 > Pause-knappen är inte tillgänglig i WASAPI-läge.
 
 ### Alternativ 2: Stereo Mix (rekommenderas för möten)
 
-Stereo Mix är en virtuell Windows-enhet som mixar ihop systemljud och valfri mikrofon. Mer pålitlig och ger dig full kontroll över vilken mikrofon som används.
+Stereo Mix är en virtuell Windows-enhet som fångar allt systemljud och mixar det med valfri mikrofon. Kräver en engångsinställning i Windows.
 
 1. **Öppna ljudinställningar:** Högerklicka på ljudikonen i aktivitetsfältet → välj **"Ljudinställningar"**.
 2. **Hitta detaljerade steg:** Scrolla längst ner och klicka på **"Mer ljudinställningar"** (viktigt för Windows 11).
 3. **Visa enheter:** I fönstret som öppnas, gå till fliken **Inspelning**. Högerklicka på en tom yta och aktivera **"Visa inaktiverade enheter"**.
 4. **Aktivera:** Högerklicka på **Stereo Mix** → **Aktivera**.
-5. **Välj i appen:** Gå till inställningarna i Transcrptr och välj **Stereo Mix** i mikrofonlistan.
+5. **Sätt som standard:** Högerklicka på **Stereo Mix** igen → **"Ange som standardenhet"**.
+6. **Välj i appen:** Välj **"Systemets standardmikrofon"** i mikrofonlistan i Transcrptr.
 
 > [!IMPORTANT]
 > Starta alltid mötet och se till att ljud spelas **innan** du trycker Spela in i Transcrptr.
 
 > [!NOTE]
-> Syns inte Stereo Mix i listan? Din dators ljudkort saknar stöd för det. Använd WASAPI-alternativet istället.
+> Syns inte Stereo Mix? Din dators ljudkort saknar stöd för det. Använd WASAPI-alternativet istället.
 
 ## 📥 Ladda ner
 Gå till [Releases](https://github.com/mrswedish/transcrptr/releases) för senaste versionen:
