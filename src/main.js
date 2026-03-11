@@ -154,11 +154,6 @@ async function loadMicrophones() {
     defaultOption.text = "Systemets standardmikrofon";
     selMic.appendChild(defaultOption);
 
-    // Add WASAPI option (Windows focus — captures mic + system audio loopback)
-    const wasapiOption = document.createElement("option");
-    wasapiOption.value = "wasapi";
-    wasapiOption.text = "Möte / Skärm — Mikrofon + Systemljud (Windows, experimentellt)";
-    selMic.appendChild(wasapiOption);
 
     audioInputDevices.forEach(device => {
       // Skip the duplicated default/communications entries
