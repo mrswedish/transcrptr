@@ -154,6 +154,11 @@ async function loadMicrophones() {
     defaultOption.text = "Systemets standardmikrofon";
     selMic.appendChild(defaultOption);
 
+    // Add WASAPI Loopback option (Stereo Mix replacement)
+    const wasapiOption = document.createElement("option");
+    wasapiOption.value = "wasapi";
+    wasapiOption.text = "Systemljud + Mikrofon (Möten/Musik)";
+    selMic.appendChild(wasapiOption);
 
     audioInputDevices.forEach(device => {
       // Skip the duplicated default/communications entries
@@ -1260,10 +1265,19 @@ btnStereoMixHelp && btnStereoMixHelp.addEventListener("click", () => {
   settingsModal.classList.add("hidden");
   stereoMixModal.classList.remove("hidden");
 });
-btnCloseStereoMix && btnCloseStereoMix.addEventListener("click", () => stereoMixModal.classList.add("hidden"));
-btnCloseStereoMixOk && btnCloseStereoMixOk.addEventListener("click", () => stereoMixModal.classList.add("hidden"));
+btnCloseStereoMix && btnCloseStereoMix.addEventListener("click", () => {
+    stereoMixModal.classList.add("hidden");
+    settingsModal.classList.remove("hidden");
+});
+btnCloseStereoMixOk && btnCloseStereoMixOk.addEventListener("click", () => {
+    stereoMixModal.classList.add("hidden");
+    settingsModal.classList.remove("hidden");
+});
 stereoMixModal && stereoMixModal.addEventListener("click", (e) => {
-  if (e.target === stereoMixModal) stereoMixModal.classList.add("hidden");
+  if (e.target === stereoMixModal) {
+      stereoMixModal.classList.add("hidden");
+      settingsModal.classList.remove("hidden");
+  }
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -173,11 +173,22 @@ impl AudioRecorder {
         // Store in recorded_samples so save_audio_file can access it
         *self.recorded_samples.lock().unwrap() = mixed.clone();
 
-        // Convert to raw bytes for Whisper
-        let mut bytes = Vec::with_capacity(mixed.len() * 4);
-        for &s in &mixed {
-            bytes.extend_from_slice(&s.to_le_bytes());
+        // Convert to WAV bytes for the frontend
+        let mut cursor = std::io::Cursor::new(Vec::new());
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: 16000,
+            bits_per_sample: 32,
+            sample_format: hound::SampleFormat::Float,
+        };
+
+        if let Ok(mut writer) = hound::WavWriter::new(&mut cursor, spec) {
+            for &s in &mixed {
+                let _ = writer.write_sample(s);
+            }
+            let _ = writer.finalize();
         }
-        bytes
+
+        cursor.into_inner()
     }
 }
