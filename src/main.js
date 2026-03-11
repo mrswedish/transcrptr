@@ -55,6 +55,7 @@ let modelSize = "small";
 let modelQuantized = true;
 let transcriptionLanguage = "sv";
 let selectedMicId = "default";
+let wasapiEnabled = false;
 let audioContext = null;
 let analyzer = null;
 let micStream = null;
@@ -81,11 +82,16 @@ function loadSettings() {
   const quantized = localStorage.getItem("modelQuantized");
   const lang = localStorage.getItem("transcriptionLanguage");
   const micId = localStorage.getItem("selectedMicId");
+  const wasapi = localStorage.getItem("wasapiEnabled");
 
   if (size) modelSize = size;
   if (quantized !== null) modelQuantized = quantized === "true";
   if (lang) transcriptionLanguage = lang;
   if (micId) selectedMicId = micId;
+  if (wasapi !== null) wasapiEnabled = wasapi === "true";
+
+  const wasapiToggle = document.getElementById("wasapi-toggle");
+  if (wasapiToggle) wasapiToggle.checked = wasapiEnabled;
 
   selModelSize.value = modelSize;
   selModelQuantized.value = modelQuantized.toString();
@@ -153,12 +159,6 @@ async function loadMicrophones() {
     defaultOption.value = "default";
     defaultOption.text = "Systemets standardmikrofon";
     selMic.appendChild(defaultOption);
-
-    // Add WASAPI Loopback option (Stereo Mix replacement)
-    const wasapiOption = document.createElement("option");
-    wasapiOption.value = "wasapi";
-    wasapiOption.text = "Systemljud + Mikrofon (Möten/Musik)";
-    selMic.appendChild(wasapiOption);
 
     audioInputDevices.forEach(device => {
       // Skip the duplicated default/communications entries
@@ -511,16 +511,20 @@ btnSaveSettings.addEventListener("click", async () => {
   const newQuant = selModelQuantized.value === "true";
   const newLang = selLanguage ? selLanguage.value : "sv";
   const newMicId = selMic ? selMic.value : "default";
+  const wasapiToggle = document.getElementById("wasapi-toggle");
+  const newWasapi = wasapiToggle ? wasapiToggle.checked : false;
 
   localStorage.setItem("modelSize", newSize);
   localStorage.setItem("modelQuantized", newQuant.toString());
   localStorage.setItem("transcriptionLanguage", newLang);
   localStorage.setItem("selectedMicId", newMicId);
+  localStorage.setItem("wasapiEnabled", newWasapi.toString());
 
   modelSize = newSize;
   modelQuantized = newQuant;
   transcriptionLanguage = newLang;
   selectedMicId = newMicId;
+  wasapiEnabled = newWasapi;
 
   settingsModal.classList.add("hidden");
 
@@ -662,9 +666,12 @@ function getRecordedPartsLabel() {
 
 async function startRecording() {
   try {
-    if (selectedMicId === "wasapi") {
-      // Backend recording mode
-      const result = await invoke("start_backend_recording");
+    if (wasapiEnabled) {
+      // Backend recording mode (WASAPI loopback + selected mic)
+      const micLabel = selMic && selMic.selectedIndex >= 0
+        ? selMic.options[selMic.selectedIndex].text
+        : null;
+      const result = await invoke("start_backend_recording", { micDeviceName: micLabel });
       isRecording = true;
       isPaused = false;
       startRecordingMetrics();
@@ -727,18 +734,18 @@ async function startRecording() {
     recordingIndicator.classList.remove("hidden");
     if (recordingStatusText) recordingStatusText.textContent = "Spelar in...";
     if (btnPause) {
-      if (selectedMicId !== "wasapi") {
+      if (!wasapiEnabled) {
         btnPause.classList.remove("hidden");
         btnPause.querySelector(".btn-pause-text").textContent = "Pausa inspelning";
         btnPause.querySelector(".material-symbols-outlined").textContent = "pause";
       } else {
-        btnPause.classList.add("hidden"); // Pause not supported for WASAPI for now
+        btnPause.classList.add("hidden"); // Pause not supported in WASAPI mode
       }
     }
     if (segmentBadge) segmentBadge.classList.add("hidden");
     disableControls();
     btnRecord.disabled = false;
-    if (btnPause && selectedMicId !== "wasapi") btnPause.disabled = false;
+    if (btnPause && !wasapiEnabled) btnPause.disabled = false;
   } catch (err) {
     console.error("startRecording error:", err);
     // Clean up on error
@@ -829,7 +836,7 @@ function resumeSession() {
 }
 
 async function stopSession() {
-  if (selectedMicId === "wasapi") {
+  if (wasapiEnabled) {
     isRecording = false;
     isPaused = false;
     stopRecordingMetrics();

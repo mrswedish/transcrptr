@@ -69,7 +69,7 @@ impl AudioRecorder {
         }
     }
 
-    pub fn start_recording(&mut self) -> Result<(), String> {
+    pub fn start_recording(&mut self, mic_device_name: Option<String>) -> Result<(), String> {
         let host = cpal::default_host();
 
         // Clear all buffers
@@ -78,9 +78,30 @@ impl AudioRecorder {
         self.loopback_samples.lock().unwrap().clear();
 
         // ── 1. Microphone stream ──────────────────────────────────────────────
-        let mic_device = host
-            .default_input_device()
-            .ok_or("Ingen mikrofonenhet hittades")?;
+        // If a device name is provided, try to find a matching input device.
+        // The browser label (e.g. "Mikrofon (Realtek Audio)") and the cpal name
+        // are usually identical or very similar on Windows, so we do a
+        // case-insensitive substring match in both directions as a fallback.
+        let mic_device = if let Some(ref name) = mic_device_name {
+            let name_lower = name.to_lowercase();
+            let found = host.input_devices()
+                .ok()
+                .and_then(|mut devs| devs.find(|d| {
+                    d.name().map(|n| {
+                        let n_lower = n.to_lowercase();
+                        n_lower.contains(&name_lower) || name_lower.contains(&n_lower)
+                    }).unwrap_or(false)
+                }));
+            if let Some(dev) = found {
+                eprintln!("[audio] Mic matched by name: {:?}", dev.name());
+                dev
+            } else {
+                eprintln!("[audio] No mic match for {:?}, using default", name);
+                host.default_input_device().ok_or("Ingen mikrofonenhet hittades")?
+            }
+        } else {
+            host.default_input_device().ok_or("Ingen mikrofonenhet hittades")?
+        };
 
         let mic_config = mic_device
             .default_input_config()

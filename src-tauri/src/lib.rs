@@ -352,7 +352,7 @@ async fn transcribe_audio(app_handle: AppHandle, state: tauri::State<'_, AppStat
                 .collect();
 
             // Run the main transcription
-            let res = transcriber_state.full(params, samples);
+            let res = transcriber_state.full(params, &samples);
             
             // Abort poller just in case
             poller_handle.abort();
@@ -404,9 +404,9 @@ struct RecordingStartResult {
 }
 
 #[tauri::command]
-async fn start_backend_recording(state: tauri::State<'_, AppState>) -> Result<RecordingStartResult, String> {
+async fn start_backend_recording(state: tauri::State<'_, AppState>, mic_device_name: Option<String>) -> Result<RecordingStartResult, String> {
     let mut recorder = state.inner().audio_recorder.lock().unwrap();
-    recorder.start_recording()?;
+    recorder.start_recording(mic_device_name)?;
     Ok(RecordingStartResult { loopback_active: recorder.loopback_active })
 }
 
