@@ -344,14 +344,12 @@ async fn transcribe_audio(app_handle: AppHandle, state: tauri::State<'_, AppStat
                 }
             });
 
-            // Safely cast the incoming Vec<u8> to a &[f32]
-            // We ensure it aligns properly and hasn't been corrupted.
-            let samples: &[f32] = unsafe {
-                std::slice::from_raw_parts(
-                    audio_bytes.as_ptr() as *const f32,
-                    audio_bytes.len() / std::mem::size_of::<f32>(),
-                )
-            };
+            // Safely convert Vec<u8> (little-endian f32 bytes) to Vec<f32>.
+            // The unsafe cast from &[u8] to &[f32] is UB due to alignment — use safe conversion instead.
+            let samples: Vec<f32> = audio_bytes
+                .chunks_exact(4)
+                .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+                .collect();
 
             // Run the main transcription
             let res = transcriber_state.full(params, samples);
