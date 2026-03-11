@@ -909,23 +909,39 @@ async function stopSession() {
       const hasMic = micBlobs.length > 0;
       const hasLoopback = loopbackBytes && loopbackBytes.length > 44;
 
-      let finalBlob;
+      // Decode both streams to Float32 and mix — avoids WAV format compat issues
+      let float32Data;
+      loadingText.innerText = "Bearbetar ljud...";
+      outputText.value = "";
       if (hasMic && hasLoopback) {
         const micBlob = new Blob(micBlobs, { type: micBlobs[0].type });
         const loopbackBlob = new Blob([new Uint8Array(loopbackBytes)], { type: 'audio/wav' });
-        loadingText.innerText = "Mixar ljud...";
-        finalBlob = await mixAudioBlobs(micBlob, loopbackBlob);
+        float32Data = await mixAudioToFloat32(micBlob, loopbackBlob);
+        console.log(`[wasapi] Mixed: ${float32Data.length} samples (${(float32Data.length/16000).toFixed(1)}s)`);
       } else if (hasMic) {
-        finalBlob = new Blob(micBlobs, { type: micBlobs[0].type });
+        const micBlob = new Blob(micBlobs, { type: micBlobs[0].type });
+        float32Data = await decodeAudioToFloat32(micBlob);
+        console.log(`[wasapi] Mic only: ${float32Data.length} samples`);
       } else {
-        finalBlob = new Blob([new Uint8Array(loopbackBytes)], { type: 'audio/wav' });
+        const loopbackBlob = new Blob([new Uint8Array(loopbackBytes)], { type: 'audio/wav' });
+        float32Data = await decodeAudioToFloat32(loopbackBlob);
+        console.log(`[wasapi] Loopback only: ${float32Data.length} samples`);
       }
 
-      lastRecordedSegments = [{ blob: finalBlob, startTime: new Date() }];
+      // Store a placeholder blob for Redo/Save (mic blob if available)
+      const redoBlob = hasMic
+        ? new Blob(micBlobs, { type: micBlobs[0].type })
+        : new Blob([new Uint8Array(loopbackBytes)], { type: 'audio/wav' });
+      lastRecordedSegments = [{ blob: redoBlob, startTime: new Date() }];
       btnRedo.classList.remove("hidden");
       btnRedo.style.display = "inline-flex";
       if (btnSaveAudio) { btnSaveAudio.classList.remove("hidden"); btnSaveAudio.style.display = "inline-flex"; }
-      await processAudioBlob(finalBlob);
+
+      // Transcribe directly from Float32 — no WAV encode/decode roundtrip
+      const text = await transcribeFloat32(float32Data);
+      if (!text || !text.trim()) {
+        outputText.value = "[Ingen text hittades i inspelningen]";
+      }
     } catch (err) {
       console.error("WASAPI stop error:", err);
       await message("Kunde inte hämta ljud: " + err, { title: 'Fel', kind: 'error' });
@@ -1134,32 +1150,13 @@ async function decodeAudioToFloat32(blob) {
   const ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
   const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
   ctx.close();
-  return audioBuffer.getChannelData(0);
+  // .slice() copies the data out of the AudioBuffer before it can be GC'd
+  return audioBuffer.getChannelData(0).slice();
 }
 
-function float32ToWavBlob(samples, sampleRate) {
-  const numSamples = samples.length;
-  const buffer = new ArrayBuffer(44 + numSamples * 4);
-  const view = new DataView(buffer);
-  const writeStr = (off, str) => { for (let i = 0; i < str.length; i++) view.setUint8(off + i, str.charCodeAt(i)); };
-  writeStr(0, 'RIFF');
-  view.setUint32(4, 36 + numSamples * 4, true);
-  writeStr(8, 'WAVE');
-  writeStr(12, 'fmt ');
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 3, true);  // IEEE float
-  view.setUint16(22, 1, true);  // mono
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * 4, true);
-  view.setUint16(32, 4, true);
-  view.setUint16(34, 32, true);
-  writeStr(36, 'data');
-  view.setUint32(40, numSamples * 4, true);
-  for (let i = 0; i < numSamples; i++) view.setFloat32(44 + i * 4, samples[i], true);
-  return new Blob([buffer], { type: 'audio/wav' });
-}
-
-async function mixAudioBlobs(blobA, blobB) {
+// Mix two audio blobs and return the combined Float32Array (no WAV encode step).
+// Avoids the float32 WAV format compatibility issue with WebView2's decodeAudioData.
+async function mixAudioToFloat32(blobA, blobB) {
   const [dataA, dataB] = await Promise.all([
     decodeAudioToFloat32(blobA),
     decodeAudioToFloat32(blobB)
@@ -1171,7 +1168,58 @@ async function mixAudioBlobs(blobA, blobB) {
     const b = i < dataB.length ? dataB[i] : 0;
     mixed[i] = Math.max(-1, Math.min(1, a + b));
   }
-  return float32ToWavBlob(mixed, 16000);
+  return mixed;
+}
+
+// Transcribe a pre-decoded Float32Array at 16kHz directly (no blob/decode roundtrip).
+async function transcribeFloat32(float32Data) {
+  const totalSamples = float32Data.length;
+  if (totalSamples === 0) { console.warn('[wasapi] transcribeFloat32: empty audio'); return ''; }
+
+  const totalDuration = (totalSamples / 16000).toFixed(0);
+  const numChunks = Math.ceil(totalSamples / CHUNK_SAMPLES);
+  totalChunks = numChunks;
+  currentChunkIdx = 0;
+
+  const durationMin = Math.floor(totalDuration / 60);
+  const durationSec = totalDuration % 60;
+  const durationStr = durationMin > 0 ? `${durationMin}m ${durationSec}s` : `${durationSec}s`;
+  loadingText.innerText = `Transkriberar ${durationStr} ljud...`;
+  if (progressContainer) progressContainer.classList.remove("hidden");
+  if (progressBar) progressBar.style.width = "0%";
+
+  const startTime = performance.now();
+  let fullResult = "";
+
+  for (let chunkIdx = 0; chunkIdx < numChunks; chunkIdx++) {
+    currentChunkIdx = chunkIdx;
+    const start = chunkIdx * CHUNK_SAMPLES;
+    const end = Math.min(start + CHUNK_SAMPLES, totalSamples);
+    const chunkFloat32 = float32Data.slice(start, end);
+    const chunkBytes = new Uint8Array(chunkFloat32.buffer, chunkFloat32.byteOffset, chunkFloat32.byteLength);
+    const chunkBytesArray = Array.from(chunkBytes);
+    console.log(`[wasapi] Chunk ${chunkIdx + 1}/${numChunks}: ${chunkFloat32.length} samples`);
+    try {
+      const chunkText = await invoke("transcribe_audio", {
+        audioBytes: chunkBytesArray,
+        size: modelSize,
+        quantized: modelQuantized,
+        language: transcriptionLanguage
+      });
+      if (chunkText && chunkText.trim()) {
+        if (fullResult) fullResult += "\n";
+        fullResult += chunkText.trim();
+        outputText.value = fullResult;
+        outputText.scrollTop = outputText.scrollHeight;
+      }
+    } catch (chunkErr) {
+      console.error(`[wasapi] Chunk ${chunkIdx + 1} failed:`, chunkErr);
+    }
+  }
+
+  const elapsed = ((performance.now() - startTime) / 1000).toFixed(1);
+  console.log(`[wasapi] Transcription done in ${elapsed}s, result length: ${fullResult.length}`);
+  return fullResult;
 }
 
 // Audio Processing and Transcription (chunked for large files)
