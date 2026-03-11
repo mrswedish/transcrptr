@@ -47,6 +47,8 @@ fn to_mono(data: &[f32], channels: u16) -> Vec<f32> {
 pub struct AudioRecorder {
     mic_stream: Option<SendStream>,
     loopback_stream: Option<SendStream>,
+    /// Whether loopback actually started successfully on last recording
+    pub loopback_active: bool,
     /// Final mixed buffer (used after stop)
     pub recorded_samples: Arc<Mutex<Vec<f32>>>,
     /// Separate mic buffer (accumulated during recording)
@@ -60,6 +62,7 @@ impl AudioRecorder {
         Self {
             mic_stream: None,
             loopback_stream: None,
+            loopback_active: false,
             recorded_samples: Arc::new(Mutex::new(Vec::new())),
             mic_samples: Arc::new(Mutex::new(Vec::new())),
             loopback_samples: Arc::new(Mutex::new(Vec::new())),
@@ -107,38 +110,54 @@ impl AudioRecorder {
         // ── 2. WASAPI Loopback stream (Windows only) ──────────────────────────
         // cpal's WASAPI backend auto-enables AUDCLNT_STREAMFLAGS_LOOPBACK when
         // build_input_stream is called on a render (output) device.
+        // NOTE: Loopback failures are non-fatal — we degrade gracefully to mic-only.
         #[cfg(target_os = "windows")]
         {
             if let Some(output_device) = host.default_output_device() {
-                let loopback_config = output_device
-                    .default_input_config()
-                    .map_err(|e| format!("Loopback config: {e}"))?;
+                match output_device.default_input_config() {
+                    Err(e) => {
+                        eprintln!("[audio] Loopback config failed (mic-only): {e}");
+                        self.loopback_active = false;
+                    }
+                    Ok(loopback_config) => {
+                        let lb_channels = loopback_config.channels();
+                        let lb_rate = loopback_config.sample_rate().0;
+                        eprintln!("[audio] Loopback: {lb_channels}ch @ {lb_rate} Hz");
 
-                let lb_channels = loopback_config.channels();
-                let lb_rate = loopback_config.sample_rate().0;
-                eprintln!("[audio] Loopback: {lb_channels}ch @ {lb_rate} Hz");
-
-                let lb_buf = Arc::clone(&self.loopback_samples);
-                let loopback_stream = output_device
-                    .build_input_stream(
-                        &loopback_config.into(),
-                        move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                            let mono = to_mono(data, lb_channels);
-                            let resampled = resample_to_16k(&mono, lb_rate);
-                            lb_buf.lock().unwrap().extend_from_slice(&resampled);
-                        },
-                        |err| eprintln!("[audio] Loopback error: {err}"),
-                        None,
-                    )
-                    .map_err(|e| format!("Loopback stream: {e}"))?;
-
-                loopback_stream
-                    .play()
-                    .map_err(|e| format!("Loopback play: {e}"))?;
-                self.loopback_stream = Some(SendStream(loopback_stream));
-                eprintln!("[audio] WASAPI loopback started OK");
+                        let lb_buf = Arc::clone(&self.loopback_samples);
+                        match output_device.build_input_stream(
+                            &loopback_config.into(),
+                            move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                                let mono = to_mono(data, lb_channels);
+                                let resampled = resample_to_16k(&mono, lb_rate);
+                                lb_buf.lock().unwrap().extend_from_slice(&resampled);
+                            },
+                            |err| eprintln!("[audio] Loopback error: {err}"),
+                            None,
+                        ) {
+                            Err(e) => {
+                                eprintln!("[audio] Loopback stream failed (mic-only): {e}");
+                                self.loopback_active = false;
+                            }
+                            Ok(loopback_stream) => {
+                                match loopback_stream.play() {
+                                    Err(e) => {
+                                        eprintln!("[audio] Loopback play failed (mic-only): {e}");
+                                        self.loopback_active = false;
+                                    }
+                                    Ok(()) => {
+                                        self.loopback_stream = Some(SendStream(loopback_stream));
+                                        self.loopback_active = true;
+                                        eprintln!("[audio] WASAPI loopback started OK");
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             } else {
                 eprintln!("[audio] No output device — loopback unavailable");
+                self.loopback_active = false;
             }
         }
 

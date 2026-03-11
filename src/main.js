@@ -664,10 +664,14 @@ async function startRecording() {
   try {
     if (selectedMicId === "wasapi") {
       // Backend recording mode
-      await invoke("start_backend_recording");
+      const result = await invoke("start_backend_recording");
       isRecording = true;
       isPaused = false;
       startRecordingMetrics();
+      // Inform user if loopback (system audio) could not be captured
+      if (!result.loopback_active && recordingStatusText) {
+        recordingStatusText.textContent = "Spelar in (mikrofon — systemljud ej tillgängligt)";
+      }
     } else {
       // For "default", use the actual firstMicDeviceId if we found one,
       // because Tauri/WebView2 on Windows doesn't reliably handle implicit default
@@ -1251,33 +1255,6 @@ btnReplaceAll && btnReplaceAll.addEventListener("click", () => {
   outputText.value = outputText.value.split(needle).join(replaceInput.value || "");
   searchInput.placeholder = `Ersatte ${count} förekomster`;
   setTimeout(() => { searchInput.placeholder = "Sök..."; }, 2000);
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Stereo Mix Guide Modal
-// ─────────────────────────────────────────────────────────────────────────────
-const stereoMixModal = document.getElementById("stereo-mix-modal");
-const btnStereoMixHelp = document.getElementById("btn-stereo-mix-help");
-const btnCloseStereoMix = document.getElementById("btn-close-stereo-mix");
-const btnCloseStereoMixOk = document.getElementById("btn-close-stereo-mix-ok");
-
-btnStereoMixHelp && btnStereoMixHelp.addEventListener("click", () => {
-  settingsModal.classList.add("hidden");
-  stereoMixModal.classList.remove("hidden");
-});
-btnCloseStereoMix && btnCloseStereoMix.addEventListener("click", () => {
-    stereoMixModal.classList.add("hidden");
-    settingsModal.classList.remove("hidden");
-});
-btnCloseStereoMixOk && btnCloseStereoMixOk.addEventListener("click", () => {
-    stereoMixModal.classList.add("hidden");
-    settingsModal.classList.remove("hidden");
-});
-stereoMixModal && stereoMixModal.addEventListener("click", (e) => {
-  if (e.target === stereoMixModal) {
-      stereoMixModal.classList.add("hidden");
-      settingsModal.classList.remove("hidden");
-  }
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -199,13 +199,14 @@ async fn save_audio_file(app_handle: AppHandle, state: tauri::State<'_, AppState
             let spec = WavSpec {
                 channels: 1,
                 sample_rate: 16000,
-                bits_per_sample: 32,
-                sample_format: SampleFormat::Float,
+                bits_per_sample: 16,
+                sample_format: SampleFormat::Int,
             };
             let mut writer = WavWriter::create(&path_str, spec)
                 .map_err(|e| format!("Kunde inte skapa WAV-fil: {e}"))?;
             for &s in &samples {
-                writer.write_sample(s).map_err(|e| format!("Skrivfel: {e}"))?;
+                let pcm = (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
+                writer.write_sample(pcm).map_err(|e| format!("Skrivfel: {e}"))?;
             }
             writer.finalize().map_err(|e| format!("Fel vid finalisering: {e}"))?;
             Ok(())
@@ -399,10 +400,16 @@ async fn transcribe_audio(app_handle: AppHandle, state: tauri::State<'_, AppStat
     Ok(text)
 }
 
+#[derive(Serialize)]
+struct RecordingStartResult {
+    loopback_active: bool,
+}
+
 #[tauri::command]
-async fn start_backend_recording(state: tauri::State<'_, AppState>) -> Result<(), String> {
+async fn start_backend_recording(state: tauri::State<'_, AppState>) -> Result<RecordingStartResult, String> {
     let mut recorder = state.inner().audio_recorder.lock().unwrap();
-    recorder.start_recording()
+    recorder.start_recording()?;
+    Ok(RecordingStartResult { loopback_active: recorder.loopback_active })
 }
 
 #[tauri::command]
