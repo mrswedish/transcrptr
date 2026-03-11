@@ -29,18 +29,15 @@ Tack vare denna träning är modellen ovanligt träffsäker på svenska — den 
 Transcrptr erbjuder tre storlekar av språkmodellen. Du byter modell genom att klicka på **kugghjulet** (⚙️) i appen:
 
 | Modell | Storlek | Hastighet | Kvalitet | Bäst för |
-|--------|---------|-----------|---------------|----------|
-| **Tiny** | ~75 MB | ⚡⚡⚡⚡ | Grundläggande | Mycket snabba anteckningar |
-| **Base** | ~140 MB | ⚡⚡⚡ | Bra | Korta röstmeddelanden |
-| **Small** | ~460 MB | ⚡⚡ | Okej | Enkla anteckningar, ensamtal |
-| **Medium** | ~1.5 GB | ⚡ | Mycket bra | Föreläsningar, intervjuer |
-| **Large v3 Turbo** | ~1.6 GB | ⚡ | Utmärkt | Möten, professionella sammanhang |
-| **Large v3** | ~3.0 GB | 🐢 | Bäst | Svåra dialekter, brusigt ljud |
+|--------|---------|-----------|----------|----------|
+| **Small** *(standard)* | ~200 MB | ⚡⚡⚡ | Bra | Snabba anteckningar, ensamtal |
+| **Medium** | ~800 MB | ⚡⚡ | Mycket bra | Föreläsningar, intervjuer |
+| **Large** | ~1.6 GB | ⚡ | Bäst | Möten, svåra dialekter, brusigt ljud |
 
 > [!WARNING]
-> **Small-modellen** rekommenderas inte för möten eller samtal med flera deltagare. Kvaliteten på transkriberingen blir ofta för låg för att vara användbar i professionella sammanhang. För möten rekommenderas minst **Medium** eller **Large v3 Turbo**.
+> **Small-modellen** rekommenderas inte för möten eller samtal med flera deltagare. För möten rekommenderas minst **Medium** eller **Large**.
 
-> **Tips:** Om resultatet inte blir tillräckligt bra, prova en större modell. Skillnaden i kvalitet är markant mellan t.ex. Small och Large.
+> **Tips:** Om resultatet inte blir tillräckligt bra, prova en större modell. Skillnaden i kvalitet är markant.
 
 ## 📥 Ladda ner
 Gå till [Releases](https://github.com/mrswedish/transcrptr/releases) för att hämta senaste versionen:

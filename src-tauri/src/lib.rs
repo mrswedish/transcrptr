@@ -127,7 +127,7 @@ async fn download_model(app_handle: AppHandle, size: String, quantized: bool) ->
 
 #[tauri::command]
 async fn get_available_models(app_handle: AppHandle) -> Result<Vec<ModelInfo>, String> {
-    let sizes = ["tiny", "base", "small", "medium", "large-v3-turbo", "large-v3"];
+    let sizes = ["small", "medium", "large"];
     let mut models = Vec::new();
 
     for size in sizes {
