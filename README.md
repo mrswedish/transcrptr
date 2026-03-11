@@ -42,12 +42,11 @@ Byt modell via **kugghjulet** (⚙️) i appen. Kvantiserade modeller rekommende
 
 För att spela in både din mikrofon och datorns ljud (t.ex. Teams, Zoom, Skype) behöver du aktivera **Stereo Mix** i Windows. Det tar en minut och kräver inga extra program.
 
-1. **Högerklicka på ljudikonen** nere till höger på skärmen → välj **"Ljud"** eller **"Ljudinställningar"**
-2. Klicka på fliken **Inspelning**
-3. **Högerklicka** på ett tomt område i listan → kryssa i **"Visa inaktiverade enheter"** och **"Visa frånkopplade enheter"**
-4. Högerklicka på **Stereo Mix** → välj **"Aktivera"**
-   > Ser du ingen Stereo Mix? Ditt ljudkort stöder tyvärr inte den här funktionen.
-5. Öppna inställningarna i Transcrptr och välj **Stereo Mix** som mikrofon.
+1. **Öppna ljudinställningar:** Högerklicka på ljudikonen i aktivitetsfältet → välj **"Ljudinställningar"**.
+2. **Hitta detaljerade steg:** Scrolla längst ner på sidan och klicka på **"Mer ljudinställningar"** (viktigt för Windows 11).
+3. **Visa enheter:** I det lilla fönstret som öppnas, gå till fliken **Inspelning**. Högerklicka på en tom yta och se till att **"Visa inaktiverade enheter"** är markerat.
+4. **Aktivera:** Högerklicka på **Stereo Mix** och välj **Aktivera**.
+5. **Välj i appen:** Starta om Transcrptr eller gå till inställningar och välj **Stereo Mix** som mikrofon.
 
 > [!IMPORTANT]
 > Starta alltid mötet och se till att ljud spelas **innan** du trycker Spela in i Transcrptr.
