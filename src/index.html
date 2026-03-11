@@ -220,6 +220,8 @@
           <div class="flex items-center justify-between">
             <label for="mic-select" class="text-sm font-medium text-slate-700 dark:text-slate-300">Välj Mikrofon</label>
             <button id="btn-stereo-mix-help"
+              type="button"
+              onclick="document.getElementById('settings-modal').classList.add('hidden'); var m=document.getElementById('stereo-mix-modal'); m.classList.remove('hidden'); m.style.display='flex';"
               class="flex items-center gap-1 text-xs text-primary hover:text-teal-600 transition-colors">
               <span class="material-symbols-outlined text-sm">info</span>
               Spela in m&ouml;tesljud?
