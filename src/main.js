@@ -897,23 +897,51 @@ async function stopSession() {
       const hasMic = micBlobs.length > 0;
       const hasLoopback = loopbackBytes && loopbackBytes.length > 44;
 
-      // Decode both streams to Float32 and mix — avoids WAV format compat issues
-      let float32Data;
+      // Decode each stream independently — one failure won't kill the other
       loadingText.innerText = "Bearbetar ljud...";
       outputText.value = "";
-      if (hasMic && hasLoopback) {
-        const micBlob = new Blob(micBlobs, { type: micBlobs[0].type });
-        const loopbackBlob = new Blob([new Uint8Array(loopbackBytes)], { type: 'audio/wav' });
-        float32Data = await mixAudioToFloat32(micBlob, loopbackBlob);
+
+      let micFloat32 = null;
+      let loopbackFloat32 = null;
+
+      if (hasMic) {
+        try {
+          const micBlob = new Blob(micBlobs, { type: micBlobs[0].type });
+          micFloat32 = await decodeAudioToFloat32(micBlob);
+          console.log(`[wasapi] Mic decoded: ${micFloat32.length} samples (${(micFloat32.length/16000).toFixed(1)}s)`);
+        } catch (e) {
+          console.warn('[wasapi] Mic decode failed:', e);
+        }
+      }
+
+      if (hasLoopback) {
+        try {
+          const loopbackBlob = new Blob([new Uint8Array(loopbackBytes)], { type: 'audio/wav' });
+          loopbackFloat32 = await decodeAudioToFloat32(loopbackBlob);
+          console.log(`[wasapi] Loopback decoded: ${loopbackFloat32.length} samples (${(loopbackFloat32.length/16000).toFixed(1)}s)`);
+        } catch (e) {
+          console.warn('[wasapi] Loopback decode failed:', e);
+        }
+      }
+
+      let float32Data;
+      if (micFloat32 && loopbackFloat32) {
+        const len = Math.max(micFloat32.length, loopbackFloat32.length);
+        float32Data = new Float32Array(len);
+        for (let i = 0; i < len; i++) {
+          const a = i < micFloat32.length ? micFloat32[i] : 0;
+          const b = i < loopbackFloat32.length ? loopbackFloat32[i] : 0;
+          float32Data[i] = Math.max(-1, Math.min(1, a + b));
+        }
         console.log(`[wasapi] Mixed: ${float32Data.length} samples (${(float32Data.length/16000).toFixed(1)}s)`);
-      } else if (hasMic) {
-        const micBlob = new Blob(micBlobs, { type: micBlobs[0].type });
-        float32Data = await decodeAudioToFloat32(micBlob);
-        console.log(`[wasapi] Mic only: ${float32Data.length} samples`);
+      } else if (micFloat32) {
+        float32Data = micFloat32;
+        console.log('[wasapi] Mic only (loopback unavailable)');
+      } else if (loopbackFloat32) {
+        float32Data = loopbackFloat32;
+        console.log('[wasapi] Loopback only (mic unavailable)');
       } else {
-        const loopbackBlob = new Blob([new Uint8Array(loopbackBytes)], { type: 'audio/wav' });
-        float32Data = await decodeAudioToFloat32(loopbackBlob);
-        console.log(`[wasapi] Loopback only: ${float32Data.length} samples`);
+        throw new Error('Kunde inte avkoda varken mikrofon eller systemljud. Kontrollera att din mikrofon är aktiv och att WASAPI stöds av ditt ljudkort.');
       }
 
       // Store as PCM WAV blob so save-button can export it correctly
