@@ -214,9 +214,108 @@ async function initialize() {
   loadSettings();
   await loadMicrophones();
   setupEventListeners();
+  setupV11Handlers();
   updateFooter();
   refreshModelList();
   await ensureModelReady();
+}
+
+function setupV11Handlers() {
+  // ── Search & Replace ──────────────────────────────────────────────────────
+  const searchBar = document.getElementById("search-bar");
+  const searchInput = document.getElementById("search-input");
+  const replaceInput = document.getElementById("replace-input");
+  const btnSearch = document.getElementById("btn-search");
+  const btnReplaceOne = document.getElementById("btn-replace-one");
+  const btnReplaceAll = document.getElementById("btn-replace-all");
+  const btnCloseSearch = document.getElementById("btn-close-search");
+
+  function openSearch() {
+    if (!searchBar) return;
+    searchBar.classList.remove("hidden");
+    searchBar.style.display = "flex";
+    if (searchInput) { searchInput.focus(); searchInput.select(); }
+  }
+  function closeSearch() {
+    if (!searchBar) return;
+    searchBar.classList.add("hidden");
+    if (searchInput) searchInput.value = "";
+    if (replaceInput) replaceInput.value = "";
+  }
+
+  btnSearch && btnSearch.addEventListener("click", openSearch);
+  btnCloseSearch && btnCloseSearch.addEventListener("click", closeSearch);
+
+  document.addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === "f") {
+      if (!outputText || !outputText.value) return;
+      e.preventDefault();
+      openSearch();
+    }
+    if (e.key === "Escape" && searchBar && !searchBar.classList.contains("hidden")) {
+      closeSearch();
+    }
+  });
+
+  btnReplaceOne && btnReplaceOne.addEventListener("click", () => {
+    const needle = searchInput ? searchInput.value : "";
+    if (!needle || !outputText) return;
+    const text = outputText.value;
+    const idx = text.indexOf(needle);
+    if (idx === -1) {
+      if (searchInput) { searchInput.style.color = "red"; setTimeout(() => searchInput.style.color = "", 800); }
+      return;
+    }
+    outputText.value = text.slice(0, idx) + (replaceInput ? replaceInput.value : "") + text.slice(idx + needle.length);
+  });
+
+  btnReplaceAll && btnReplaceAll.addEventListener("click", () => {
+    const needle = searchInput ? searchInput.value : "";
+    if (!needle || !outputText || !outputText.value) return;
+    const count = outputText.value.split(needle).length - 1;
+    outputText.value = outputText.value.split(needle).join(replaceInput ? replaceInput.value : "");
+    if (searchInput) {
+      searchInput.placeholder = `Ersatte ${count} förekomster`;
+      setTimeout(() => { searchInput.placeholder = "Sök..."; }, 2000);
+    }
+  });
+
+  // ── Stereo Mix Guide Modal ────────────────────────────────────────────────
+  const stereoMixModal = document.getElementById("stereo-mix-modal");
+  const btnStereoMixHelp = document.getElementById("btn-stereo-mix-help");
+  const btnCloseStereoMix = document.getElementById("btn-close-stereo-mix");
+  const btnCloseStereoMixOk = document.getElementById("btn-close-stereo-mix-ok");
+
+  function openStereoMix() {
+    if (settingsModal) settingsModal.classList.add("hidden");
+    if (stereoMixModal) {
+      stereoMixModal.classList.remove("hidden");
+      stereoMixModal.style.display = "flex";
+    }
+  }
+  function closeStereoMix() {
+    if (stereoMixModal) stereoMixModal.classList.add("hidden");
+  }
+
+  btnStereoMixHelp && btnStereoMixHelp.addEventListener("click", openStereoMix);
+  btnCloseStereoMix && btnCloseStereoMix.addEventListener("click", closeStereoMix);
+  btnCloseStereoMixOk && btnCloseStereoMixOk.addEventListener("click", closeStereoMix);
+  stereoMixModal && stereoMixModal.addEventListener("click", (e) => {
+    if (e.target === stereoMixModal) closeStereoMix();
+  });
+
+  // ── Save Audio File ───────────────────────────────────────────────────────
+  const btnSaveAudio = document.getElementById("btn-save-audio");
+  btnSaveAudio && btnSaveAudio.addEventListener("click", async () => {
+    try {
+      await invoke("save_audio_file");
+    } catch (err) {
+      const msg = typeof err === "string" ? err : err.message || String(err);
+      if (!msg.includes("cancelled") && !msg.includes("canceled")) {
+        await message(`Kunde inte spara ljudfilen: ${msg}`, { title: "Fel", kind: "error" });
+      }
+    }
+  });
 }
 
 async function refreshModelList() {
