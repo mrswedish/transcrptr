@@ -417,6 +417,30 @@ async fn stop_backend_recording(state: tauri::State<'_, AppState>) -> Result<Vec
 }
 
 #[tauri::command]
+async fn save_audio_data(app_handle: AppHandle, audio_data: Vec<u8>) -> Result<(), String> {
+    use tauri_plugin_dialog::FilePath;
+
+    let file_path = app_handle.dialog()
+        .file()
+        .set_title("Spara inspelning")
+        .set_file_name("inspelning.wav")
+        .add_filter("WAV-fil", &["wav"])
+        .blocking_save_file();
+
+    match file_path {
+        Some(path) => {
+            let path_str = match path {
+                FilePath::Path(p) => p,
+                _ => return Err("Ogiltigt filformat".to_string()),
+            };
+            fs::write(&path_str, &audio_data).map_err(|e| format!("Kunde inte spara: {}", e))?;
+            Ok(())
+        },
+        None => Err("cancelled".to_string()),
+    }
+}
+
+#[tauri::command]
 async fn save_text_file(app_handle: AppHandle, content: String) -> Result<(), String> {
     use tauri_plugin_dialog::FilePath;
     
@@ -460,7 +484,8 @@ pub fn run() {
             transcribe_audio,
             cancel_transcription,
             save_text_file,
-            save_audio_file
+            save_audio_file,
+            save_audio_data
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -313,18 +313,6 @@ function setupV11Handlers() {
     if (e.target === stereoMixModal) closeStereoMix();
   });
 
-  // ── Save Audio File ───────────────────────────────────────────────────────
-  const btnSaveAudio = document.getElementById("btn-save-audio");
-  btnSaveAudio && btnSaveAudio.addEventListener("click", async () => {
-    try {
-      await invoke("save_audio_file");
-    } catch (err) {
-      const msg = typeof err === "string" ? err : err.message || String(err);
-      if (!msg.includes("cancelled") && !msg.includes("canceled")) {
-        await message(`Kunde inte spara ljudfilen: ${msg}`, { title: "Fel", kind: "error" });
-      }
-    }
-  });
 }
 
 async function refreshModelList() {
@@ -928,10 +916,8 @@ async function stopSession() {
         console.log(`[wasapi] Loopback only: ${float32Data.length} samples`);
       }
 
-      // Store a placeholder blob for Redo/Save (mic blob if available)
-      const redoBlob = hasMic
-        ? new Blob(micBlobs, { type: micBlobs[0].type })
-        : new Blob([new Uint8Array(loopbackBytes)], { type: 'audio/wav' });
+      // Store as PCM WAV blob so save-button can export it correctly
+      const redoBlob = float32ToPCM16WavBlob(float32Data, 16000);
       lastRecordedSegments = [{ blob: redoBlob, startTime: new Date() }];
       btnRedo.classList.remove("hidden");
       btnRedo.style.display = "inline-flex";
@@ -1144,6 +1130,25 @@ fileInput.addEventListener("change", async (e) => {
 // -------------------------------------------------------------
 // Audio mixing helpers (used by WASAPI hybrid mode)
 // -------------------------------------------------------------
+
+// Encode Float32Array as 16-bit PCM WAV blob (universally decodable format).
+function float32ToPCM16WavBlob(samples, sampleRate) {
+  const n = samples.length;
+  const buf = new ArrayBuffer(44 + n * 2);
+  const v = new DataView(buf);
+  const s = (off, str) => { for (let i = 0; i < str.length; i++) v.setUint8(off + i, str.charCodeAt(i)); };
+  s(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true);
+  s(8, 'WAVE'); s(12, 'fmt ');
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, sampleRate, true); v.setUint32(28, sampleRate * 2, true);
+  v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  s(36, 'data'); v.setUint32(40, n * 2, true);
+  for (let i = 0; i < n; i++) {
+    const x = Math.max(-1, Math.min(1, samples[i]));
+    v.setInt16(44 + i * 2, x < 0 ? x * 32768 : x * 32767, true);
+  }
+  return new Blob([buf], { type: 'audio/wav' });
+}
 
 async function decodeAudioToFloat32(blob) {
   const arrayBuffer = await blob.arrayBuffer();
@@ -1429,12 +1434,23 @@ btnReplaceAll && btnReplaceAll.addEventListener("click", () => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Save Audio File
+// Decodes lastRecordedSegments to Float32, encodes as 16-bit PCM WAV, saves via dialog.
+// Works for both regular mic mode (WebM blobs) and WASAPI mode (PCM WAV blob).
 // ─────────────────────────────────────────────────────────────────────────────
 const btnSaveAudio = document.getElementById("btn-save-audio");
 
 btnSaveAudio && btnSaveAudio.addEventListener("click", async () => {
   try {
-    await invoke("save_audio_file");
+    if (!lastRecordedSegments || lastRecordedSegments.length === 0) {
+      await message("Ingen inspelning att spara.", { title: "Fel", kind: "error" });
+      return;
+    }
+    const blobs = lastRecordedSegments.map(s => s.blob);
+    const combined = new Blob(blobs, { type: blobs[0].type });
+    const float32Data = await decodeAudioToFloat32(combined);
+    const wavBlob = float32ToPCM16WavBlob(float32Data, 16000);
+    const wavBytes = Array.from(new Uint8Array(await wavBlob.arrayBuffer()));
+    await invoke("save_audio_data", { audioData: wavBytes });
   } catch (err) {
     const msg = typeof err === "string" ? err : err.message || String(err);
     if (!msg.includes("cancelled") && !msg.includes("canceled")) {
