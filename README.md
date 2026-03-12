@@ -24,7 +24,9 @@ Transcrptr använder [KB-whisper](https://huggingface.co/KBLab/kb-whisper-small)
 
 ## 📦 Välj rätt modell
 
-Byt modell via **kugghjulet** (⚙️) i appen. Kvantiserade modeller rekommenderas — små filer, nästan samma kvalitet.
+Byt modell via **kugghjulet** (⚙️) i appen. Välj storlek, stil och format — ladda ner flera och byt med ett klick.
+
+### Storlek
 
 | Modell | Format | Storlek | Hastighet | Kvalitet |
 |--------|--------|---------|-----------|----------|
@@ -40,6 +42,16 @@ Byt modell via **kugghjulet** (⚙️) i appen. Kvantiserade modeller rekommende
 
 > [!WARNING]
 > **Small-modellen rekommenderas inte för möten** eller samtal med flera deltagare. Använd **Medium** eller **Large**.
+
+### Stil (revision)
+
+| Stil | Passar för | Beskrivning |
+|------|-----------|-------------|
+| **Standard** *(standard)* | Generellt bruk | Balanserat transkript — bra för de flesta användningsfall |
+| **Ordagrann** | Diktering, protokoll | Mer verbalt transkript som följer det talade nära |
+
+> [!NOTE]
+> Välj stil i inställningarna innan nedladdning. Varje kombination av storlek + stil är en separat modell.
 
 ## 🎙️ Spela in möten — WASAPI vs Stereo Mix (Windows)
 
