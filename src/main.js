@@ -1426,6 +1426,7 @@ async function processAudioBlob(blob) {
           audioBytes: chunkBytesArray,
           size: modelSize,
           quantized: modelQuantized,
+          revision: modelRevision,
           language: transcriptionLanguage
         });
 
