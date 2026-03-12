@@ -58,7 +58,9 @@ struct DiskInfo {
 fn get_model_info(size: &str, quantized: bool, revision: &str) -> (String, String) {
     let repo = format!("kb-whisper-{}", size);
     let hf_file = if quantized { "ggml-model-q5_0.bin" } else { "ggml-model.bin" };
-    let url = format!("https://huggingface.co/KBLab/{}/resolve/{}/{}", repo, revision, hf_file);
+    // "standard" maps to the "main" branch on HuggingFace; other revisions use their own branch name
+    let hf_branch = if revision == "standard" { "main" } else { revision };
+    let url = format!("https://huggingface.co/KBLab/{}/resolve/{}/{}", repo, hf_branch, hf_file);
     // "standard" keeps the original filename for backward compatibility
     let local_filename = if revision == "standard" {
         format!("ggml-model-{}-kb{}.bin", size, if quantized { "-q5_0" } else { "" })
