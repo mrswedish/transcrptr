@@ -573,7 +573,6 @@ function disableControls() {
 // -------------------------------------------------------------
 const REVISION_DESCS = {
   standard: "Balanserat transkript för generellt bruk",
-  subtitle: "Kortare text med färre fyllnadsord — passar möten och video",
   strict:   "Ordagrant transkript — passar diktering och protokoll",
 };
 const SIZE_DESCS = {
