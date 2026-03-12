@@ -35,10 +35,8 @@ const btnSettings = document.getElementById("btn-settings");
 const settingsModal = document.getElementById("settings-modal");
 const btnCloseSettings = document.getElementById("btn-close-settings");
 const btnSaveSettings = document.getElementById("btn-save-settings");
-const selModelSize = document.getElementById("model-size");
-const selModelRevision = document.getElementById("model-revision");
-const selModelQuantized = document.getElementById("model-quantized");
 const btnDownloadModel = document.getElementById("btn-download-model");
+const cbModelQuantized = document.getElementById("model-quantized");
 const selLanguage = document.getElementById("transcription-language");
 const selMic = document.getElementById("mic-select");
 const audioLevelBar = document.getElementById("audio-level-bar");
@@ -56,6 +54,10 @@ let audioChunks = [];
 let modelSize = "medium";
 let modelRevision = "standard";
 let modelQuantized = true;
+
+// Download picker state (independent from active model)
+let dlSize = "medium";
+let dlRevision = "standard";
 let transcriptionLanguage = "sv";
 let selectedMicId = "default";
 let wasapiEnabled = false;
@@ -98,9 +100,10 @@ function loadSettings() {
   const wasapiToggle = document.getElementById("wasapi-toggle");
   if (wasapiToggle) wasapiToggle.checked = wasapiEnabled;
 
-  selModelSize.value = modelSize;
-  if (selModelRevision) selModelRevision.value = modelRevision;
-  selModelQuantized.value = modelQuantized.toString();
+  // Sync pill pickers to current state
+  syncPickButtons("size", modelSize);
+  syncPickButtons("revision", modelRevision);
+  if (cbModelQuantized) cbModelQuantized.checked = modelQuantized;
   if (selLanguage) selLanguage.value = transcriptionLanguage;
 
   if (smallModelWarning) {
@@ -335,12 +338,27 @@ async function refreshModelList() {
 
     models.forEach(m => {
       const isActive = m.size === modelSize && m.revision === modelRevision && m.quantized === modelQuantized;
+
+      function activateModel() {
+        if (isActive) return;
+        modelSize = m.size;
+        modelRevision = m.revision;
+        modelQuantized = m.quantized;
+        localStorage.setItem("modelSize", modelSize);
+        localStorage.setItem("modelRevision", modelRevision);
+        localStorage.setItem("modelQuantized", modelQuantized.toString());
+        updateFooter();
+        refreshModelList();
+        updateBadge(`Redo (${m.name})`, "ready");
+      }
+
       const div = document.createElement("div");
-      div.className = `flex items-center justify-between p-2 rounded-lg border ${
+      div.className = `flex items-center justify-between p-2 rounded-lg border transition-colors ${
         isActive
           ? "bg-primary/5 border-primary/30 dark:border-primary/30"
-          : "bg-slate-50 dark:bg-slate-900/80 border-slate-200 dark:border-slate-700/50"
+          : "bg-slate-50 dark:bg-slate-900/80 border-slate-200 dark:border-slate-700/50 cursor-pointer hover:border-primary/40 hover:bg-primary/5"
       }`;
+      if (!isActive) div.onclick = activateModel;
 
       const info = document.createElement("div");
       info.className = "flex flex-col min-w-0";
@@ -360,28 +378,11 @@ async function refreshModelList() {
       const actions = document.createElement("div");
       actions.className = "flex items-center gap-1 shrink-0";
 
-      if (!isActive) {
-        const useBtn = document.createElement("button");
-        useBtn.className = "px-2 py-1 text-[10px] font-semibold text-primary border border-primary/30 rounded-lg hover:bg-primary/10 transition-colors";
-        useBtn.innerText = "Använd";
-        useBtn.onclick = () => {
-          modelSize = m.size;
-          modelRevision = m.revision;
-          modelQuantized = m.quantized;
-          localStorage.setItem("modelSize", modelSize);
-          localStorage.setItem("modelRevision", modelRevision);
-          localStorage.setItem("modelQuantized", modelQuantized.toString());
-          updateFooter();
-          refreshModelList();
-          updateBadge(`Redo (${m.name})`, "ready");
-        };
-        actions.appendChild(useBtn);
-      }
-
       const delBtn = document.createElement("button");
       delBtn.className = "p-1.5 text-slate-400 hover:text-red-500 transition-colors";
       delBtn.innerHTML = '<span class="material-symbols-outlined text-sm">delete</span>';
-      delBtn.onclick = async () => {
+      delBtn.onclick = async (e) => {
+        e.stopPropagation();
         if (confirm(`Ta bort ${m.name}?`)) {
           await invoke("delete_model", { size: m.size, quantized: m.quantized, revision: m.revision });
           // If we deleted the active model, clear badge
@@ -519,6 +520,53 @@ function disableControls() {
 }
 
 // -------------------------------------------------------------
+// -------------------------------------------------------------
+// Pill button logic for download pickers
+// -------------------------------------------------------------
+const REVISION_DESCS = {
+  standard: "Balanserat transkript för generellt bruk",
+  subtitle: "Kortare text med färre fyllnadsord — passar möten och video",
+  strict:   "Ordagrant transkript — passar diktering och protokoll",
+};
+const SIZE_DESCS = {
+  small:  "~290 MB · Snabb · Obs: inte för möten eller flera talare",
+  medium: "~900 MB · Balanserad hastighet och kvalitet · Rekommenderas",
+  large:  "~2 GB · Bäst kvalitet · Långsammast",
+};
+
+function syncPickButtons(group, value) {
+  document.querySelectorAll(`[data-pick="${group}"]`).forEach(btn => {
+    const isActive = btn.dataset.value === value;
+    btn.className = `pick-btn flex-1 py-2 px-1 text-xs font-semibold rounded-lg transition-colors ${
+      isActive
+        ? "bg-white dark:bg-slate-700 text-slate-800 dark:text-white shadow-sm"
+        : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+    }`;
+  });
+  const descEl = document.getElementById(`${group}-desc`);
+  if (descEl) {
+    descEl.innerText = group === "revision" ? REVISION_DESCS[value] ?? "" : SIZE_DESCS[value] ?? "";
+  }
+  if (group === "size" && smallModelWarning) {
+    smallModelWarning.classList.toggle("hidden", value !== "small");
+  }
+}
+
+document.querySelectorAll("[data-pick]").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const group = btn.dataset.pick;
+    const value = btn.dataset.value;
+    if (group === "revision") dlRevision = value;
+    if (group === "size") dlSize = value;
+    syncPickButtons(group, value);
+  });
+});
+
+// Init pill defaults
+syncPickButtons("revision", dlRevision);
+syncPickButtons("size", dlSize);
+
+// -------------------------------------------------------------
 // Settings Logic
 // -------------------------------------------------------------
 btnSettings.addEventListener("click", () => {
@@ -548,16 +596,12 @@ btnSaveSettings.addEventListener("click", async () => {
   updateFooter();
 });
 
-// "Ladda ner vald modell" — reads dropdowns, sets active, downloads if needed
+// "Ladda ner vald modell" — reads pill state, sets active, downloads if needed
 if (btnDownloadModel) {
   btnDownloadModel.addEventListener("click", async () => {
-    const newSize = selModelSize.value;
-    const newRevision = selModelRevision ? selModelRevision.value : "standard";
-    const newQuant = selModelQuantized.value === "true";
-
-    modelSize = newSize;
-    modelRevision = newRevision;
-    modelQuantized = newQuant;
+    modelSize = dlSize;
+    modelRevision = dlRevision;
+    modelQuantized = cbModelQuantized ? cbModelQuantized.checked : true;
 
     localStorage.setItem("modelSize", modelSize);
     localStorage.setItem("modelRevision", modelRevision);
@@ -568,13 +612,6 @@ if (btnDownloadModel) {
     settingsModal.classList.add("hidden");
     updateFooter();
     await ensureModelReady();
-  });
-}
-
-// Show/hide small model warning when size dropdown changes
-if (selModelSize) {
-  selModelSize.addEventListener("change", () => {
-    if (smallModelWarning) smallModelWarning.classList.toggle("hidden", selModelSize.value !== "small");
   });
 }
 

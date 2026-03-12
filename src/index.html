@@ -208,14 +208,14 @@
   <!-- Settings Modal -->
   <div id="settings-modal"
     class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex justify-center items-center">
-    <div class="bg-white dark:bg-slate-800 w-11/12 max-w-md rounded-3xl shadow-xl flex flex-col overflow-hidden">
+    <div class="bg-white dark:bg-slate-800 w-11/12 max-w-lg rounded-3xl shadow-xl flex flex-col overflow-hidden max-h-[90dvh]">
       <div class="flex items-center justify-between p-6 border-b border-slate-200 dark:border-slate-700">
         <h2 class="text-xl font-bold text-slate-800 dark:text-white">Inställningar</h2>
         <button id="btn-close-settings" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
           <span class="material-symbols-outlined">close</span>
         </button>
       </div>
-      <div class="p-6 flex flex-col gap-5">
+      <div class="p-6 flex flex-col gap-5 overflow-y-auto custom-scrollbar">
         <div class="flex flex-col gap-2">
           <div class="flex items-center justify-between">
             <label for="mic-select" class="text-sm font-medium text-slate-700 dark:text-slate-300">Välj Mikrofon</label>
@@ -254,46 +254,69 @@
             <option value="auto">Automatisk identifiering</option>
           </select>
         </div>
-        <!-- Model download section -->
+        <!-- Nedladdade modeller — välj aktiv eller ta bort -->
         <div class="pt-2 border-t border-slate-200 dark:border-slate-700">
-          <h3 class="text-sm font-bold text-slate-800 dark:text-white mb-3">Ladda ner modell</h3>
-          <div class="flex flex-col gap-2">
-            <select id="model-size"
-              class="p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-700 dark:text-slate-300 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary">
-              <option value="small">Small — Snabb, bra för korta klipp (~290 MB)</option>
-              <option value="medium" selected>Medium — Balanserad, rekommenderas (~900 MB)</option>
-              <option value="large">Large — Bäst kvalitet, långsam (~2 GB)</option>
-            </select>
+          <h3 class="text-sm font-bold text-slate-800 dark:text-white mb-3">Nedladdade modeller</h3>
+          <div id="model-list" class="flex flex-col gap-2 max-h-48 overflow-y-auto pr-1 custom-scrollbar">
+            <p class="text-xs text-slate-400 italic">Laddar modeller...</p>
+          </div>
+        </div>
+
+        <!-- Ladda ner modell -->
+        <div class="pt-2 border-t border-slate-200 dark:border-slate-700">
+          <h3 class="text-sm font-bold text-slate-800 dark:text-white mb-4">Ladda ner modell</h3>
+          <div class="flex flex-col gap-4">
+
+            <!-- Stil (revision) -->
+            <div>
+              <p class="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-2">Stil</p>
+              <div class="flex gap-1 p-1 bg-slate-100 dark:bg-slate-900 rounded-xl">
+                <button type="button" data-pick="revision" data-value="standard"
+                  class="pick-btn flex-1 py-2 px-1 text-xs font-semibold rounded-lg transition-colors">Standard</button>
+                <button type="button" data-pick="revision" data-value="subtitle"
+                  class="pick-btn flex-1 py-2 px-1 text-xs font-semibold rounded-lg transition-colors">Kortfattad</button>
+                <button type="button" data-pick="revision" data-value="strict"
+                  class="pick-btn flex-1 py-2 px-1 text-xs font-semibold rounded-lg transition-colors">Ordagrann</button>
+              </div>
+              <p id="revision-desc" class="text-[11px] text-slate-400 dark:text-slate-500 mt-1.5 leading-snug">Balanserat transkript för generellt bruk</p>
+            </div>
+
+            <!-- Storlek -->
+            <div>
+              <p class="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-2">Storlek</p>
+              <div class="flex gap-1 p-1 bg-slate-100 dark:bg-slate-900 rounded-xl">
+                <button type="button" data-pick="size" data-value="small"
+                  class="pick-btn flex-1 py-2 px-1 text-xs font-semibold rounded-lg transition-colors">Small</button>
+                <button type="button" data-pick="size" data-value="medium"
+                  class="pick-btn flex-1 py-2 px-1 text-xs font-semibold rounded-lg transition-colors">Medium</button>
+                <button type="button" data-pick="size" data-value="large"
+                  class="pick-btn flex-1 py-2 px-1 text-xs font-semibold rounded-lg transition-colors">Large</button>
+              </div>
+              <p id="size-desc" class="text-[11px] text-slate-400 dark:text-slate-500 mt-1.5 leading-snug">~900 MB · Balanserad hastighet och kvalitet · Rekommenderas</p>
+            </div>
+
+            <!-- Kvantisering -->
+            <label class="flex items-center gap-3 cursor-pointer select-none">
+              <input type="checkbox" id="model-quantized" checked
+                class="w-4 h-4 rounded accent-primary cursor-pointer shrink-0">
+              <span class="text-sm text-slate-700 dark:text-slate-300">
+                q5_0 <span class="text-slate-400 font-normal">— 40% mindre, samma kvalitet (rekommenderas)</span>
+              </span>
+            </label>
+
+            <!-- Small warning -->
             <div id="small-model-warning" class="hidden flex items-start gap-2 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700/50 rounded-xl">
               <span class="material-symbols-outlined text-amber-500 text-lg">warning</span>
               <p class="text-[11px] text-amber-800 dark:text-amber-300 leading-tight">
                 Small-modellen rekommenderas <strong>inte</strong> för möten eller samtal med flera talare.
               </p>
             </div>
-            <select id="model-revision"
-              class="p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-700 dark:text-slate-300 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary">
-              <option value="standard" selected>Standard — Balanserat, generellt bruk</option>
-              <option value="subtitle">Subtitle — Kortare text, passar möten &amp; video</option>
-              <option value="strict">Strict — Ordagrant, passar diktering &amp; protokoll</option>
-            </select>
-            <select id="model-quantized"
-              class="p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-700 dark:text-slate-300 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary">
-              <option value="true" selected>q5_0 — Rekommenderas (40% mindre, samma kvalitet)</option>
-              <option value="false">Standard — Full precision (stor filstorlek)</option>
-            </select>
+
             <button id="btn-download-model"
               class="w-full py-3 bg-primary hover:bg-teal-500 text-white text-sm font-semibold rounded-xl transition-colors flex items-center justify-center gap-2">
               <span class="material-symbols-outlined text-base">download</span>
-              Ladda ner vald modell
+              Ladda ner
             </button>
-          </div>
-        </div>
-
-        <!-- Downloaded models list -->
-        <div class="pt-4 border-t border-slate-200 dark:border-slate-700">
-          <h3 class="text-sm font-bold text-slate-800 dark:text-white mb-3">Nedladdade modeller</h3>
-          <div id="model-list" class="flex flex-col gap-2 max-h-52 overflow-y-auto pr-1 custom-scrollbar">
-            <p class="text-xs text-slate-400 italic">Laddar modeller...</p>
           </div>
         </div>
       </div>
