@@ -112,9 +112,9 @@
         <button id="btn-file"
           class="flex items-center justify-center gap-3 py-5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 active:scale-[0.98] transition-all rounded-2xl">
           <span class="material-symbols-outlined text-slate-600 dark:text-slate-400 text-2xl">folder_open</span>
-          <span class="text-slate-700 dark:text-slate-300 font-semibold text-lg">Välj ljudfil</span>
+          <span class="text-slate-700 dark:text-slate-300 font-semibold text-lg">Välj ljud- eller videofil</span>
         </button>
-        <input type="file" id="file-input" accept="audio/*" class="hidden" />
+        <input type="file" id="file-input" accept="audio/*,video/mp4,video/webm,video/quicktime,video/x-matroska" class="hidden" />
       </div>
     </div>
     <section class="flex flex-col flex-1">
@@ -254,39 +254,47 @@
             <option value="auto">Automatisk identifiering</option>
           </select>
         </div>
-        <div class="flex flex-col gap-2">
-          <label for="model-size" class="text-sm font-medium text-slate-700 dark:text-slate-300">Modellstorlek</label>
-          <select id="model-size"
-            class="p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-700 dark:text-slate-300 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary">
-            <option value="small" selected>Small (Snabbare, Mindre exakt)</option>
-            <option value="medium">Medium (Balanserad)</option>
-            <option value="large">Large (Långsammare, Mest exakt)</option>
-          </select>
-          <div id="small-model-warning" class="hidden flex items-start gap-2 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700/50 rounded-xl mt-1">
-            <span class="material-symbols-outlined text-amber-500 text-lg">warning</span>
-            <p class="text-[11px] text-amber-800 dark:text-amber-300 leading-tight">
-              Small-modellen rekommenderas <strong>inte</strong> för möten eller samtal med flera talare. Kvaliteten kan bli bristfällig.
-            </p>
+        <!-- Model download section -->
+        <div class="pt-2 border-t border-slate-200 dark:border-slate-700">
+          <h3 class="text-sm font-bold text-slate-800 dark:text-white mb-3">Ladda ner modell</h3>
+          <div class="flex flex-col gap-2">
+            <select id="model-size"
+              class="p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-700 dark:text-slate-300 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary">
+              <option value="small">Small — Snabb, bra för korta klipp (~290 MB)</option>
+              <option value="medium" selected>Medium — Balanserad, rekommenderas (~900 MB)</option>
+              <option value="large">Large — Bäst kvalitet, långsam (~2 GB)</option>
+            </select>
+            <div id="small-model-warning" class="hidden flex items-start gap-2 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700/50 rounded-xl">
+              <span class="material-symbols-outlined text-amber-500 text-lg">warning</span>
+              <p class="text-[11px] text-amber-800 dark:text-amber-300 leading-tight">
+                Small-modellen rekommenderas <strong>inte</strong> för möten eller samtal med flera talare.
+              </p>
+            </div>
+            <select id="model-revision"
+              class="p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-700 dark:text-slate-300 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary">
+              <option value="standard" selected>Standard — Balanserat, generellt bruk</option>
+              <option value="subtitle">Subtitle — Kortare text, passar möten &amp; video</option>
+              <option value="strict">Strict — Ordagrant, passar diktering &amp; protokoll</option>
+            </select>
+            <select id="model-quantized"
+              class="p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-700 dark:text-slate-300 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary">
+              <option value="true" selected>q5_0 — Rekommenderas (40% mindre, samma kvalitet)</option>
+              <option value="false">Standard — Full precision (stor filstorlek)</option>
+            </select>
+            <button id="btn-download-model"
+              class="w-full py-3 bg-primary hover:bg-teal-500 text-white text-sm font-semibold rounded-xl transition-colors flex items-center justify-center gap-2">
+              <span class="material-symbols-outlined text-base">download</span>
+              Ladda ner vald modell
+            </button>
           </div>
         </div>
-        <div class="flex flex-col gap-2">
-          <label for="model-quantized"
-            class="text-sm font-medium text-slate-700 dark:text-slate-300">Modellformat</label>
-          <select id="model-quantized"
-            class="p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-700 dark:text-slate-300 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary">
-            <option value="true" selected>Kvantiserad q5_0 (Mindre storlek, ~Samma kvalitet)</option>
-            <option value="false">Standard (Jättestor filstorlek)</option>
-          </select>
-        </div>
-        <p class="text-xs text-slate-500 dark:text-slate-400">Byte av modell kommer att starta en ny nedladdning om den inte redan finns lokalt.</p>
 
-        <!-- Model Management -->
-        <div class="mt-2 pt-4 border-t border-slate-200 dark:border-slate-700">
-           <h3 class="text-sm font-bold text-slate-800 dark:text-white mb-3">Hantering av modeller</h3>
-           <div id="model-list" class="flex flex-col gap-2 max-h-48 overflow-y-auto pr-1 custom-scrollbar">
-              <!-- Models will be injected here -->
-              <p class="text-xs text-slate-400 italic">Laddar modeller...</p>
-           </div>
+        <!-- Downloaded models list -->
+        <div class="pt-4 border-t border-slate-200 dark:border-slate-700">
+          <h3 class="text-sm font-bold text-slate-800 dark:text-white mb-3">Nedladdade modeller</h3>
+          <div id="model-list" class="flex flex-col gap-2 max-h-52 overflow-y-auto pr-1 custom-scrollbar">
+            <p class="text-xs text-slate-400 italic">Laddar modeller...</p>
+          </div>
         </div>
       </div>
       <div class="p-6 bg-slate-50 dark:bg-slate-900/50 border-t border-slate-200 dark:border-slate-700">

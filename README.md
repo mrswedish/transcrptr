@@ -28,12 +28,15 @@ Byt modell via **kugghjulet** (⚙️) i appen. Kvantiserade modeller rekommende
 
 | Modell | Format | Storlek | Hastighet | Kvalitet |
 |--------|--------|---------|-----------|----------|
-| **Small** *(standard)* | Standard | ~460 MB | ⚡⚡⚡ | Bra |
-| **Small** | Kvantiserad (q5_0) | ~290 MB | ⚡⚡⚡ | Bra |
-| **Medium** | Standard | ~1.5 GB | ⚡⚡ | Mycket bra |
-| **Medium** | Kvantiserad (q5_0) | ~900 MB | ⚡⚡ | Mycket bra |
+| **Small** | Standard | ~460 MB | ⚡⚡⚡ | Bra |
+| **Small** | **q5_0 ✓** | ~290 MB | ⚡⚡⚡ | Bra |
+| **Medium** *(rekommenderas)* | Standard | ~1.5 GB | ⚡⚡ | Mycket bra |
+| **Medium** *(rekommenderas)* | **q5_0 ✓** | ~900 MB | ⚡⚡ | Mycket bra |
 | **Large** | Standard | ~3.0 GB | ⚡ | Bäst |
-| **Large** | Kvantiserad (q5_0) | ~2.0 GB | ⚡ | Bäst |
+| **Large** | **q5_0 ✓** | ~2.0 GB | ⚡ | Bäst |
+
+> [!TIP]
+> **q5_0 rekommenderas** — 40% mindre filstorlek med i princip identisk kvalitet. Välj alltid q5_0 om du inte har ett specifikt skäl att använda fullstorleksmodellen.
 
 > [!WARNING]
 > **Small-modellen rekommenderas inte för möten** eller samtal med flera deltagare. Använd **Medium** eller **Large**.

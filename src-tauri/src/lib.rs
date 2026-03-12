@@ -41,6 +41,9 @@ struct TranscriptionProgressPayload {
 #[derive(Serialize)]
 struct ModelInfo {
     name: String,
+    size: String,
+    revision: String,
+    quantized: bool,
     size_bytes: u64,
     downloaded: bool,
 }
@@ -52,16 +55,21 @@ struct DiskInfo {
     models_dir_size: u64,
 }
 
-fn get_model_info(size: &str, quantized: bool) -> (String, String) {
+fn get_model_info(size: &str, quantized: bool, revision: &str) -> (String, String) {
     let repo = format!("kb-whisper-{}", size);
-    let filename = if quantized { "ggml-model-q5_0.bin" } else { "ggml-model.bin" };
-    let url = format!("https://huggingface.co/KBLab/{}/resolve/main/{}", repo, filename);
-    let local_filename = format!("ggml-model-{}-kb{}.bin", size, if quantized { "-q5_0" } else { "" });
+    let hf_file = if quantized { "ggml-model-q5_0.bin" } else { "ggml-model.bin" };
+    let url = format!("https://huggingface.co/KBLab/{}/resolve/{}/{}", repo, revision, hf_file);
+    // "standard" keeps the original filename for backward compatibility
+    let local_filename = if revision == "standard" {
+        format!("ggml-model-{}-kb{}.bin", size, if quantized { "-q5_0" } else { "" })
+    } else {
+        format!("ggml-model-{}-kb-{}{}.bin", size, revision, if quantized { "-q5_0" } else { "" })
+    };
     (url, local_filename)
 }
 
-fn get_model_path(app_handle: &AppHandle, size: &str, quantized: bool) -> Result<PathBuf, String> {
-    let (_, filename) = get_model_info(size, quantized);
+fn get_model_path(app_handle: &AppHandle, size: &str, quantized: bool, revision: &str) -> Result<PathBuf, String> {
+    let (_, filename) = get_model_info(size, quantized, revision);
     let app_data_dir = app_handle.path().app_data_dir().map_err(|e| e.to_string())?;
     let models_dir = app_data_dir.join("models");
     if !models_dir.exists() {
@@ -71,15 +79,15 @@ fn get_model_path(app_handle: &AppHandle, size: &str, quantized: bool) -> Result
 }
 
 #[tauri::command]
-fn check_model_exists(app_handle: AppHandle, size: String, quantized: bool) -> Result<bool, String> {
-    let model_path = get_model_path(&app_handle, &size, quantized)?;
+fn check_model_exists(app_handle: AppHandle, size: String, quantized: bool, revision: String) -> Result<bool, String> {
+    let model_path = get_model_path(&app_handle, &size, quantized, &revision)?;
     Ok(model_path.exists())
 }
 
 #[tauri::command]
-async fn download_model(app_handle: AppHandle, size: String, quantized: bool) -> Result<String, String> {
-    let model_path = get_model_path(&app_handle, &size, quantized)?;
-    let (url, _) = get_model_info(&size, quantized);
+async fn download_model(app_handle: AppHandle, size: String, quantized: bool, revision: String) -> Result<String, String> {
+    let model_path = get_model_path(&app_handle, &size, quantized, &revision)?;
+    let (url, _) = get_model_info(&size, quantized, &revision);
     
     // If it already exists, just return path
     if model_path.exists() {
@@ -128,26 +136,37 @@ async fn download_model(app_handle: AppHandle, size: String, quantized: bool) ->
 #[tauri::command]
 async fn get_available_models(app_handle: AppHandle) -> Result<Vec<ModelInfo>, String> {
     let sizes = ["small", "medium", "large"];
+    let revisions = ["standard", "subtitle", "strict"];
     let mut models = Vec::new();
 
     for size in sizes {
-        // We check both quantized and non-quantized
-        for quantized in [true, false] {
-            let model_path = get_model_path(&app_handle, size, quantized)?;
-            let name = if quantized { format!("{} (quantized)", size) } else { size.to_string() };
-            
-            let (downloaded, size_bytes) = if model_path.exists() {
-                let meta = fs::metadata(&model_path).map_err(|e| e.to_string())?;
-                (true, meta.len())
-            } else {
-                (false, 0)
-            };
+        for revision in revisions {
+            for quantized in [true, false] {
+                let model_path = get_model_path(&app_handle, size, quantized, revision)?;
+                let size_label = match size { "small" => "Small", "medium" => "Medium", _ => "Large" };
+                let rev_label = match revision { "subtitle" => "Subtitle", "strict" => "Strict", _ => "Standard" };
+                let fmt_label = if quantized { "q5_0" } else { "Standard" };
+                let name = format!("{} · {} · {}", size_label, rev_label, fmt_label);
 
-            models.push(ModelInfo {
-                name,
-                size_bytes,
-                downloaded,
-            });
+                let (downloaded, size_bytes) = if model_path.exists() {
+                    let meta = fs::metadata(&model_path).map_err(|e| e.to_string())?;
+                    (true, meta.len())
+                } else {
+                    (false, 0)
+                };
+
+                // Only include downloaded models (or all — frontend filters)
+                if downloaded {
+                    models.push(ModelInfo {
+                        name,
+                        size: size.to_string(),
+                        revision: revision.to_string(),
+                        quantized,
+                        size_bytes,
+                        downloaded,
+                    });
+                }
+            }
         }
     }
 
@@ -155,15 +174,8 @@ async fn get_available_models(app_handle: AppHandle) -> Result<Vec<ModelInfo>, S
 }
 
 #[tauri::command]
-async fn delete_model(app_handle: AppHandle, name: String) -> Result<(), String> {
-    // Determine size and quantized from name
-    let (size, quantized) = if name.contains(" (quantized)") {
-        (name.replace(" (quantized)", ""), true)
-    } else {
-        (name, false)
-    };
-
-    let model_path = get_model_path(&app_handle, &size, quantized)?;
+async fn delete_model(app_handle: AppHandle, size: String, quantized: bool, revision: String) -> Result<(), String> {
+    let model_path = get_model_path(&app_handle, &size, quantized, &revision)?;
     if model_path.exists() {
         fs::remove_file(model_path).map_err(|e| e.to_string())?;
     }
@@ -257,9 +269,9 @@ async fn get_disk_info(app_handle: AppHandle) -> Result<DiskInfo, String> {
 }
 
 #[tauri::command]
-async fn transcribe_audio(app_handle: AppHandle, state: tauri::State<'_, AppState>, audio_bytes: Vec<u8>, size: String, quantized: bool, language: String) -> Result<String, String> {
+async fn transcribe_audio(app_handle: AppHandle, state: tauri::State<'_, AppState>, audio_bytes: Vec<u8>, size: String, quantized: bool, revision: String, language: String) -> Result<String, String> {
     state.inner().cancel_flag.store(false, Ordering::Relaxed);
-    let model_path = get_model_path(&app_handle, &size, quantized)?;
+    let model_path = get_model_path(&app_handle, &size, quantized, &revision)?;
     if !model_path.exists() {
         return Err("Model not found. Please download it first.".to_string());
     }

@@ -36,7 +36,9 @@ const settingsModal = document.getElementById("settings-modal");
 const btnCloseSettings = document.getElementById("btn-close-settings");
 const btnSaveSettings = document.getElementById("btn-save-settings");
 const selModelSize = document.getElementById("model-size");
+const selModelRevision = document.getElementById("model-revision");
 const selModelQuantized = document.getElementById("model-quantized");
+const btnDownloadModel = document.getElementById("btn-download-model");
 const selLanguage = document.getElementById("transcription-language");
 const selMic = document.getElementById("mic-select");
 const audioLevelBar = document.getElementById("audio-level-bar");
@@ -51,7 +53,8 @@ let isRecording = false;
 let isPaused = false;
 let mediaRecorder = null;
 let audioChunks = [];
-let modelSize = "small";
+let modelSize = "medium";
+let modelRevision = "standard";
 let modelQuantized = true;
 let transcriptionLanguage = "sv";
 let selectedMicId = "default";
@@ -79,12 +82,14 @@ let lastRecordedSegments = []; // Store for "Redo" feature
 // Load config from local storage
 function loadSettings() {
   const size = localStorage.getItem("modelSize");
+  const revision = localStorage.getItem("modelRevision");
   const quantized = localStorage.getItem("modelQuantized");
   const lang = localStorage.getItem("transcriptionLanguage");
   const micId = localStorage.getItem("selectedMicId");
   const wasapi = localStorage.getItem("wasapiEnabled");
 
   if (size) modelSize = size;
+  if (revision) modelRevision = revision;
   if (quantized !== null) modelQuantized = quantized === "true";
   if (lang) transcriptionLanguage = lang;
   if (micId) selectedMicId = micId;
@@ -94,16 +99,12 @@ function loadSettings() {
   if (wasapiToggle) wasapiToggle.checked = wasapiEnabled;
 
   selModelSize.value = modelSize;
+  if (selModelRevision) selModelRevision.value = modelRevision;
   selModelQuantized.value = modelQuantized.toString();
   if (selLanguage) selLanguage.value = transcriptionLanguage;
-  
-  // Show/hide small model warning
+
   if (smallModelWarning) {
-    if (modelSize === "small") {
-      smallModelWarning.classList.remove("hidden");
-    } else {
-      smallModelWarning.classList.add("hidden");
-    }
+    smallModelWarning.classList.toggle("hidden", modelSize !== "small");
   }
 
   updateFooter();
@@ -116,7 +117,8 @@ function updateFooter() {
     footerMic.innerText = micLabel;
   }
   if (footerModel) {
-    const fmtName = modelQuantized ? `${modelSize} (kvantiserad)` : modelSize;
+    const revLabel = modelRevision !== "standard" ? ` ${modelRevision}` : "";
+    const fmtName = modelQuantized ? `${modelSize}${revLabel} q5_0` : `${modelSize}${revLabel}`;
     footerModel.innerText = fmtName;
   }
   updateDiskInfo();
@@ -325,46 +327,72 @@ async function refreshModelList() {
   try {
     const models = await invoke("get_available_models");
     modelList.innerHTML = "";
-    
+
     if (models.length === 0) {
-      modelList.innerHTML = '<p class="text-xs text-slate-400 italic">Inga modeller hittades.</p>';
+      modelList.innerHTML = '<p class="text-xs text-slate-400 italic">Inga modeller nedladdade ännu.</p>';
       return;
     }
 
     models.forEach(m => {
+      const isActive = m.size === modelSize && m.revision === modelRevision && m.quantized === modelQuantized;
       const div = document.createElement("div");
-      div.className = "flex items-center justify-between p-2 bg-slate-50 dark:bg-slate-900/80 rounded-lg border border-slate-200 dark:border-slate-700/50";
-      
+      div.className = `flex items-center justify-between p-2 rounded-lg border ${
+        isActive
+          ? "bg-primary/5 border-primary/30 dark:border-primary/30"
+          : "bg-slate-50 dark:bg-slate-900/80 border-slate-200 dark:border-slate-700/50"
+      }`;
+
       const info = document.createElement("div");
-      info.className = "flex flex-col";
-      
-      const name = document.createElement("span");
-      name.className = "text-xs font-semibold text-slate-700 dark:text-slate-300";
-      name.innerText = m.name;
-      
-      const size = document.createElement("span");
-      size.className = "text-[10px] text-slate-500 dark:text-slate-500";
-      size.innerText = m.downloaded ? formatSize(m.size_bytes) : "Ej nedladdad";
-      
-      info.appendChild(name);
-      info.appendChild(size);
-      
+      info.className = "flex flex-col min-w-0";
+
+      const nameEl = document.createElement("span");
+      nameEl.className = `text-xs font-semibold ${isActive ? "text-primary" : "text-slate-700 dark:text-slate-300"}`;
+      nameEl.innerText = m.name + (isActive ? " ✓" : "");
+
+      const sizeEl = document.createElement("span");
+      sizeEl.className = "text-[10px] text-slate-500";
+      sizeEl.innerText = formatSize(m.size_bytes);
+
+      info.appendChild(nameEl);
+      info.appendChild(sizeEl);
       div.appendChild(info);
-      
-      if (m.downloaded) {
-        const delBtn = document.createElement("button");
-        delBtn.className = "p-1.5 text-slate-400 hover:text-red-500 transition-colors";
-        delBtn.innerHTML = '<span class="material-symbols-outlined text-sm">delete</span>';
-        delBtn.onclick = async () => {
-          if (confirm(`Är du säker på att du vill ta bort ${m.name}?`)) {
-            await invoke("delete_model", { name: m.name });
-            refreshModelList();
-            updateFooter();
-          }
+
+      const actions = document.createElement("div");
+      actions.className = "flex items-center gap-1 shrink-0";
+
+      if (!isActive) {
+        const useBtn = document.createElement("button");
+        useBtn.className = "px-2 py-1 text-[10px] font-semibold text-primary border border-primary/30 rounded-lg hover:bg-primary/10 transition-colors";
+        useBtn.innerText = "Använd";
+        useBtn.onclick = () => {
+          modelSize = m.size;
+          modelRevision = m.revision;
+          modelQuantized = m.quantized;
+          localStorage.setItem("modelSize", modelSize);
+          localStorage.setItem("modelRevision", modelRevision);
+          localStorage.setItem("modelQuantized", modelQuantized.toString());
+          updateFooter();
+          refreshModelList();
+          updateBadge(`Redo (${m.name})`, "ready");
         };
-        div.appendChild(delBtn);
+        actions.appendChild(useBtn);
       }
-      
+
+      const delBtn = document.createElement("button");
+      delBtn.className = "p-1.5 text-slate-400 hover:text-red-500 transition-colors";
+      delBtn.innerHTML = '<span class="material-symbols-outlined text-sm">delete</span>';
+      delBtn.onclick = async () => {
+        if (confirm(`Ta bort ${m.name}?`)) {
+          await invoke("delete_model", { size: m.size, quantized: m.quantized, revision: m.revision });
+          // If we deleted the active model, clear badge
+          if (isActive) updateBadge("Ingen modell vald", "error");
+          refreshModelList();
+          updateFooter();
+        }
+      };
+      actions.appendChild(delBtn);
+      div.appendChild(actions);
+
       modelList.appendChild(div);
     });
   } catch (err) {
@@ -436,21 +464,24 @@ async function ensureModelReady() {
   disableControls();
   try {
     updateBadge("Kontrollerar modell...", "");
-    const exists = await invoke("check_model_exists", { size: modelSize, quantized: modelQuantized });
+    const exists = await invoke("check_model_exists", { size: modelSize, quantized: modelQuantized, revision: modelRevision });
     if (!exists) {
       updateBadge("Laddar ner...", "");
-      loadingText.innerText = `Förbereder nedladdning av ${modelSize}...`;
+      const revLabel = modelRevision !== "standard" ? ` ${modelRevision}` : "";
+      loadingText.innerText = `Laddar ner ${modelSize}${revLabel}...`;
       loadingOverlay.classList.remove("hidden");
       if (progressContainer) progressContainer.classList.remove("hidden");
       if (progressBar) progressBar.style.width = "0%";
 
-      await invoke("download_model", { size: modelSize, quantized: modelQuantized });
+      await invoke("download_model", { size: modelSize, quantized: modelQuantized, revision: modelRevision });
 
       loadingOverlay.classList.add("hidden");
       if (progressContainer) progressContainer.classList.add("hidden");
+      refreshModelList();
     }
 
-    const fmtName = modelQuantized ? `${modelSize} q5_0` : modelSize;
+    const revLabel = modelRevision !== "standard" ? ` ${modelRevision}` : "";
+    const fmtName = modelQuantized ? `${modelSize}${revLabel} q5_0` : `${modelSize}${revLabel}`;
     updateBadge(`Redo (${fmtName})`, "ready");
     enableControls();
   } catch (error) {
@@ -458,7 +489,7 @@ async function ensureModelReady() {
     updateBadge("Modellfel", "error");
     loadingOverlay.classList.add("hidden");
     if (progressContainer) progressContainer.classList.add("hidden");
-    await message(`Misslyckades att initiera modellan: ${error}`, { title: 'Fel', kind: 'error' });
+    await message(`Misslyckades att initiera modellen: ${error}`, { title: 'Fel', kind: 'error' });
   }
 }
 
@@ -500,42 +531,52 @@ btnCloseSettings.addEventListener("click", () => {
 });
 
 btnSaveSettings.addEventListener("click", async () => {
-  const newSize = selModelSize.value;
-  const newQuant = selModelQuantized.value === "true";
   const newLang = selLanguage ? selLanguage.value : "sv";
   const newMicId = selMic ? selMic.value : "default";
   const wasapiToggle = document.getElementById("wasapi-toggle");
   const newWasapi = wasapiToggle ? wasapiToggle.checked : false;
 
-  localStorage.setItem("modelSize", newSize);
-  localStorage.setItem("modelQuantized", newQuant.toString());
   localStorage.setItem("transcriptionLanguage", newLang);
   localStorage.setItem("selectedMicId", newMicId);
   localStorage.setItem("wasapiEnabled", newWasapi.toString());
 
-  modelSize = newSize;
-  modelQuantized = newQuant;
   transcriptionLanguage = newLang;
   selectedMicId = newMicId;
   wasapiEnabled = newWasapi;
 
   settingsModal.classList.add("hidden");
-
-  // Show/hide small model warning
-  if (smallModelWarning) {
-    if (modelSize === "small") {
-      smallModelWarning.classList.remove("hidden");
-    } else {
-      smallModelWarning.classList.add("hidden");
-    }
-  }
-
   updateFooter();
-  refreshModelList();
-
-  // Re-check and download if needed
-  await ensureModelReady();
 });
+
+// "Ladda ner vald modell" — reads dropdowns, sets active, downloads if needed
+if (btnDownloadModel) {
+  btnDownloadModel.addEventListener("click", async () => {
+    const newSize = selModelSize.value;
+    const newRevision = selModelRevision ? selModelRevision.value : "standard";
+    const newQuant = selModelQuantized.value === "true";
+
+    modelSize = newSize;
+    modelRevision = newRevision;
+    modelQuantized = newQuant;
+
+    localStorage.setItem("modelSize", modelSize);
+    localStorage.setItem("modelRevision", modelRevision);
+    localStorage.setItem("modelQuantized", modelQuantized.toString());
+
+    if (smallModelWarning) smallModelWarning.classList.toggle("hidden", modelSize !== "small");
+
+    settingsModal.classList.add("hidden");
+    updateFooter();
+    await ensureModelReady();
+  });
+}
+
+// Show/hide small model warning when size dropdown changes
+if (selModelSize) {
+  selModelSize.addEventListener("change", () => {
+    if (smallModelWarning) smallModelWarning.classList.toggle("hidden", selModelSize.value !== "small");
+  });
+}
 
 // Redo transcription with different model
 btnRedo.addEventListener("click", async () => {
@@ -665,8 +706,8 @@ async function startRecording() {
       let resolvedMicId = selectedMicId;
       if (selectedMicId === "default" && firstMicDeviceId) resolvedMicId = firstMicDeviceId;
       const audioConstraints = resolvedMicId === "default"
-        ? { audio: true }
-        : { audio: { deviceId: { exact: resolvedMicId } } };
+        ? { audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }
+        : { audio: { deviceId: { exact: resolvedMicId }, echoCancellation: true, noiseSuppression: true, autoGainControl: true } };
 
       micStream = await navigator.mediaDevices.getUserMedia(audioConstraints);
 
@@ -716,8 +757,8 @@ async function startRecording() {
         resolvedMicId = firstMicDeviceId;
       }
       const audioConstraints = resolvedMicId === "default"
-        ? { audio: true }
-        : { audio: { deviceId: { exact: resolvedMicId } } };
+        ? { audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }
+        : { audio: { deviceId: { exact: resolvedMicId }, echoCancellation: true, noiseSuppression: true, autoGainControl: true } };
 
       micStream = await navigator.mediaDevices.getUserMedia(audioConstraints);
 
@@ -1128,6 +1169,7 @@ async function transcribeBlob(blob, label) {
         audioBytes: chunkBytesArray,
         size: modelSize,
         quantized: modelQuantized,
+        revision: modelRevision,
         language: transcriptionLanguage
       });
       if (chunkText && chunkText.trim()) {
@@ -1210,7 +1252,8 @@ async function mixAudioToFloat32(blobA, blobB) {
 }
 
 // Transcribe a pre-decoded Float32Array at 16kHz directly (no blob/decode roundtrip).
-async function transcribeFloat32(float32Data) {
+async function transcribeFloat32(rawFloat32Data) {
+  const float32Data = normalizeAudio(rawFloat32Data);
   const totalSamples = float32Data.length;
   if (totalSamples === 0) { console.warn('[wasapi] transcribeFloat32: empty audio'); return ''; }
 
@@ -1242,6 +1285,7 @@ async function transcribeFloat32(float32Data) {
         audioBytes: chunkBytesArray,
         size: modelSize,
         quantized: modelQuantized,
+        revision: modelRevision,
         language: transcriptionLanguage
       });
       if (chunkText && chunkText.trim()) {
@@ -1260,12 +1304,73 @@ async function transcribeFloat32(float32Data) {
   return fullResult;
 }
 
+// Normalize Float32 audio to peak ±0.95 to avoid clipping and improve whisper accuracy
+function normalizeAudio(float32Data) {
+  let peak = 0;
+  for (let i = 0; i < float32Data.length; i++) {
+    const abs = Math.abs(float32Data[i]);
+    if (abs > peak) peak = abs;
+  }
+  if (peak < 0.001) return float32Data; // silence — skip
+  const scale = 0.95 / peak;
+  const normalized = new Float32Array(float32Data.length);
+  for (let i = 0; i < float32Data.length; i++) {
+    normalized[i] = float32Data[i] * scale;
+  }
+  return normalized;
+}
+
 // Audio Processing and Transcription (chunked for large files)
 // -------------------------------------------------------------
 
 // Max chunk size: 5 minutes of audio at 16kHz mono
 const CHUNK_DURATION_SECONDS = 300; // 5 minutes
 const CHUNK_SAMPLES = 16000 * CHUNK_DURATION_SECONDS;
+
+// Decode an audio or video file to Float32Array at 16kHz.
+// First tries AudioContext.decodeAudioData (fast, works for MP3/WAV/OGG/MP4/WebM).
+// Falls back to HTMLVideoElement routing through AudioContext for other video formats.
+async function decodeFileToFloat32(blob) {
+  const decodeCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+
+  // Try direct decode first
+  try {
+    const arrayBuffer = await blob.arrayBuffer();
+    const audioBuffer = await decodeCtx.decodeAudioData(arrayBuffer);
+    return normalizeAudio(audioBuffer.getChannelData(0));
+  } catch (directErr) {
+    console.warn("[decode] Direct decode failed, trying video element fallback:", directErr);
+  }
+
+  // Fallback: load via HTMLVideoElement and capture via MediaElementSource
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(blob);
+    const video = document.createElement("video");
+    video.src = url;
+    video.preload = "auto";
+    video.muted = false;
+
+    video.addEventListener("error", () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("Kunde inte avkoda filen. Format stöds ej."));
+    });
+
+    video.addEventListener("canplaythrough", async () => {
+      try {
+        const offlineCtx = new OfflineAudioContext(1, Math.ceil(video.duration * 16000), 16000);
+        const source = offlineCtx.createMediaElementSource(video);
+        source.connect(offlineCtx.destination);
+        video.play();
+        const renderedBuffer = await offlineCtx.startRendering();
+        URL.revokeObjectURL(url);
+        resolve(normalizeAudio(renderedBuffer.getChannelData(0)));
+      } catch (err) {
+        URL.revokeObjectURL(url);
+        reject(err);
+      }
+    });
+  });
+}
 
 async function processAudioBlob(blob) {
   try {
@@ -1277,15 +1382,8 @@ async function processAudioBlob(blob) {
     // Clear previous output text before starting
     outputText.value = "";
 
-    // Convert Blob/File to ArrayBuffer
-    const arrayBuffer = await blob.arrayBuffer();
-
-    // Resample to 16kHz Float32 for whisper-rs
-    const decodeCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
-    const audioBuffer = await decodeCtx.decodeAudioData(arrayBuffer);
-
-    // Get PCM samples from first channel (mono)
-    const float32Data = audioBuffer.getChannelData(0);
+    // Decode audio/video file to Float32 at 16kHz for whisper
+    const float32Data = await decodeFileToFloat32(blob);
     const totalSamples = float32Data.length;
     const totalDuration = (totalSamples / 16000).toFixed(0);
 
