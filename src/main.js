@@ -461,35 +461,83 @@ function stopRecordingMetrics() {
   }
 }
 
-async function ensureModelReady() {
+// Download + activate a specific model (called by download button)
+async function downloadAndActivate(size, revision, quantized) {
   disableControls();
   try {
-    updateBadge("Kontrollerar modell...", "");
-    const exists = await invoke("check_model_exists", { size: modelSize, quantized: modelQuantized, revision: modelRevision });
-    if (!exists) {
-      updateBadge("Laddar ner...", "");
-      const revLabel = modelRevision !== "standard" ? ` ${modelRevision}` : "";
-      loadingText.innerText = `Laddar ner ${modelSize}${revLabel}...`;
-      loadingOverlay.classList.remove("hidden");
-      if (progressContainer) progressContainer.classList.remove("hidden");
-      if (progressBar) progressBar.style.width = "0%";
+    updateBadge("Laddar ner...", "");
+    const revLabel = revision !== "standard" ? ` ${revision}` : "";
+    loadingText.innerText = `Laddar ner ${size}${revLabel}...`;
+    loadingOverlay.classList.remove("hidden");
+    if (progressContainer) progressContainer.classList.remove("hidden");
+    if (progressBar) progressBar.style.width = "0%";
 
-      await invoke("download_model", { size: modelSize, quantized: modelQuantized, revision: modelRevision });
+    await invoke("download_model", { size, quantized, revision });
 
-      loadingOverlay.classList.add("hidden");
-      if (progressContainer) progressContainer.classList.add("hidden");
-      refreshModelList();
-    }
+    loadingOverlay.classList.add("hidden");
+    if (progressContainer) progressContainer.classList.add("hidden");
 
-    const revLabel = modelRevision !== "standard" ? ` ${modelRevision}` : "";
-    const fmtName = modelQuantized ? `${modelSize}${revLabel} q5_0` : `${modelSize}${revLabel}`;
+    modelSize = size;
+    modelRevision = revision;
+    modelQuantized = quantized;
+    localStorage.setItem("modelSize", modelSize);
+    localStorage.setItem("modelRevision", modelRevision);
+    localStorage.setItem("modelQuantized", modelQuantized.toString());
+
+    const revLabelFmt = revision !== "standard" ? ` ${revision}` : "";
+    const fmtName = quantized ? `${size}${revLabelFmt} q5_0` : `${size}${revLabelFmt}`;
     updateBadge(`Redo (${fmtName})`, "ready");
+    updateFooter();
+    refreshModelList();
     enableControls();
   } catch (error) {
     console.error(error);
     updateBadge("Modellfel", "error");
     loadingOverlay.classList.add("hidden");
     if (progressContainer) progressContainer.classList.add("hidden");
+    enableControls();
+    await message(`Nedladdning misslyckades: ${error}`, { title: 'Fel', kind: 'error' });
+  }
+}
+
+// Check saved model on startup — fall back to any existing downloaded model
+async function ensureModelReady() {
+  disableControls();
+  try {
+    updateBadge("Kontrollerar modell...", "");
+    const exists = await invoke("check_model_exists", { size: modelSize, quantized: modelQuantized, revision: modelRevision });
+
+    if (!exists) {
+      // Saved model missing — look for any already-downloaded model to use
+      const available = await invoke("get_available_models");
+      if (available.length > 0) {
+        const m = available[0];
+        modelSize = m.size;
+        modelRevision = m.revision;
+        modelQuantized = m.quantized;
+        localStorage.setItem("modelSize", modelSize);
+        localStorage.setItem("modelRevision", modelRevision);
+        localStorage.setItem("modelQuantized", modelQuantized.toString());
+        updateFooter();
+        refreshModelList();
+      } else {
+        // First launch — download default (medium standard q5)
+        await downloadAndActivate("medium", "standard", true);
+        return;
+      }
+    }
+
+    const revLabel = modelRevision !== "standard" ? ` ${modelRevision}` : "";
+    const fmtName = modelQuantized ? `${modelSize}${revLabel} q5_0` : `${modelSize}${revLabel}`;
+    updateBadge(`Redo (${fmtName})`, "ready");
+    enableControls();
+    refreshModelList();
+  } catch (error) {
+    console.error(error);
+    updateBadge("Modellfel", "error");
+    loadingOverlay.classList.add("hidden");
+    if (progressContainer) progressContainer.classList.add("hidden");
+    enableControls(); // Always re-enable so user can reach settings
     await message(`Misslyckades att initiera modellen: ${error}`, { title: 'Fel', kind: 'error' });
   }
 }
@@ -596,22 +644,12 @@ btnSaveSettings.addEventListener("click", async () => {
   updateFooter();
 });
 
-// "Ladda ner vald modell" — reads pill state, sets active, downloads if needed
+// "Ladda ner vald modell" — always downloads the selected combination
 if (btnDownloadModel) {
   btnDownloadModel.addEventListener("click", async () => {
-    modelSize = dlSize;
-    modelRevision = dlRevision;
-    modelQuantized = cbModelQuantized ? cbModelQuantized.checked : true;
-
-    localStorage.setItem("modelSize", modelSize);
-    localStorage.setItem("modelRevision", modelRevision);
-    localStorage.setItem("modelQuantized", modelQuantized.toString());
-
-    if (smallModelWarning) smallModelWarning.classList.toggle("hidden", modelSize !== "small");
-
+    const quantized = cbModelQuantized ? cbModelQuantized.checked : true;
     settingsModal.classList.add("hidden");
-    updateFooter();
-    await ensureModelReady();
+    await downloadAndActivate(dlSize, dlRevision, quantized);
   });
 }
 
