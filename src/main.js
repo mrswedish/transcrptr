@@ -38,7 +38,30 @@ const btnDownloadModel = document.getElementById("btn-download-model");
 const cbModelQuantized = document.getElementById("model-quantized");
 const selLanguage = document.getElementById("transcription-language");
 const selMic = document.getElementById("mic-select");
-const audioLevelBar = document.getElementById("audio-level-bar");
+const eqBar = document.getElementById("eq-bar");
+
+// Animate the EQ-bar columns based on audio level (average 0–128)
+function animateEq(average) {
+  if (!eqBar) return;
+  const cols = eqBar.querySelectorAll(".eq-col");
+  const norm = Math.min(average / 70, 1); // 0–1
+  const shape = [0.3, 0.55, 0.85, 1.0, 0.85, 0.55, 0.3]; // bell curve base
+  const color = norm > 0.85 ? "#ef4444" : norm > 0.6 ? "#f59e0b" : "#2DD4BF";
+  cols.forEach((col, i) => {
+    const jitter = (Math.random() * 0.35 - 0.175) * norm;
+    const h = Math.max(0.08, Math.min(1, shape[i] * norm + jitter));
+    col.style.height = `${Math.round(h * 100)}%`;
+    col.style.backgroundColor = color;
+  });
+}
+
+function resetEq() {
+  if (!eqBar) return;
+  eqBar.querySelectorAll(".eq-col").forEach((col, i) => {
+    col.style.height = ["25%","45%","75%","100%","75%","45%","25%"][i];
+    col.style.backgroundColor = "#2DD4BF";
+  });
+}
 
 // Confirm modal elements
 const confirmModal = document.getElementById("confirm-modal");
@@ -117,7 +140,9 @@ function updateFooter() {
   }
   if (footerModel) {
     const revLabel = modelRevision !== "standard" ? ` ${modelRevision}` : "";
-    const fmtName = modelQuantized ? `${modelSize}${revLabel} q5_0` : `${modelSize}${revLabel}`;
+    const fmtName = modelSize === "turbo"
+      ? "Turbo · Global · kvantiserad"
+      : modelQuantized ? `${modelSize}${revLabel} · kvantiserad` : `${modelSize}${revLabel}`;
     footerModel.innerText = fmtName;
   }
   updateDiskInfo();
@@ -524,7 +549,9 @@ async function ensureModelReady() {
     }
 
     const revLabel = modelRevision !== "standard" ? ` ${modelRevision}` : "";
-    const fmtName = modelQuantized ? `${modelSize}${revLabel} q5_0` : `${modelSize}${revLabel}`;
+    const fmtName = modelSize === "turbo"
+      ? "Turbo · Global · kvantiserad"
+      : modelQuantized ? `${modelSize}${revLabel} · kvantiserad` : `${modelSize}${revLabel}`;
     updateBadge(`Redo (${fmtName})`, "ready");
     enableControls();
     refreshModelList();
@@ -574,7 +601,7 @@ const REVISION_DESCS = {
 const SIZE_DESCS = {
   medium: "~900 MB · Balanserad hastighet och kvalitet · Rekommenderas för svenska",
   large:  "~2 GB · Bäst kvalitet på svenska · Långsammast",
-  turbo:  "~1.5 GB · Snabb · 100+ språk · Bred internationell förståelse",
+  turbo:  "~1.5 GB · Snabb · 100+ språk · Välj vid blandspråkigt innehåll, engelska facktermer eller internationella möten",
 };
 
 const revisionSection = document.getElementById("revision-section");
@@ -593,11 +620,19 @@ function syncPickButtons(group, value) {
   if (descEl) {
     descEl.innerText = group === "revision" ? REVISION_DESCS[value] ?? "" : SIZE_DESCS[value] ?? "";
   }
-  // Turbo has no KB-whisper revisions and is always q8_0 — hide those pickers
+  // Turbo has no KB-whisper revisions — hide revision picker; quantized row stays visible but forced on
   if (group === "size") {
     const isTurbo = value === "turbo";
     if (revisionSection) revisionSection.classList.toggle("hidden", isTurbo);
-    if (quantizedRow) quantizedRow.classList.toggle("hidden", isTurbo);
+    const qCheckbox = document.getElementById("model-quantized");
+    if (qCheckbox) {
+      if (isTurbo) {
+        qCheckbox.checked = true;
+        qCheckbox.disabled = true;
+      } else {
+        qCheckbox.disabled = false;
+      }
+    }
   }
 }
 
@@ -808,10 +843,7 @@ async function startRecording() {
         let sum = 0;
         for (let i = 0; i < wasapiBufLen; i++) sum += wasapiDataArr[i];
         const average = sum / wasapiBufLen;
-        if (audioLevelBar) {
-          const clampedScale = Math.min(Math.max(1 + average / 150, 1), 2.2);
-          audioLevelBar.style.transform = `scale(${clampedScale})`;
-        }
+        animateEq(average);
       }
 
       mediaRecorder = createRecorder();
@@ -861,11 +893,7 @@ async function startRecording() {
         let sum = 0;
         for (let i = 0; i < bufferLength; i++) sum += dataArray[i];
         const average = sum / bufferLength;
-        if (audioLevelBar) {
-          const scale = 1 + (average / 150);
-          const clampedScale = Math.min(Math.max(scale, 1), 2.2);
-          audioLevelBar.style.transform = `scale(${clampedScale})`;
-        }
+        animateEq(average);
       }
       // ------------------------
 
@@ -879,13 +907,13 @@ async function startRecording() {
 
     // UI Updates
     btnRecord.classList.add("recording");
-    btnRecord.querySelector(".btn-text").textContent = "Stoppa & transkribera";
+    btnRecord.querySelector(".btn-text").textContent = "Stoppa";
     recordingIndicator.classList.remove("hidden");
     if (recordingStatusText) recordingStatusText.textContent = "Spelar in...";
     if (btnPause) {
       if (!wasapiEnabled) {
         btnPause.classList.remove("hidden");
-        btnPause.querySelector(".btn-pause-text").textContent = "Pausa inspelning";
+        btnPause.querySelector(".btn-pause-text").textContent = "Pausa";
         btnPause.querySelector(".material-symbols-outlined").textContent = "pause";
       } else {
         btnPause.classList.add("hidden"); // Pause not supported in WASAPI mode
@@ -922,20 +950,17 @@ function pauseSession() {
 
   // Stop visualizer but keep micStream alive
   if (animationFrameId) cancelAnimationFrame(animationFrameId);
-  if (audioLevelBar) audioLevelBar.style.transform = `scale(1)`;
+  resetEq();
 
   // UI Updates
   const partsLabel = getRecordedPartsLabel();
   if (recordingStatusText) {
-    recordingStatusText.textContent = `Inspelning pausad | Inspelat: ${partsLabel}`;
-    recordingStatusText.classList.remove("text-red-500");
+    recordingStatusText.textContent = `Pausad${partsLabel ? " · " + partsLabel : ""}`;
+    recordingStatusText.classList.remove("text-slate-600", "dark:text-slate-300");
     recordingStatusText.classList.add("text-amber-500");
   }
-  if (audioLevelBar) {
-    audioLevelBar.classList.remove("bg-red-500");
-    audioLevelBar.classList.add("bg-amber-500");
-  }
-  btnPause.querySelector(".btn-pause-text").textContent = "Fortsätt inspelning";
+  if (eqBar) eqBar.querySelectorAll(".eq-col").forEach(c => c.style.backgroundColor = "#f59e0b");
+  btnPause.querySelector(".btn-pause-text").textContent = "Fortsätt";
   btnPause.querySelector(".material-symbols-outlined").textContent = "play_arrow";
 }
 
@@ -957,30 +982,18 @@ function resumeSession() {
     analyzer.getByteFrequencyData(dataArray);
     let sum = 0;
     for (let i = 0; i < bufferLength; i++) sum += dataArray[i];
-    const average = sum / bufferLength;
-    if (audioLevelBar) {
-      const scale = 1 + (average / 150);
-      const clampedScale = Math.min(Math.max(scale, 1), 2.2);
-      audioLevelBar.style.transform = `scale(${clampedScale})`;
-    }
+    animateEq(sum / bufferLength);
   }
   drawVisualizer();
 
   // UI Updates
   const nextPart = sessionSegments.length + 1;
-  const partsLabel = getRecordedPartsLabel();
   if (recordingStatusText) {
-    recordingStatusText.textContent = partsLabel
-      ? `Spelar in Del ${nextPart} | Inspelat: ${partsLabel}`
-      : `Spelar in Del ${nextPart}`;
+    recordingStatusText.textContent = `Spelar in — del ${nextPart}`;
     recordingStatusText.classList.remove("text-amber-500");
-    recordingStatusText.classList.add("text-red-500");
+    recordingStatusText.classList.add("text-slate-600", "dark:text-slate-300");
   }
-  if (audioLevelBar) {
-    audioLevelBar.classList.remove("bg-amber-500");
-    audioLevelBar.classList.add("bg-red-500");
-  }
-  btnPause.querySelector(".btn-pause-text").textContent = "Pausa inspelning";
+  btnPause.querySelector(".btn-pause-text").textContent = "Pausa";
   btnPause.querySelector(".material-symbols-outlined").textContent = "pause";
 }
 
@@ -992,7 +1005,7 @@ async function stopSession() {
 
     btnRecord.classList.remove("recording");
     const btnText = btnRecord.querySelector(".btn-text");
-    if (btnText) btnText.textContent = "Starta ny inspelning";
+    if (btnText) btnText.textContent = "Spela in";
     recordingIndicator.classList.add("hidden");
     btnPause.classList.add("hidden");
     disableControls();
@@ -1113,7 +1126,7 @@ async function stopSession() {
   }
 
   if (animationFrameId) cancelAnimationFrame(animationFrameId);
-  if (audioLevelBar) audioLevelBar.style.transform = `scale(1)`;
+  resetEq();
 
   isRecording = false;
   isPaused = false;
@@ -1122,17 +1135,12 @@ async function stopSession() {
   // UI Updates – reset
   btnRecord.classList.remove("recording");
   const btnText = btnRecord.querySelector(".btn-text");
-  if (btnText) btnText.textContent = "Starta ny inspelning";
+  if (btnText) btnText.textContent = "Spela in";
   recordingIndicator.classList.add("hidden");
   btnPause.classList.add("hidden");
   if (recordingStatusText) {
-    recordingStatusText.textContent = "Spelar in...";
+    recordingStatusText.textContent = "Spelar in";
     recordingStatusText.classList.remove("text-amber-500");
-    recordingStatusText.classList.add("text-red-500");
-  }
-  if (audioLevelBar) {
-    audioLevelBar.classList.remove("bg-amber-500");
-    audioLevelBar.classList.add("bg-red-500");
   }
   if (segmentBadge) segmentBadge.classList.add("hidden");
   disableControls();

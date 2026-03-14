@@ -42,13 +42,18 @@
       .hidden {
         display: none !important;
       }
+      .eq-col {
+        transition: height 80ms ease-out, background-color 150ms ease;
+        min-height: 8%;
+        border-radius: 2px;
+      }
     </style>
   <script type="module" src="/main.js" defer></script>
 </head>
 
 <body class="bg-background-light dark:bg-background-dark text-slate-900 dark:text-slate-100 min-h-screen flex flex-col">
   <div class="h-6 w-full bg-transparent"></div>
-  <main class="flex-1 px-6 pb-12">
+  <main class="flex-1 flex flex-col px-6 pb-12">
     <header class="flex items-center justify-between mb-8">
       <div class="flex flex-col gap-0.5">
         <div class="flex items-center gap-2">
@@ -65,56 +70,56 @@
         <span class="material-symbols-outlined">settings</span>
       </button>
     </header>
-    <div
-      class="bg-white dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/50 rounded-3xl p-6 mb-6 shadow-sm">
-      <div class="grid grid-cols-1 gap-4">
+    <div class="bg-white dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/50 rounded-3xl px-4 pt-4 pb-3 mb-4 shadow-sm">
+
+      <!-- Control row: all buttons inline -->
+      <div class="flex items-center gap-2">
         <button id="btn-record"
-          class="relative group flex items-center justify-center gap-3 py-5 bg-primary hover:bg-teal-500 active:scale-[0.98] transition-all rounded-2xl shadow-lg shadow-primary/20">
-          <span class="material-symbols-outlined text-white text-2xl">mic</span>
-          <span class="text-white font-semibold text-lg btn-text">Starta ny inspelning</span>
+          class="flex-1 flex items-center justify-center gap-2 py-3 bg-primary hover:bg-teal-500 active:scale-[0.98] transition-all rounded-2xl shadow-md shadow-primary/20">
+          <span class="material-symbols-outlined text-white text-xl">mic</span>
+          <span class="text-white font-semibold text-sm btn-text">Spela in</span>
         </button>
 
         <button id="btn-pause"
-          class="hidden flex items-center justify-center gap-3 py-5 bg-amber-500 hover:bg-amber-600 active:scale-[0.98] transition-all rounded-2xl shadow-lg shadow-amber-500/20">
-          <span class="material-symbols-outlined text-white text-2xl">pause</span>
-          <span class="text-white font-semibold text-lg btn-pause-text">Pausa inspelning</span>
+          class="hidden flex items-center justify-center gap-1.5 py-3 px-4 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 active:scale-[0.98] transition-all rounded-2xl">
+          <span class="material-symbols-outlined text-slate-600 dark:text-slate-200 text-base leading-none">pause</span>
+          <span class="text-slate-700 dark:text-slate-200 font-medium text-sm btn-pause-text">Pausa</span>
         </button>
 
-        <div id="recording-indicator" class="hidden flex flex-col items-center justify-center gap-3 mt-2">
-          <div class="flex items-center gap-2">
-            <div id="audio-level-bar"
-              class="w-3 h-3 rounded-full bg-red-500 animate-pulse transition-transform duration-75 ease-out"></div>
-            <span id="recording-status-text" class="text-red-500 font-medium text-sm">Spelar in...</span>
-          </div>
-          <div class="flex flex-wrap items-center justify-center gap-4 text-xs text-slate-500 dark:text-slate-400 font-mono">
-            <div class="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-900 px-3 py-1 rounded-full">
-              <span class="material-symbols-outlined text-sm">timer</span>
-              <span id="recording-timer">00:00:00</span>
-            </div>
-            <div class="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-900 px-3 py-1 rounded-full">
-              <span class="material-symbols-outlined text-sm">database</span>
-              <span id="recording-size">0.0 MB</span>
-            </div>
-            <div id="disk-forecast-container" class="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-900 px-3 py-1 rounded-full">
-              <span class="material-symbols-outlined text-sm">info</span>
-              <span id="disk-forecast">Prognos: ~0h kvar</span>
-            </div>
-          </div>
-          <span id="segment-badge"
-            class="hidden px-2 py-0.5 bg-slate-700/50 text-slate-300 text-xs font-bold rounded-full"></span>
-        </div>
-
-        <div class="flex items-center justify-center gap-4 my-2">
-          <div class="h-px flex-1 bg-slate-200 dark:bg-slate-700"></div>
-          <span class="text-xs font-bold text-slate-400 uppercase tracking-widest">ELLER</span>
-          <div class="h-px flex-1 bg-slate-200 dark:bg-slate-700"></div>
-        </div>
         <button id="btn-file"
-          class="flex items-center justify-center gap-3 py-5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 active:scale-[0.98] transition-all rounded-2xl">
-          <span class="material-symbols-outlined text-slate-600 dark:text-slate-400 text-2xl">folder_open</span>
-          <span class="text-slate-700 dark:text-slate-300 font-semibold text-lg">Välj ljud- eller videofil</span>
+          title="Välj ljud- eller videofil"
+          class="flex items-center justify-center py-3 px-4 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 active:scale-[0.98] transition-all rounded-2xl">
+          <span class="material-symbols-outlined text-slate-600 dark:text-slate-300 text-xl">folder_open</span>
         </button>
-        <input type="file" id="file-input" accept="audio/*,video/mp4,video/webm,video/quicktime,video/x-matroska" class="hidden" />
+      </div>
+
+      <input type="file" id="file-input" accept="audio/*,video/mp4,video/webm,video/quicktime,video/x-matroska" class="hidden" />
+
+      <!-- Recording status row — hidden when not recording -->
+      <div id="recording-indicator" class="hidden mt-3 flex items-center gap-2.5">
+
+        <!-- EQ-bar audio level visualiser -->
+        <div id="eq-bar" class="flex items-end gap-[3px] h-5 shrink-0">
+          <div class="eq-col w-[5px] bg-primary" style="height:25%"></div>
+          <div class="eq-col w-[5px] bg-primary" style="height:45%"></div>
+          <div class="eq-col w-[5px] bg-primary" style="height:75%"></div>
+          <div class="eq-col w-[5px] bg-primary" style="height:100%"></div>
+          <div class="eq-col w-[5px] bg-primary" style="height:75%"></div>
+          <div class="eq-col w-[5px] bg-primary" style="height:45%"></div>
+          <div class="eq-col w-[5px] bg-primary" style="height:25%"></div>
+        </div>
+
+        <span id="recording-status-text" class="text-sm font-medium text-slate-600 dark:text-slate-300">Spelar in</span>
+
+        <div class="flex-1"></div>
+
+        <!-- Inline metrics: timer · size · segment -->
+        <span class="font-mono text-xs text-slate-400 dark:text-slate-500 tabular-nums" id="recording-timer">00:00:00</span>
+        <span class="text-slate-300 dark:text-slate-600 text-xs select-none">·</span>
+        <span class="font-mono text-xs text-slate-400 dark:text-slate-500" id="recording-size">0 MB</span>
+        <span id="segment-badge" class="hidden px-1.5 py-0.5 bg-primary/20 text-primary text-[10px] font-bold rounded-full ml-1"></span>
+        <!-- Disk forecast kept as hidden element for JS compat -->
+        <span id="disk-forecast" class="hidden"></span>
       </div>
     </div>
     <section class="flex flex-col flex-1">
@@ -288,7 +293,7 @@
                 <button type="button" data-pick="size" data-value="large"
                   class="pick-btn flex-1 py-2 px-1 text-xs font-semibold rounded-lg transition-colors">Large</button>
                 <button type="button" data-pick="size" data-value="turbo"
-                  class="pick-btn flex-1 py-2 px-1 text-xs font-semibold rounded-lg transition-colors">Turbo</button>
+                  class="pick-btn flex-1 py-2 px-1 text-xs font-semibold rounded-lg transition-colors">Turbo · Global</button>
               </div>
               <p id="size-desc" class="text-[11px] text-slate-400 dark:text-slate-500 mt-1.5 leading-snug">~900 MB · Balanserad hastighet och kvalitet · Rekommenderas</p>
             </div>
@@ -299,7 +304,7 @@
                 <input type="checkbox" id="model-quantized" checked
                   class="w-4 h-4 rounded accent-primary cursor-pointer shrink-0">
                 <span class="text-sm text-slate-700 dark:text-slate-300">
-                  q5_0 <span class="text-slate-400 font-normal">— 40% mindre, samma kvalitet (rekommenderas)</span>
+                  Kvantiserad/komprimerad <span class="text-slate-400 font-normal">— 40% mindre, samma kvalitet (rekommenderas)</span>
                 </span>
               </label>
             </div>
