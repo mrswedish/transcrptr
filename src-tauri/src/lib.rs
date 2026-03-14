@@ -56,6 +56,13 @@ struct DiskInfo {
 }
 
 fn get_model_info(size: &str, quantized: bool, revision: &str) -> (String, String) {
+    // Turbo: ggerganov/whisper.cpp large-v3-turbo — always q8_0, no revision
+    if size == "turbo" {
+        return (
+            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q8_0.bin".to_string(),
+            "ggml-large-v3-turbo-q8_0.bin".to_string(),
+        );
+    }
     let repo = format!("kb-whisper-{}", size);
     let hf_file = if quantized { "ggml-model-q5_0.bin" } else { "ggml-model.bin" };
     // "standard" maps to the "main" branch on HuggingFace; other revisions use their own branch name
@@ -137,39 +144,47 @@ async fn download_model(app_handle: AppHandle, size: String, quantized: bool, re
 
 #[tauri::command]
 async fn get_available_models(app_handle: AppHandle) -> Result<Vec<ModelInfo>, String> {
-    let sizes = ["small", "medium", "large"];
-    let revisions = ["standard", "subtitle", "strict"];
     let mut models = Vec::new();
 
-    for size in sizes {
-        for revision in revisions {
+    // KB-whisper models (medium + large, standard + strict)
+    let kb_sizes = ["medium", "large"];
+    let kb_revisions = ["standard", "strict"];
+    for size in kb_sizes {
+        for revision in kb_revisions {
             for quantized in [true, false] {
                 let model_path = get_model_path(&app_handle, size, quantized, revision)?;
-                let size_label = match size { "small" => "Small", "medium" => "Medium", _ => "Large" };
-                let rev_label = match revision { "subtitle" => "Subtitle", "strict" => "Strict", _ => "Standard" };
+                let size_label = if size == "medium" { "Medium" } else { "Large" };
+                let rev_label = if revision == "strict" { "Ordagrann" } else { "Standard" };
                 let fmt_label = if quantized { "q5_0" } else { "Standard" };
                 let name = format!("{} · {} · {}", size_label, rev_label, fmt_label);
 
-                let (downloaded, size_bytes) = if model_path.exists() {
+                if model_path.exists() {
                     let meta = fs::metadata(&model_path).map_err(|e| e.to_string())?;
-                    (true, meta.len())
-                } else {
-                    (false, 0)
-                };
-
-                // Only include downloaded models (or all — frontend filters)
-                if downloaded {
                     models.push(ModelInfo {
                         name,
                         size: size.to_string(),
                         revision: revision.to_string(),
                         quantized,
-                        size_bytes,
-                        downloaded,
+                        size_bytes: meta.len(),
+                        downloaded: true,
                     });
                 }
             }
         }
+    }
+
+    // Turbo model (ggerganov/whisper.cpp large-v3-turbo-q8_0)
+    let turbo_path = get_model_path(&app_handle, "turbo", true, "standard")?;
+    if turbo_path.exists() {
+        let meta = fs::metadata(&turbo_path).map_err(|e| e.to_string())?;
+        models.push(ModelInfo {
+            name: "Turbo · q8_0".to_string(),
+            size: "turbo".to_string(),
+            revision: "standard".to_string(),
+            quantized: true,
+            size_bytes: meta.len(),
+            downloaded: true,
+        });
     }
 
     Ok(models)

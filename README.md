@@ -26,24 +26,32 @@ Transcrptr använder [KB-whisper](https://huggingface.co/KBLab/kb-whisper-small)
 
 Byt modell via **kugghjulet** (⚙️) i appen. Välj storlek, stil och format — ladda ner flera och byt med ett klick.
 
-### Storlek
+### KB-whisper (svenska)
+
+Specialtränad på 50 000+ timmar av svenskt tal — bäst val för svenska inspelningar.
 
 | Modell | Format | Storlek | Hastighet | Kvalitet |
 |--------|--------|---------|-----------|----------|
-| **Small** | Standard | ~460 MB | ⚡⚡⚡ | Bra |
-| **Small** | **q5_0 ✓** | ~290 MB | ⚡⚡⚡ | Bra |
 | **Medium** *(rekommenderas)* | Standard | ~1.5 GB | ⚡⚡ | Mycket bra |
 | **Medium** *(rekommenderas)* | **q5_0 ✓** | ~900 MB | ⚡⚡ | Mycket bra |
 | **Large** | Standard | ~3.0 GB | ⚡ | Bäst |
 | **Large** | **q5_0 ✓** | ~2.0 GB | ⚡ | Bäst |
 
 > [!TIP]
-> **q5_0 rekommenderas** — 40% mindre filstorlek med i princip identisk kvalitet. Välj alltid q5_0 om du inte har ett specifikt skäl att använda fullstorleksmodellen.
+> **q5_0 rekommenderas** — 40% mindre filstorlek med i princip identisk kvalitet.
 
-> [!WARNING]
-> **Small-modellen rekommenderas inte för möten** eller samtal med flera deltagare. Använd **Medium** eller **Large**.
+### Whisper Turbo (flerspråkig)
 
-### Stil (revision)
+OpenAIs officiella large-v3-turbo-modell från [ggerganov/whisper.cpp](https://huggingface.co/ggerganov/whisper.cpp). Välj Turbo när du transkriberar på flera språk, blandar svenska med facktermer på engelska, eller när hastighet är viktigare än maximal noggrannhet på svenska.
+
+| Modell | Format | Storlek | Hastighet | Språk |
+|--------|--------|---------|-----------|-------|
+| **Large-v3-Turbo** | q8_0 | ~1.5 GB | ⚡⚡⚡ | 100+ språk |
+
+> [!NOTE]
+> KB-whisper slår Turbo på ren svenska. Välj Turbo för blandspråkigt innehåll eller internationella möten.
+
+### Stil (KB-whisper)
 
 | Stil | Passar för | Beskrivning |
 |------|-----------|-------------|
@@ -51,7 +59,7 @@ Byt modell via **kugghjulet** (⚙️) i appen. Välj storlek, stil och format �
 | **Ordagrann** | Diktering, protokoll | Mer verbalt transkript som följer det talade nära |
 
 > [!NOTE]
-> Välj stil i inställningarna innan nedladdning. Varje kombination av storlek + stil är en separat modell.
+> Välj stil i inställningarna innan nedladdning. Varje kombination av storlek + stil är en separat modell. Turbo har ingen stilvariant.
 
 ## 🎙️ Spela in möten — WASAPI vs Stereo Mix (Windows)
 

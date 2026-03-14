@@ -27,7 +27,6 @@ const footerMic = document.getElementById("footer-mic");
 const footerModel = document.getElementById("footer-model");
 const footerDisk = document.getElementById("footer-disk");
 const modelList = document.getElementById("model-list");
-const smallModelWarning = document.getElementById("small-model-warning");
 const btnRedo = document.getElementById("btn-redo");
 
 // Settings Elements
@@ -106,9 +105,6 @@ function loadSettings() {
   if (cbModelQuantized) cbModelQuantized.checked = modelQuantized;
   if (selLanguage) selLanguage.value = transcriptionLanguage;
 
-  if (smallModelWarning) {
-    smallModelWarning.classList.toggle("hidden", modelSize !== "small");
-  }
 
   updateFooter();
 }
@@ -576,10 +572,13 @@ const REVISION_DESCS = {
   strict:   "Ordagrant transkript — passar diktering och protokoll",
 };
 const SIZE_DESCS = {
-  small:  "~290 MB · Snabb · Obs: inte för möten eller flera talare",
-  medium: "~900 MB · Balanserad hastighet och kvalitet · Rekommenderas",
-  large:  "~2 GB · Bäst kvalitet · Långsammast",
+  medium: "~900 MB · Balanserad hastighet och kvalitet · Rekommenderas för svenska",
+  large:  "~2 GB · Bäst kvalitet på svenska · Långsammast",
+  turbo:  "~1.5 GB · Snabb · 100+ språk · Bred internationell förståelse",
 };
+
+const revisionSection = document.getElementById("revision-section");
+const quantizedRow = document.getElementById("quantized-row");
 
 function syncPickButtons(group, value) {
   document.querySelectorAll(`[data-pick="${group}"]`).forEach(btn => {
@@ -594,8 +593,11 @@ function syncPickButtons(group, value) {
   if (descEl) {
     descEl.innerText = group === "revision" ? REVISION_DESCS[value] ?? "" : SIZE_DESCS[value] ?? "";
   }
-  if (group === "size" && smallModelWarning) {
-    smallModelWarning.classList.toggle("hidden", value !== "small");
+  // Turbo has no KB-whisper revisions and is always q8_0 — hide those pickers
+  if (group === "size") {
+    const isTurbo = value === "turbo";
+    if (revisionSection) revisionSection.classList.toggle("hidden", isTurbo);
+    if (quantizedRow) quantizedRow.classList.toggle("hidden", isTurbo);
   }
 }
 
@@ -604,7 +606,10 @@ document.querySelectorAll("[data-pick]").forEach(btn => {
     const group = btn.dataset.pick;
     const value = btn.dataset.value;
     if (group === "revision") dlRevision = value;
-    if (group === "size") dlSize = value;
+    if (group === "size") {
+      dlSize = value;
+      if (value === "turbo") dlRevision = "standard"; // turbo has no KB revisions
+    }
     syncPickButtons(group, value);
   });
 });
@@ -1671,3 +1676,21 @@ const _origShowRedo = () => {
   btnRedo && btnRedo.classList.remove("hidden");
   btnRedo && (btnRedo.style.display = "inline-flex");
 };
+
+// -------------------------------------------------------------
+// Window sizing: 50% screen width, full available height
+// -------------------------------------------------------------
+(async () => {
+  try {
+    const { getCurrentWindow, LogicalSize, LogicalPosition } = window.__TAURI__.window;
+    const win = getCurrentWindow();
+    const sw = window.screen.availWidth;
+    const sh = window.screen.availHeight;
+    const w = Math.round(sw * 0.5);
+    const x = Math.round((sw - w) / 2); // horizontally centered
+    await win.setSize(new LogicalSize(w, sh));
+    await win.setPosition(new LogicalPosition(x, 0));
+  } catch (e) {
+    console.warn("Window resize failed:", e);
+  }
+})();

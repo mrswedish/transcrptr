@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Transcrptr",
-  "version": "1.1.67",
+  "version": "1.1.68",
   "identifier": "com.patriksvensk.transcrptr",
   "build": {
     "frontendDist": "../src"
@@ -11,9 +11,8 @@
     "windows": [
       {
         "title": "Transcrptr",
-        "width": 800,
-        "height": 600,
-        "maximized": true
+        "width": 900,
+        "height": 700
       }
     ],
     "security": {
