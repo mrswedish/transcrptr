@@ -85,6 +85,14 @@ let transcriptionLanguage = "sv";
 // Personlig ordlista & PII-maskning
 let personalVocabulary = [];  // Array of strings
 let autoMaskPii = false;
+
+// Segment editor & audio player state
+let transcriptSegments = [];        // [{startMs, endMs, text}] — accumulated across chunks
+let segmentViewActive = false;
+let currentPlaybackBlob = null;
+let currentPlaybackUrl = null;
+// audioPlayer is resolved after DOM is ready (must be in DOM for WKWebView)
+let audioPlayer = null;
 let selectedMicId = "default";
 let wasapiEnabled = false;
 let audioContext = null;
@@ -266,6 +274,7 @@ async function setupEventListeners() {
 
 // Initialize Application
 async function initialize() {
+  initPlayer();
   loadSettings();
   await loadMicrophones();
   setupEventListeners();
@@ -1119,9 +1128,18 @@ async function stopSession() {
       if (btnSaveAudio) { btnSaveAudio.classList.remove("hidden"); btnSaveAudio.style.display = "inline-flex"; }
 
       // Transcribe directly from Float32 — no WAV encode/decode roundtrip
+      transcriptSegments = [];
+      showRawView();
       const text = await transcribeFloat32(float32Data);
       if (!text || !text.trim()) {
         outputText.value = "[Ingen text hittades i inspelningen]";
+      }
+      // Setup segment editor and player
+      if (transcriptSegments.length > 0) {
+        renderSegmentEditor();
+        const btnSeg = document.getElementById("btn-segment-toggle");
+        if (btnSeg) { btnSeg.classList.remove("hidden"); btnSeg.style.display = "inline-flex"; }
+        setupPlayer(currentPlaybackBlob);
       }
     } catch (err) {
       console.error("WASAPI stop error:", err);
@@ -1204,8 +1222,14 @@ async function processSegments(segments) {
     loadingOverlay.classList.remove("hidden");
     if (progressContainer) progressContainer.classList.add("hidden");
     outputText.value = "";
+    transcriptSegments = [];
+    showRawView();
+
+    currentPlaybackBlob = null;
+    transcribeBlob._float32Chunks = [];
 
     const startTime = performance.now();
+    let cumulativeOffsetMs = 0;
 
     for (let i = 0; i < segments.length; i++) {
       const seg = segments[i];
@@ -1214,13 +1238,12 @@ async function processSegments(segments) {
 
       loadingText.innerText = `Transkriberar Del ${partNum} av ${segments.length}...`;
 
-      // Add section header
       if (outputText.value) outputText.value += "\n\n";
       outputText.value += `// Start Del ${partNum} (${timestamp})\n\n`;
       outputText.scrollTop = outputText.scrollHeight;
 
-      // Transcribe this segment
-      const segmentText = await transcribeBlob(seg.blob, `Del ${partNum}`);
+      const { text: segmentText, durationMs } = await transcribeBlob(seg.blob, `Del ${partNum}`, cumulativeOffsetMs);
+      cumulativeOffsetMs += durationMs;
 
       if (segmentText && segmentText.trim()) {
         outputText.value += segmentText.trim();
@@ -1228,12 +1251,10 @@ async function processSegments(segments) {
         outputText.value += "[Ingen text transkriberad]";
       }
 
-      // Add section footer
       outputText.value += `\n\n// Slut Del ${partNum}`;
       outputText.scrollTop = outputText.scrollHeight;
     }
 
-    // Final elapsed time
     const elapsedMs = performance.now() - startTime;
     const elapsedSec = Math.round(elapsedMs / 1000);
     const elapsedMin = Math.floor(elapsedSec / 60);
@@ -1244,6 +1265,26 @@ async function processSegments(segments) {
     loadingText.innerText = `Klar! (${elapsedStr})`;
     outputText.value += `\n\n[Transkribering klar: ${segments.length} delar, ${elapsedStr}]`;
     outputText.scrollTop = outputText.scrollHeight;
+
+    // Build combined WAV blob for playback from all decoded Float32 chunks
+    if (transcribeBlob._float32Chunks && transcribeBlob._float32Chunks.length > 0) {
+      const totalLen = transcribeBlob._float32Chunks.reduce((s, c) => s + c.length, 0);
+      const combined = new Float32Array(totalLen);
+      let offset = 0;
+      for (const chunk of transcribeBlob._float32Chunks) {
+        combined.set(chunk, offset);
+        offset += chunk.length;
+      }
+      currentPlaybackBlob = float32ToPCM16WavBlob(combined, 16000);
+      transcribeBlob._float32Chunks = [];
+    }
+
+    if (transcriptSegments.length > 0) {
+      renderSegmentEditor();
+      const btnSeg = document.getElementById("btn-segment-toggle");
+      if (btnSeg) { btnSeg.classList.remove("hidden"); btnSeg.style.display = "inline-flex"; }
+      setupPlayer(currentPlaybackBlob);
+    }
 
   } catch (err) {
     console.error("processSegments error:", err);
@@ -1256,12 +1297,20 @@ async function processSegments(segments) {
 }
 
 // Transcribe a single blob and return the text (used by processSegments)
-async function transcribeBlob(blob, label) {
+// blobOffsetMs: cumulative offset (ms) to add to all segment timestamps from this blob
+async function transcribeBlob(blob, label, blobOffsetMs = 0) {
   const arrayBuffer = await blob.arrayBuffer();
   const decodeCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
   const audioBuffer = await decodeCtx.decodeAudioData(arrayBuffer);
-  const float32Data = audioBuffer.getChannelData(0);
+  decodeCtx.close();
+  const float32Data = audioBuffer.getChannelData(0).slice();
   const totalSamples = float32Data.length;
+  const durationMs = Math.round(totalSamples / 16000 * 1000);
+
+  // Accumulate Float32 for WAV playback (each segment blob decoded separately)
+  // We'll combine all segments' Float32 into a single WAV in processSegments
+  if (!transcribeBlob._float32Chunks) transcribeBlob._float32Chunks = [];
+  transcribeBlob._float32Chunks.push(float32Data);
 
   const numChunks = Math.ceil(totalSamples / CHUNK_SAMPLES);
   totalChunks = numChunks;
@@ -1276,6 +1325,7 @@ async function transcribeBlob(blob, label) {
 
   for (let chunkIdx = 0; chunkIdx < numChunks; chunkIdx++) {
     currentChunkIdx = chunkIdx;
+    const chunkOffsetMs = blobOffsetMs + chunkIdx * CHUNK_DURATION_SECONDS * 1000;
     const start = chunkIdx * CHUNK_SAMPLES;
     const end = Math.min(start + CHUNK_SAMPLES, totalSamples);
     const chunkFloat32 = float32Data.slice(start, end);
@@ -1283,7 +1333,7 @@ async function transcribeBlob(blob, label) {
     const chunkBytesArray = Array.from(chunkBytes);
 
     try {
-      const chunkText = await invoke("transcribe_audio", {
+      const chunkSegs = await invoke("transcribe_audio_segments", {
         audioBytes: chunkBytesArray,
         size: modelSize,
         quantized: modelQuantized,
@@ -1292,9 +1342,16 @@ async function transcribeBlob(blob, label) {
         initialPrompt,
         contextPrefix
       });
-      if (chunkText && chunkText.trim()) {
+      if (chunkSegs && chunkSegs.length > 0) {
+        const adjusted = chunkSegs.map(s => ({
+          startMs: s.start_ms + chunkOffsetMs,
+          endMs: s.end_ms + chunkOffsetMs,
+          text: s.text
+        }));
+        transcriptSegments.push(...adjusted);
+        const chunkText = adjusted.map(s => s.text).join("\n");
         if (result) result += "\n";
-        result += chunkText.trim();
+        result += chunkText;
         contextPrefix = lastWords(chunkText, 30);
       }
     } catch (chunkErr) {
@@ -1303,7 +1360,7 @@ async function transcribeBlob(blob, label) {
     }
   }
 
-  return result;
+  return { text: result, durationMs };
 }
 
 // -------------------------------------------------------------
@@ -1395,8 +1452,12 @@ async function transcribeFloat32(rawFloat32Data) {
   let contextPrefix = null;
   const initialPrompt = personalVocabulary.length > 0 ? personalVocabulary.join(", ") : null;
 
+  // Store WAV blob for playback
+  currentPlaybackBlob = float32ToPCM16WavBlob(float32Data, 16000);
+
   for (let chunkIdx = 0; chunkIdx < numChunks; chunkIdx++) {
     currentChunkIdx = chunkIdx;
+    const chunkOffsetMs = chunkIdx * CHUNK_DURATION_SECONDS * 1000;
     const start = chunkIdx * CHUNK_SAMPLES;
     const end = Math.min(start + CHUNK_SAMPLES, totalSamples);
     const chunkFloat32 = float32Data.slice(start, end);
@@ -1404,7 +1465,7 @@ async function transcribeFloat32(rawFloat32Data) {
     const chunkBytesArray = Array.from(chunkBytes);
     console.log(`[wasapi] Chunk ${chunkIdx + 1}/${numChunks}: ${chunkFloat32.length} samples`);
     try {
-      const chunkText = await invoke("transcribe_audio", {
+      const chunkSegs = await invoke("transcribe_audio_segments", {
         audioBytes: chunkBytesArray,
         size: modelSize,
         quantized: modelQuantized,
@@ -1413,9 +1474,16 @@ async function transcribeFloat32(rawFloat32Data) {
         initialPrompt,
         contextPrefix
       });
-      if (chunkText && chunkText.trim()) {
+      if (chunkSegs && chunkSegs.length > 0) {
+        const adjusted = chunkSegs.map(s => ({
+          startMs: s.start_ms + chunkOffsetMs,
+          endMs: s.end_ms + chunkOffsetMs,
+          text: s.text
+        }));
+        transcriptSegments.push(...adjusted);
+        const chunkText = adjusted.map(s => s.text).join("\n");
         if (fullResult) fullResult += "\n";
-        fullResult += chunkText.trim();
+        fullResult += chunkText;
         contextPrefix = lastWords(chunkText, 30);
         outputText.value = fullResult;
         outputText.scrollTop = outputText.scrollHeight;
@@ -1435,6 +1503,168 @@ async function transcribeFloat32(rawFloat32Data) {
 function lastWords(text, n) {
   const words = text.trim().split(/\s+/);
   return words.slice(-n).join(" ");
+}
+
+// Format milliseconds as M:SS or H:MM:SS
+function formatMs(ms) {
+  const totalSec = Math.floor(ms / 1000);
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  if (h > 0) return `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+  return `${m}:${String(s).padStart(2,'0')}`;
+}
+
+// Rebuild plain text from the segment array (used by copy/save/search)
+function buildPlainText() {
+  return transcriptSegments.map(s => s.text).join("\n");
+}
+
+// Render the segment editor from transcriptSegments
+function renderSegmentEditor() {
+  const editor = document.getElementById("segment-editor");
+  if (!editor) return;
+  editor.innerHTML = "";
+  const frag = document.createDocumentFragment();
+  transcriptSegments.forEach((seg, idx) => {
+    const row = document.createElement("div");
+    row.className = "segment-row";
+    row.dataset.idx = idx;
+
+    const ts = document.createElement("span");
+    ts.className = "segment-ts";
+    ts.textContent = formatMs(seg.startMs);
+    ts.title = "Klicka för att spela från denna tidpunkt";
+    ts.addEventListener("click", () => seekPlayer(seg.startMs));
+
+    const ta = document.createElement("textarea");
+    ta.className = "segment-input";
+    ta.value = seg.text;
+    ta.rows = 1;
+    // Auto-grow
+    const autoGrow = () => { ta.style.height = "auto"; ta.style.height = ta.scrollHeight + "px"; };
+    ta.addEventListener("input", () => {
+      transcriptSegments[idx].text = ta.value;
+      outputText.value = buildPlainText();
+      autoGrow();
+    });
+    ta.addEventListener("focus", () => row.classList.add("ring-1", "ring-primary/30", "rounded-lg"));
+    ta.addEventListener("blur", () => row.classList.remove("ring-1", "ring-primary/30", "rounded-lg"));
+    // Initial height
+    requestAnimationFrame(autoGrow);
+
+    row.appendChild(ts);
+    row.appendChild(ta);
+    frag.appendChild(row);
+  });
+  editor.appendChild(frag);
+}
+
+// Switch to segment view
+function showSegmentView() {
+  segmentViewActive = true;
+  outputText.classList.add("hidden");
+  const editor = document.getElementById("segment-editor");
+  if (editor) editor.classList.remove("hidden");
+  const label = document.getElementById("segment-toggle-label");
+  if (label) label.textContent = "Råtext";
+  const toggleBtn = document.getElementById("btn-segment-toggle");
+  if (toggleBtn) {
+    const icon = toggleBtn.querySelector(".material-symbols-outlined");
+    if (icon) icon.textContent = "notes";
+  }
+}
+
+// Switch to raw text view
+function showRawView() {
+  segmentViewActive = false;
+  outputText.classList.remove("hidden");
+  const editor = document.getElementById("segment-editor");
+  if (editor) editor.classList.add("hidden");
+  const label = document.getElementById("segment-toggle-label");
+  if (label) label.textContent = "Segmentvy";
+  const toggleBtn = document.getElementById("btn-segment-toggle");
+  if (toggleBtn) {
+    const icon = toggleBtn.querySelector(".material-symbols-outlined");
+    if (icon) icon.textContent = "view_list";
+  }
+}
+
+// Setup audio player with a blob for playback
+function setupPlayer(blob) {
+  if (!blob || !audioPlayer) return;
+  if (currentPlaybackUrl) { URL.revokeObjectURL(currentPlaybackUrl); currentPlaybackUrl = null; }
+  currentPlaybackUrl = URL.createObjectURL(blob);
+  audioPlayer.src = currentPlaybackUrl;
+  audioPlayer.load();
+  const playerBar = document.getElementById("player-bar");
+  if (playerBar) playerBar.classList.remove("hidden");
+  const fill = document.getElementById("player-fill");
+  if (fill) fill.style.width = "0%";
+  const playerTime = document.getElementById("player-time");
+  if (playerTime) playerTime.textContent = "0:00";
+  const dur = document.getElementById("player-duration");
+  if (dur) dur.textContent = "0:00";
+}
+
+// Seek audio player to a specific ms position
+function seekPlayer(ms) {
+  if (!audioPlayer) return;
+  audioPlayer.currentTime = ms / 1000;
+}
+
+// Init player — called once DOM is ready
+function initPlayer() {
+  audioPlayer = document.getElementById("audio-player");
+  if (!audioPlayer) return;
+
+  audioPlayer.addEventListener("timeupdate", () => {
+    const ms = audioPlayer.currentTime * 1000;
+    const dur = (isFinite(audioPlayer.duration) ? audioPlayer.duration : 0) * 1000 || 1;
+    const pct = Math.min(100, (ms / dur) * 100);
+    const fill = document.getElementById("player-fill");
+    if (fill) fill.style.width = `${pct}%`;
+    const playerTime = document.getElementById("player-time");
+    if (playerTime) playerTime.textContent = formatMs(ms);
+
+    if (segmentViewActive) {
+      document.querySelectorAll(".segment-row").forEach((row) => {
+        const idx = parseInt(row.dataset.idx, 10);
+        const seg = transcriptSegments[idx];
+        const active = seg && ms >= seg.startMs && ms < seg.endMs;
+        if (active) {
+          row.classList.add("segment-active");
+          row.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        } else {
+          row.classList.remove("segment-active");
+        }
+      });
+    }
+  });
+
+  audioPlayer.addEventListener("loadedmetadata", () => {
+    const dur = document.getElementById("player-duration");
+    if (dur && isFinite(audioPlayer.duration)) dur.textContent = formatMs(audioPlayer.duration * 1000);
+  });
+
+  audioPlayer.addEventListener("ended", () => {
+    const icon = document.getElementById("play-icon");
+    if (icon) icon.textContent = "play_arrow";
+  });
+
+  audioPlayer.addEventListener("error", (e) => {
+    console.error("[player] Audio error:", e, audioPlayer.error);
+  });
+
+  const track = document.getElementById("player-track");
+  if (track) {
+    track.addEventListener("click", (e) => {
+      if (!audioPlayer || !isFinite(audioPlayer.duration)) return;
+      const rect = track.getBoundingClientRect();
+      const ratio = (e.clientX - rect.left) / rect.width;
+      audioPlayer.currentTime = ratio * audioPlayer.duration;
+    });
+  }
 }
 
 function normalizeAudio(float32Data) {
@@ -1506,25 +1736,22 @@ async function decodeFileToFloat32(blob) {
 
 async function processAudioBlob(blob) {
   try {
-    // Show Loading
     loadingText.innerText = "Bearbetar ljud...";
     loadingOverlay.classList.remove("hidden");
     if (progressContainer) progressContainer.classList.add("hidden");
 
-    // Clear previous output text before starting
     outputText.value = "";
+    transcriptSegments = [];
+    showRawView();
 
-    // Decode audio/video file to Float32 at 16kHz for whisper
     const float32Data = await decodeFileToFloat32(blob);
     const totalSamples = float32Data.length;
     const totalDuration = (totalSamples / 16000).toFixed(0);
-
     console.log(`Audio decoded: ${totalSamples} samples (${totalDuration}s)`);
+    // Convert to 16-bit PCM WAV for playback (WKWebView/Safari doesn't support WebM/Opus)
+    currentPlaybackBlob = float32ToPCM16WavBlob(float32Data, 16000);
 
-    // Calculate number of chunks
     const numChunks = Math.ceil(totalSamples / CHUNK_SAMPLES);
-
-    // Set global chunk state for the progress listener
     totalChunks = numChunks;
     currentChunkIdx = 0;
 
@@ -1535,28 +1762,23 @@ async function processAudioBlob(blob) {
     if (progressContainer) progressContainer.classList.remove("hidden");
     if (progressBar) progressBar.style.width = "0%";
 
-    // Start timer
     const startTime = performance.now();
-
     let fullResult = "";
     let contextPrefix = null;
     const initialPrompt = personalVocabulary.length > 0 ? personalVocabulary.join(", ") : null;
 
     for (let chunkIdx = 0; chunkIdx < numChunks; chunkIdx++) {
       currentChunkIdx = chunkIdx;
-
+      const chunkOffsetMs = chunkIdx * CHUNK_DURATION_SECONDS * 1000;
       const start = chunkIdx * CHUNK_SAMPLES;
       const end = Math.min(start + CHUNK_SAMPLES, totalSamples);
       const chunkFloat32 = float32Data.slice(start, end);
-
-      // Convert Float32Array chunk to byte array for Rust
       const chunkBytes = new Uint8Array(chunkFloat32.buffer, chunkFloat32.byteOffset, chunkFloat32.byteLength);
       const chunkBytesArray = Array.from(chunkBytes);
-
-      console.log(`Sending chunk ${chunkIdx + 1}/${numChunks}: ${chunkFloat32.length} samples (${chunkBytesArray.length} bytes)`);
+      console.log(`Sending chunk ${chunkIdx + 1}/${numChunks}: ${chunkFloat32.length} samples`);
 
       try {
-        const chunkText = await invoke("transcribe_audio", {
+        const chunkSegs = await invoke("transcribe_audio_segments", {
           audioBytes: chunkBytesArray,
           size: modelSize,
           quantized: modelQuantized,
@@ -1566,9 +1788,16 @@ async function processAudioBlob(blob) {
           contextPrefix
         });
 
-        if (chunkText && chunkText.trim()) {
+        if (chunkSegs && chunkSegs.length > 0) {
+          const adjusted = chunkSegs.map(s => ({
+            startMs: s.start_ms + chunkOffsetMs,
+            endMs: s.end_ms + chunkOffsetMs,
+            text: s.text
+          }));
+          transcriptSegments.push(...adjusted);
+          const chunkText = adjusted.map(s => s.text).join("\n");
           if (fullResult) fullResult += "\n";
-          fullResult += chunkText.trim();
+          fullResult += chunkText;
           contextPrefix = lastWords(chunkText, 30);
           outputText.value = fullResult;
           outputText.scrollTop = outputText.scrollHeight;
@@ -1577,11 +1806,9 @@ async function processAudioBlob(blob) {
         console.error(`Chunk ${chunkIdx + 1} failed:`, chunkErr);
         const errorMsg = typeof chunkErr === 'string' ? chunkErr : chunkErr.message || String(chunkErr);
         outputText.value += `\n\n[Fel i del ${chunkIdx + 1}: ${errorMsg}]`;
-        // Continue with next chunk instead of aborting entirely
       }
     }
 
-    // Final progress + elapsed time
     if (progressBar) progressBar.style.width = "100%";
     const elapsedMs = performance.now() - startTime;
     const elapsedSec = Math.round(elapsedMs / 1000);
@@ -1593,18 +1820,31 @@ async function processAudioBlob(blob) {
     // Auto-mask PII if enabled
     if (autoMaskPii && outputText.value.trim()) {
       try {
-        outputText.value = await invoke("mask_pii_regex", { text: outputText.value });
+        const masked = await invoke("mask_pii_regex", { text: outputText.value });
+        outputText.value = masked;
+        // Re-sync segment texts
+        transcriptSegments.forEach((seg, i) => {
+          const rows = document.querySelectorAll(".segment-row");
+          if (rows[i]) seg.text = rows[i].querySelector(".segment-input")?.value ?? seg.text;
+        });
       } catch (maskErr) {
         console.warn("PII-maskning misslyckades:", maskErr);
       }
     }
 
-    // Show elapsed time in the output text so user can see it
     outputText.value += `\n\n[Transkribering klar: ${elapsedStr}]`;
     outputText.scrollTop = outputText.scrollHeight;
 
     if (!outputText.value.trim()) {
       outputText.value = fullResult || "[Ingen text transkriberad]";
+    }
+
+    // Setup segment editor and player
+    if (transcriptSegments.length > 0) {
+      renderSegmentEditor();
+      const btnSeg = document.getElementById("btn-segment-toggle");
+      if (btnSeg) { btnSeg.classList.remove("hidden"); btnSeg.style.display = "inline-flex"; }
+      setupPlayer(currentPlaybackBlob);
     }
 
   } catch (err) {
@@ -1625,13 +1865,14 @@ async function processAudioBlob(blob) {
 // Copy Logic
 // -------------------------------------------------------------
 btnCopy.addEventListener("click", () => {
-  if (outputText.value) {
-    navigator.clipboard.writeText(outputText.value).then(() => {
+  const text = segmentViewActive && transcriptSegments.length > 0
+    ? buildPlainText()
+    : outputText.value;
+  if (text) {
+    navigator.clipboard.writeText(text).then(() => {
       const prevIcon = btnCopy.innerHTML;
       btnCopy.innerHTML = `<span class="icon">✅</span> Kopierad!`;
-      setTimeout(() => {
-        btnCopy.innerHTML = prevIcon;
-      }, 2000);
+      setTimeout(() => { btnCopy.innerHTML = prevIcon; }, 2000);
     });
   }
 });
@@ -1640,9 +1881,11 @@ btnCopy.addEventListener("click", () => {
 // Save to File Logic
 // -------------------------------------------------------------
 btnSave.addEventListener("click", async () => {
-  if (!outputText.value || !outputText.value.trim()) return;
+  const content = segmentViewActive && transcriptSegments.length > 0
+    ? buildPlainText()
+    : outputText.value;
+  if (!content || !content.trim()) return;
   try {
-    const content = outputText.value;
     await invoke("save_text_file", { content });
   } catch (err) {
     console.error("Save error:", err);
@@ -1743,6 +1986,32 @@ const _origShowRedo = () => {
   btnRedo && btnRedo.classList.remove("hidden");
   btnRedo && (btnRedo.style.display = "inline-flex");
 };
+
+// -------------------------------------------------------------
+// Segment view toggle
+// -------------------------------------------------------------
+const btnSegmentToggle = document.getElementById("btn-segment-toggle");
+btnSegmentToggle && btnSegmentToggle.addEventListener("click", () => {
+  if (segmentViewActive) showRawView();
+  else showSegmentView();
+});
+
+// -------------------------------------------------------------
+// Audio player play/pause button
+// -------------------------------------------------------------
+const btnPlayPause = document.getElementById("btn-play-pause");
+const playIcon = document.getElementById("play-icon");
+btnPlayPause && btnPlayPause.addEventListener("click", () => {
+  if (!audioPlayer || !audioPlayer.src) return;
+  if (audioPlayer.paused) {
+    audioPlayer.play().then(() => {
+      if (playIcon) playIcon.textContent = "pause";
+    }).catch(err => console.error("[player] play() failed:", err));
+  } else {
+    audioPlayer.pause();
+    if (playIcon) playIcon.textContent = "play_arrow";
+  }
+});
 
 // -------------------------------------------------------------
 // Maskera PII — manuell knapp

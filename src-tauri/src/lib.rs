@@ -40,6 +40,13 @@ struct TranscriptionProgressPayload {
 }
 
 #[derive(Serialize)]
+struct TranscriptSegment {
+    start_ms: i64,
+    end_ms: i64,
+    text: String,
+}
+
+#[derive(Serialize)]
 struct ModelInfo {
     name: String,
     size: String,
@@ -447,6 +454,116 @@ async fn transcribe_audio(app_handle: AppHandle, state: tauri::State<'_, AppStat
 }
 
 #[tauri::command]
+async fn transcribe_audio_segments(app_handle: AppHandle, state: tauri::State<'_, AppState>, audio_bytes: Vec<u8>, size: String, quantized: bool, revision: String, language: String, initial_prompt: Option<String>, context_prefix: Option<String>) -> Result<Vec<TranscriptSegment>, String> {
+    state.inner().cancel_flag.store(false, Ordering::Relaxed);
+    let model_path = get_model_path(&app_handle, &size, quantized, &revision)?;
+    if !model_path.exists() {
+        return Err("Model not found. Please download it first.".to_string());
+    }
+
+    let cancel_flag = Arc::clone(&state.inner().cancel_flag);
+    let audio_len = audio_bytes.len();
+
+    let segments = tokio::task::spawn_blocking(move || {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let num_samples = audio_len / std::mem::size_of::<f32>();
+            eprintln!("[transcrptr] transcribe_audio_segments {} samples, lang={}", num_samples, language);
+
+            let ctx = WhisperContext::new_with_params(
+                &model_path.to_string_lossy(),
+                WhisperContextParameters::default()
+            ).map_err(|e| format!("Failed to load model: {}", e))?;
+
+            let mut transcriber_state = ctx.create_state().map_err(|e| format!("Failed to create state: {}", e))?;
+            let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
+
+            let lang_hint = match language.as_str() {
+                "sv" => { params.set_language(Some("sv")); "Följande är en transkribering på svenska." }
+                "en" => { params.set_language(Some("en")); "The following is a transcription in English." }
+                _ => { params.set_language(None); "" }
+            };
+            let mut composed = lang_hint.to_string();
+            if let Some(ctx) = &context_prefix {
+                let ctx = ctx.trim();
+                if !ctx.is_empty() { if !composed.is_empty() { composed.push(' '); } composed.push_str(ctx); }
+            }
+            if let Some(vocab) = &initial_prompt {
+                let vocab = vocab.trim();
+                if !vocab.is_empty() { if !composed.is_empty() { composed.push(' '); } composed.push_str(vocab); }
+            }
+            if !composed.is_empty() { params.set_initial_prompt(&composed); }
+
+            params.set_print_progress(false);
+            params.set_print_special(false);
+            params.set_print_realtime(false);
+            params.set_print_timestamps(false);
+
+            let progress = Arc::new(AtomicI32::new(0));
+            let progress_clone = Arc::clone(&progress);
+            params.set_progress_callback_safe(move |p| { progress_clone.store(p, Ordering::Relaxed); });
+
+            let app_handle_clone = app_handle.clone();
+            let progress_poller = Arc::clone(&progress);
+            let cancel_poller = Arc::clone(&cancel_flag);
+            let poller_handle = tokio::spawn(async move {
+                let mut last_emitted = -1;
+                loop {
+                    if cancel_poller.load(Ordering::Relaxed) { break; }
+                    let current_progress = progress_poller.load(Ordering::Relaxed);
+                    if current_progress != last_emitted {
+                        let _ = app_handle_clone.emit("transcription_progress", TranscriptionProgressPayload { progress: current_progress });
+                        last_emitted = current_progress;
+                    }
+                    if current_progress >= 100 { break; }
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                }
+            });
+
+            let samples: Vec<f32> = audio_bytes
+                .chunks_exact(4)
+                .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+                .collect();
+
+            let res = transcriber_state.full(params, &samples);
+            poller_handle.abort();
+
+            if let Err(e) = res {
+                return Err(format!("Transcription failed: {:?}", e));
+            }
+
+            let _ = app_handle.emit("transcription_progress", TranscriptionProgressPayload { progress: 100 });
+
+            let num_segs = transcriber_state.full_n_segments();
+            let mut out: Vec<TranscriptSegment> = Vec::new();
+            for i in 0..num_segs {
+                let seg = transcriber_state.get_segment(i).ok_or("Failed to get segment")?;
+                let text = seg.to_str_lossy().map_err(|e| format!("Failed to get text: {:?}", e))?;
+                let trimmed = text.trim().to_string();
+                if trimmed.is_empty() { continue; }
+                // whisper.cpp timestamps are in centiseconds → convert to ms (* 10)
+                let t0 = seg.start_timestamp() * 10;
+                let t1 = seg.end_timestamp() * 10;
+                out.push(TranscriptSegment { start_ms: t0, end_ms: t1, text: trimmed });
+            }
+
+            Ok::<Vec<TranscriptSegment>, String>(out)
+        }));
+
+        match result {
+            Ok(inner) => inner,
+            Err(panic_info) => {
+                let panic_msg = if let Some(s) = panic_info.downcast_ref::<&str>() { s.to_string() }
+                    else if let Some(s) = panic_info.downcast_ref::<String>() { s.clone() }
+                    else { "Unknown panic".to_string() };
+                Err(format!("Transkriberingen kraschade: {}.", panic_msg))
+            },
+        }
+    }).await.map_err(|e| format!("Transcription task failed: {}", e))??;
+
+    Ok(segments)
+}
+
+#[tauri::command]
 fn mask_pii_regex(text: String) -> Result<String, String> {
     // Swedish personnummer: YYMMDD-NNNN or YYYYMMDD-NNNN or YYMMDD+NNNN
     let personnummer = Regex::new(r"\b\d{6,8}[-+]\d{4}\b").map_err(|e| e.to_string())?;
@@ -546,6 +663,7 @@ pub fn run() {
             start_backend_recording,
             stop_backend_recording,
             transcribe_audio,
+            transcribe_audio_segments,
             cancel_transcription,
             mask_pii_regex,
             save_text_file,

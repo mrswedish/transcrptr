@@ -47,6 +47,43 @@
         min-height: 8%;
         border-radius: 2px;
       }
+      /* Segment editor */
+      #segment-editor { overflow-y: auto; height: 100%; }
+      .segment-row {
+        display: flex;
+        gap: 10px;
+        align-items: flex-start;
+        padding: 5px 4px;
+        border-radius: 8px;
+        transition: background-color 150ms;
+        border-bottom: 1px solid transparent;
+      }
+      .segment-row:hover { background-color: rgba(148,163,184,0.07); }
+      .segment-row.segment-active { background-color: rgba(45,212,191,0.10); }
+      .segment-ts {
+        font-size: 11px;
+        font-family: monospace;
+        color: #94a3b8;
+        cursor: pointer;
+        width: 52px;
+        flex-shrink: 0;
+        padding-top: 7px;
+        user-select: none;
+      }
+      .segment-ts:hover { color: #2DD4BF; }
+      .segment-input {
+        flex: 1;
+        background: transparent;
+        border: none;
+        outline: none;
+        resize: none;
+        font-size: 14px;
+        line-height: 1.65;
+        color: inherit;
+        overflow: hidden;
+        min-height: 24px;
+        padding: 0;
+      }
     </style>
   <script type="module" src="/main.js" defer></script>
 </head>
@@ -153,6 +190,12 @@
             <span class="material-symbols-outlined text-lg">shield</span>
             <span>Maskera</span>
           </button>
+          <button id="btn-segment-toggle"
+            title="Växla segmentvy / råtext"
+            class="hidden items-center gap-1.5 text-sm font-medium text-slate-500 dark:text-slate-400 hover:text-primary transition-colors">
+            <span class="material-symbols-outlined text-lg">view_list</span>
+            <span id="segment-toggle-label">Segmentvy</span>
+          </button>
           <button id="btn-redo"
             title="Gör om transkriberingen med en annan modell"
             class="hidden items-center gap-1.5 text-sm font-medium text-slate-500 dark:text-slate-400 hover:text-primary transition-colors">
@@ -160,6 +203,17 @@
             <span>Gör om</span>
           </button>
         </div>
+      </div>
+      <!-- Audio Player Bar -->
+      <div id="player-bar" class="hidden mt-3 flex items-center gap-3 px-1">
+        <button id="btn-play-pause" class="flex items-center justify-center w-8 h-8 rounded-full bg-primary hover:bg-teal-500 transition-colors shrink-0">
+          <span id="play-icon" class="material-symbols-outlined text-white text-base">play_arrow</span>
+        </button>
+        <span id="player-time" class="text-xs font-mono text-slate-400 shrink-0 w-10">0:00</span>
+        <div id="player-track" class="flex-1 h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden cursor-pointer">
+          <div id="player-fill" class="h-full bg-primary transition-none" style="width:0%"></div>
+        </div>
+        <span id="player-duration" class="text-xs font-mono text-slate-400 shrink-0 w-10 text-right">0:00</span>
       </div>
       <!-- Search/Replace Toolbar -->
       <div id="search-bar" class="hidden mb-3 flex items-center gap-2 p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl">
@@ -182,6 +236,8 @@
         <textarea id="output-text"
           class="w-full h-full bg-transparent border-none focus:ring-0 p-0 text-slate-600 dark:text-slate-400 placeholder:text-slate-300 dark:placeholder:text-slate-600 resize-none text-base leading-relaxed flex-1"
           placeholder="Din transkriberade text kommer att visas här..."></textarea>
+        <!-- Segment editor (hidden by default, shown in segment view) -->
+        <div id="segment-editor" class="hidden flex-1 text-slate-600 dark:text-slate-400"></div>
         <div
           class="absolute bottom-0 left-0 right-0 h-12 bg-gradient-to-t from-white/50 dark:from-slate-900/50 to-transparent pointer-events-none">
         </div>
@@ -200,6 +256,8 @@
       </div>
     </section>
   </main>
+  <!-- Hidden audio element for playback (must be in DOM for WKWebView) -->
+  <audio id="audio-player" preload="auto" style="display:none"></audio>
 
   <footer class="px-6 py-4 bg-white/50 dark:bg-slate-900/50 border-t border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-4 text-[11px] font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">
     <div class="flex items-center gap-2">
