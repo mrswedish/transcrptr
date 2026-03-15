@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri_plugin_dialog::DialogExt;
 use sysinfo::Disks;
+use regex::Regex;
 
 mod audio;
 use audio::AudioRecorder;
@@ -286,7 +287,7 @@ async fn get_disk_info(app_handle: AppHandle) -> Result<DiskInfo, String> {
 }
 
 #[tauri::command]
-async fn transcribe_audio(app_handle: AppHandle, state: tauri::State<'_, AppState>, audio_bytes: Vec<u8>, size: String, quantized: bool, revision: String, language: String) -> Result<String, String> {
+async fn transcribe_audio(app_handle: AppHandle, state: tauri::State<'_, AppState>, audio_bytes: Vec<u8>, size: String, quantized: bool, revision: String, language: String, initial_prompt: Option<String>, context_prefix: Option<String>) -> Result<String, String> {
     state.inner().cancel_flag.store(false, Ordering::Relaxed);
     let model_path = get_model_path(&app_handle, &size, quantized, &revision)?;
     if !model_path.exists() {
@@ -314,20 +315,38 @@ async fn transcribe_audio(app_handle: AppHandle, state: tauri::State<'_, AppStat
             
             let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
             
-            // Set language and initial prompt based on user selection
-            match language.as_str() {
+            // Build initial prompt: language hint + optional context from previous chunk + optional user vocabulary
+            let lang_hint = match language.as_str() {
                 "sv" => {
                     params.set_language(Some("sv"));
-                    params.set_initial_prompt("Följande är en transkribering på svenska.");
+                    "Följande är en transkribering på svenska."
                 }
                 "en" => {
                     params.set_language(Some("en"));
-                    params.set_initial_prompt("The following is a transcription in English.");
+                    "The following is a transcription in English."
                 }
                 _ => {
-                    // "auto" — let whisper detect the language
                     params.set_language(None);
+                    ""
                 }
+            };
+            let mut composed = lang_hint.to_string();
+            if let Some(ctx) = &context_prefix {
+                let ctx = ctx.trim();
+                if !ctx.is_empty() {
+                    if !composed.is_empty() { composed.push(' '); }
+                    composed.push_str(ctx);
+                }
+            }
+            if let Some(vocab) = &initial_prompt {
+                let vocab = vocab.trim();
+                if !vocab.is_empty() {
+                    if !composed.is_empty() { composed.push(' '); }
+                    composed.push_str(vocab);
+                }
+            }
+            if !composed.is_empty() {
+                params.set_initial_prompt(&composed);
             }
             
             params.set_print_progress(false);
@@ -427,6 +446,22 @@ async fn transcribe_audio(app_handle: AppHandle, state: tauri::State<'_, AppStat
     Ok(text)
 }
 
+#[tauri::command]
+fn mask_pii_regex(text: String) -> Result<String, String> {
+    // Swedish personnummer: YYMMDD-NNNN or YYYYMMDD-NNNN or YYMMDD+NNNN
+    let personnummer = Regex::new(r"\b\d{6,8}[-+]\d{4}\b").map_err(|e| e.to_string())?;
+    // Swedish phone numbers: 07X, +46 7X, 08-XXXX etc
+    let phone = Regex::new(r"\b(\+46|0)[\s.-]?\d{1,3}[\s.-]?\d{2,4}[\s.-]?\d{2,4}[\s.-]?\d{0,4}\b").map_err(|e| e.to_string())?;
+    // Email addresses
+    let email = Regex::new(r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b").map_err(|e| e.to_string())?;
+
+    let result = personnummer.replace_all(&text, "[PERSONNUMMER]");
+    let result = email.replace_all(&result, "[E-POST]");
+    let result = phone.replace_all(&result, "[TELEFON]");
+
+    Ok(result.into_owned())
+}
+
 #[derive(Serialize)]
 struct RecordingStartResult {
     loopback_active: bool,
@@ -512,6 +547,7 @@ pub fn run() {
             stop_backend_recording,
             transcribe_audio,
             cancel_transcription,
+            mask_pii_regex,
             save_text_file,
             save_audio_file,
             save_audio_data

@@ -1,6 +1,6 @@
 [package]
 name = "tauri-app"
-version = "1.1.60"
+version = "1.1.70"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -29,6 +29,7 @@ futures-util = "0.3.32"
 tauri-plugin-dialog = "2"
 cpal = "0.15.3"
 sysinfo = "0.33.1"
+regex = "1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 whisper-rs = { version = "0.15.1", features = ["metal"] }

@@ -147,6 +147,12 @@
             <span class="material-symbols-outlined text-lg">content_copy</span>
             <span>Kopiera</span>
           </button>
+          <button id="btn-mask-pii"
+            title="Maskera personnummer, telefon och e-post (GDPR)"
+            class="flex items-center gap-1.5 text-sm font-medium text-slate-500 dark:text-slate-400 hover:text-primary transition-colors">
+            <span class="material-symbols-outlined text-lg">shield</span>
+            <span>Maskera</span>
+          </button>
           <button id="btn-redo"
             title="Gör om transkriberingen med en annan modell"
             class="hidden items-center gap-1.5 text-sm font-medium text-slate-500 dark:text-slate-400 hover:text-primary transition-colors">
@@ -259,6 +265,39 @@
             <option value="auto">Automatisk identifiering</option>
           </select>
         </div>
+        <!-- Personlig ordlista -->
+        <div class="pt-2 border-t border-slate-200 dark:border-slate-700">
+          <h3 class="text-sm font-bold text-slate-800 dark:text-white mb-1">Personlig ordlista</h3>
+          <p class="text-xs text-slate-400 dark:text-slate-500 mb-2">Facktermer och ord skickas som ledtrådar till transkriberingsmotorn. Ett ord per rad.</p>
+          <textarea id="vocabulary-input" rows="4"
+            placeholder="angioplastik&#10;endarterektomi&#10;EKG..."
+            class="w-full p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-700 dark:text-slate-300 placeholder:text-slate-300 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary resize-none custom-scrollbar"></textarea>
+          <div class="flex gap-2 mt-2">
+            <label class="flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-semibold text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg cursor-pointer hover:text-primary transition-colors">
+              <span class="material-symbols-outlined text-sm">upload</span>
+              Importera .txt
+              <input type="file" id="vocabulary-import" accept=".txt,.json" class="sr-only">
+            </label>
+            <button id="vocabulary-export"
+              class="flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-semibold text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg hover:text-primary transition-colors">
+              <span class="material-symbols-outlined text-sm">download</span>
+              Exportera .txt
+            </button>
+          </div>
+        </div>
+
+        <!-- Auto-maskering GDPR -->
+        <div class="flex items-center justify-between gap-3 p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl">
+          <div>
+            <p class="text-sm font-medium text-slate-700 dark:text-slate-300">Automatisk GDPR-maskning</p>
+            <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5">Maskerar personnummer, telefonnummer och e-post efter transkribering. Bästa ansträngning — inte garanterad.</p>
+          </div>
+          <label class="relative inline-flex items-center cursor-pointer shrink-0">
+            <input type="checkbox" id="auto-mask-toggle" class="sr-only peer">
+            <div class="w-11 h-6 bg-slate-300 dark:bg-slate-600 peer-checked:bg-primary rounded-full transition-colors after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-5"></div>
+          </label>
+        </div>
+
         <!-- Nedladdade modeller — välj aktiv eller ta bort -->
         <div class="pt-2 border-t border-slate-200 dark:border-slate-700">
           <h3 class="text-sm font-bold text-slate-800 dark:text-white mb-3">Nedladdade modeller</h3>

@@ -81,6 +81,10 @@ let modelQuantized = true;
 let dlSize = "medium";
 let dlRevision = "standard";
 let transcriptionLanguage = "sv";
+
+// Personlig ordlista & PII-maskning
+let personalVocabulary = [];  // Array of strings
+let autoMaskPii = false;
 let selectedMicId = "default";
 let wasapiEnabled = false;
 let audioContext = null;
@@ -111,6 +115,8 @@ function loadSettings() {
   const lang = localStorage.getItem("transcriptionLanguage");
   const micId = localStorage.getItem("selectedMicId");
   const wasapi = localStorage.getItem("wasapiEnabled");
+  const vocab = localStorage.getItem("personalVocabulary");
+  const autoMask = localStorage.getItem("autoMaskPii");
 
   if (size) modelSize = size;
   if (revision) modelRevision = revision;
@@ -118,16 +124,25 @@ function loadSettings() {
   if (lang) transcriptionLanguage = lang;
   if (micId) selectedMicId = micId;
   if (wasapi !== null) wasapiEnabled = wasapi === "true";
+  if (vocab) {
+    try { personalVocabulary = JSON.parse(vocab); } catch { personalVocabulary = []; }
+  }
+  if (autoMask !== null) autoMaskPii = autoMask === "true";
 
   const wasapiToggle = document.getElementById("wasapi-toggle");
   if (wasapiToggle) wasapiToggle.checked = wasapiEnabled;
+
+  const autoMaskToggle = document.getElementById("auto-mask-toggle");
+  if (autoMaskToggle) autoMaskToggle.checked = autoMaskPii;
+
+  const vocabInput = document.getElementById("vocabulary-input");
+  if (vocabInput) vocabInput.value = personalVocabulary.join("\n");
 
   // Sync pill pickers to current state
   syncPickButtons("size", modelSize);
   syncPickButtons("revision", modelRevision);
   if (cbModelQuantized) cbModelQuantized.checked = modelQuantized;
   if (selLanguage) selLanguage.value = transcriptionLanguage;
-
 
   updateFooter();
 }
@@ -674,6 +689,20 @@ btnSaveSettings.addEventListener("click", async () => {
   localStorage.setItem("transcriptionLanguage", newLang);
   localStorage.setItem("selectedMicId", newMicId);
   localStorage.setItem("wasapiEnabled", newWasapi.toString());
+
+  // Personlig ordlista
+  const vocabInput = document.getElementById("vocabulary-input");
+  if (vocabInput) {
+    personalVocabulary = vocabInput.value.split("\n").map(s => s.trim()).filter(Boolean);
+    localStorage.setItem("personalVocabulary", JSON.stringify(personalVocabulary));
+  }
+
+  // Auto-mask PII
+  const autoMaskToggle = document.getElementById("auto-mask-toggle");
+  if (autoMaskToggle) {
+    autoMaskPii = autoMaskToggle.checked;
+    localStorage.setItem("autoMaskPii", autoMaskPii.toString());
+  }
 
   transcriptionLanguage = newLang;
   selectedMicId = newMicId;
@@ -1242,6 +1271,8 @@ async function transcribeBlob(blob, label) {
   if (progressBar) progressBar.style.width = "0%";
 
   let result = "";
+  let contextPrefix = null;
+  const initialPrompt = personalVocabulary.length > 0 ? personalVocabulary.join(", ") : null;
 
   for (let chunkIdx = 0; chunkIdx < numChunks; chunkIdx++) {
     currentChunkIdx = chunkIdx;
@@ -1257,11 +1288,14 @@ async function transcribeBlob(blob, label) {
         size: modelSize,
         quantized: modelQuantized,
         revision: modelRevision,
-        language: transcriptionLanguage
+        language: transcriptionLanguage,
+        initialPrompt,
+        contextPrefix
       });
       if (chunkText && chunkText.trim()) {
         if (result) result += "\n";
         result += chunkText.trim();
+        contextPrefix = lastWords(chunkText, 30);
       }
     } catch (chunkErr) {
       console.error(`${label} chunk ${chunkIdx + 1} failed:`, chunkErr);
@@ -1358,6 +1392,8 @@ async function transcribeFloat32(rawFloat32Data) {
 
   const startTime = performance.now();
   let fullResult = "";
+  let contextPrefix = null;
+  const initialPrompt = personalVocabulary.length > 0 ? personalVocabulary.join(", ") : null;
 
   for (let chunkIdx = 0; chunkIdx < numChunks; chunkIdx++) {
     currentChunkIdx = chunkIdx;
@@ -1373,11 +1409,14 @@ async function transcribeFloat32(rawFloat32Data) {
         size: modelSize,
         quantized: modelQuantized,
         revision: modelRevision,
-        language: transcriptionLanguage
+        language: transcriptionLanguage,
+        initialPrompt,
+        contextPrefix
       });
       if (chunkText && chunkText.trim()) {
         if (fullResult) fullResult += "\n";
         fullResult += chunkText.trim();
+        contextPrefix = lastWords(chunkText, 30);
         outputText.value = fullResult;
         outputText.scrollTop = outputText.scrollHeight;
       }
@@ -1392,6 +1431,12 @@ async function transcribeFloat32(rawFloat32Data) {
 }
 
 // Normalize Float32 audio to peak ±0.95 to avoid clipping and improve whisper accuracy
+// Returns the last N words of a text string (for chunk context continuity)
+function lastWords(text, n) {
+  const words = text.trim().split(/\s+/);
+  return words.slice(-n).join(" ");
+}
+
 function normalizeAudio(float32Data) {
   let peak = 0;
   for (let i = 0; i < float32Data.length; i++) {
@@ -1494,6 +1539,8 @@ async function processAudioBlob(blob) {
     const startTime = performance.now();
 
     let fullResult = "";
+    let contextPrefix = null;
+    const initialPrompt = personalVocabulary.length > 0 ? personalVocabulary.join(", ") : null;
 
     for (let chunkIdx = 0; chunkIdx < numChunks; chunkIdx++) {
       currentChunkIdx = chunkIdx;
@@ -1514,12 +1561,15 @@ async function processAudioBlob(blob) {
           size: modelSize,
           quantized: modelQuantized,
           revision: modelRevision,
-          language: transcriptionLanguage
+          language: transcriptionLanguage,
+          initialPrompt,
+          contextPrefix
         });
 
         if (chunkText && chunkText.trim()) {
           if (fullResult) fullResult += "\n";
           fullResult += chunkText.trim();
+          contextPrefix = lastWords(chunkText, 30);
           outputText.value = fullResult;
           outputText.scrollTop = outputText.scrollHeight;
         }
@@ -1539,6 +1589,15 @@ async function processAudioBlob(blob) {
     const elapsedRemSec = elapsedSec % 60;
     const elapsedStr = elapsedMin > 0 ? `${elapsedMin}m ${elapsedRemSec}s` : `${elapsedSec}s`;
     loadingText.innerText = `Klar! (${elapsedStr})`;
+
+    // Auto-mask PII if enabled
+    if (autoMaskPii && outputText.value.trim()) {
+      try {
+        outputText.value = await invoke("mask_pii_regex", { text: outputText.value });
+      } catch (maskErr) {
+        console.warn("PII-maskning misslyckades:", maskErr);
+      }
+    }
 
     // Show elapsed time in the output text so user can see it
     outputText.value += `\n\n[Transkribering klar: ${elapsedStr}]`;
@@ -1684,6 +1743,55 @@ const _origShowRedo = () => {
   btnRedo && btnRedo.classList.remove("hidden");
   btnRedo && (btnRedo.style.display = "inline-flex");
 };
+
+// -------------------------------------------------------------
+// Maskera PII — manuell knapp
+// -------------------------------------------------------------
+const btnMaskPii = document.getElementById("btn-mask-pii");
+btnMaskPii && btnMaskPii.addEventListener("click", async () => {
+  const text = outputText.value.trim();
+  if (!text) return;
+  try {
+    outputText.value = await invoke("mask_pii_regex", { text: outputText.value });
+  } catch (err) {
+    console.error("PII-maskning misslyckades:", err);
+  }
+});
+
+// -------------------------------------------------------------
+// Personlig ordlista — import/export
+// -------------------------------------------------------------
+const vocabImport = document.getElementById("vocabulary-import");
+vocabImport && vocabImport.addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const text = await file.text();
+  let words;
+  try {
+    const parsed = JSON.parse(text);
+    words = Array.isArray(parsed) ? parsed.map(String) : text.split("\n");
+  } catch {
+    words = text.split("\n");
+  }
+  words = words.map(w => w.trim()).filter(Boolean);
+  const vocabInput = document.getElementById("vocabulary-input");
+  if (vocabInput) vocabInput.value = words.join("\n");
+  vocabImport.value = "";
+});
+
+const vocabExport = document.getElementById("vocabulary-export");
+vocabExport && vocabExport.addEventListener("click", async () => {
+  const vocabInput = document.getElementById("vocabulary-input");
+  const content = vocabInput ? vocabInput.value : personalVocabulary.join("\n");
+  try {
+    await invoke("save_text_file", { content });
+  } catch (err) {
+    const msg = typeof err === "string" ? err : err.message || String(err);
+    if (!msg.includes("cancelled") && !msg.includes("canceled")) {
+      console.error("Export misslyckades:", msg);
+    }
+  }
+});
 
 // -------------------------------------------------------------
 // Window sizing: 50% screen width, full available height
