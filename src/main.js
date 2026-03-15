@@ -738,12 +738,15 @@ btnRedo.addEventListener("click", async () => {
   if (!confirmed) return;
   
   btnRedo.classList.add("hidden");
-  
+
   if (lastRecordedSegments.length > 1) {
     await processSegments([...lastRecordedSegments]);
   } else {
     await processAudioBlob(lastRecordedSegments[0].blob);
   }
+
+  btnRedo.classList.remove("hidden");
+  btnRedo.style.display = "inline-flex";
 });
 
 // -------------------------------------------------------------
