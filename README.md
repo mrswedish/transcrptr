@@ -23,6 +23,7 @@ Transcrptr använder [KB-whisper](https://huggingface.co/KBLab/kb-whisper-small)
 - **🛡️ GDPR-maskning:** Maskera personnummer, telefonnummer och e-postadresser automatiskt eller med ett knapptryck — direkt på enheten, ingen data lämnar din dator.
 - **🎬 Segmentredigering:** Visa transkriberingen som tidsstämplade rader — klicka på en tidsstämpel för att hoppa direkt till den punkten i inspelningen.
 - **🔊 Synkad ljudspelare:** Spela upp inspelningen direkt i appen med automatisk markering av det aktiva textsegmentet.
+- **🟡 Konfidensfärgning:** Ord med låg igenkänningssäkerhet markeras med färg i segmentvyn — gul = osäker, röd = mycket osäker. Tröskelvärdet justeras i inställningarna.
 - **💾 Spara:** Exportera text som `.txt` eller ljud som `.wav`.
 - **📊 Modellhantering:** Se, ladda ner och ta bort modeller i inställningarna.
 

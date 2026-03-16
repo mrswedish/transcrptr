@@ -40,10 +40,17 @@ struct TranscriptionProgressPayload {
 }
 
 #[derive(Serialize)]
+struct TokenInfo {
+    text: String,
+    prob: f32,
+}
+
+#[derive(Serialize)]
 struct TranscriptSegment {
     start_ms: i64,
     end_ms: i64,
     text: String,
+    tokens: Vec<TokenInfo>,
 }
 
 #[derive(Serialize)]
@@ -543,7 +550,20 @@ async fn transcribe_audio_segments(app_handle: AppHandle, state: tauri::State<'_
                 // whisper.cpp timestamps are in centiseconds → convert to ms (* 10)
                 let t0 = seg.start_timestamp() * 10;
                 let t1 = seg.end_timestamp() * 10;
-                out.push(TranscriptSegment { start_ms: t0, end_ms: t1, text: trimmed });
+                // Collect token probabilities (skip special tokens like [_BEG_], [_TT_*])
+                let mut tokens: Vec<TokenInfo> = Vec::new();
+                for t in 0..seg.n_tokens() {
+                    if let Some(tok) = seg.get_token(t) {
+                        if let Ok(tok_text) = tok.to_str_lossy() {
+                            let tok_str = tok_text.into_owned();
+                            // Skip whisper special tokens
+                            if tok_str.starts_with("[_") { continue; }
+                            let prob = tok.token_probability();
+                            tokens.push(TokenInfo { text: tok_str, prob });
+                        }
+                    }
+                }
+                out.push(TranscriptSegment { start_ms: t0, end_ms: t1, text: trimmed, tokens });
             }
 
             Ok::<Vec<TranscriptSegment>, String>(out)

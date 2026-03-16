@@ -84,6 +84,18 @@
         min-height: 24px;
         padding: 0;
       }
+      .segment-view {
+        flex: 1;
+        font-size: 14px;
+        line-height: 1.65;
+        cursor: text;
+        word-break: break-word;
+        min-height: 24px;
+        padding: 0;
+      }
+      .tok { border-radius: 3px; padding: 0 1px; }
+      .tok-low { background-color: rgba(251,191,36,0.35); }
+      .tok-very-low { background-color: rgba(239,68,68,0.30); }
     </style>
   <script type="module" src="/main.js" defer></script>
 </head>
@@ -342,6 +354,19 @@
               Exportera .txt
             </button>
           </div>
+        </div>
+
+        <!-- Konfidenströskel -->
+        <div class="p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl">
+          <div class="flex items-center justify-between mb-2">
+            <div>
+              <p class="text-sm font-medium text-slate-700 dark:text-slate-300">Konfidenströskel</p>
+              <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5">Ord med lägre sannolikhet markeras i segmentvyn. <span class="tok tok-low px-1 rounded">Gul</span> = osäker, <span class="tok tok-very-low px-1 rounded">röd</span> = mycket osäker.</p>
+            </div>
+            <span id="confidence-threshold-label" class="text-sm font-semibold text-primary shrink-0 ml-3">60%</span>
+          </div>
+          <input type="range" id="confidence-threshold-slider" min="10" max="99" value="60" step="1"
+            class="w-full accent-primary cursor-pointer">
         </div>
 
         <!-- Auto-maskering GDPR -->

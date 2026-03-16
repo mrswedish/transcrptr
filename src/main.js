@@ -87,8 +87,9 @@ let personalVocabulary = [];  // Array of strings
 let autoMaskPii = false;
 
 // Segment editor & audio player state
-let transcriptSegments = [];        // [{startMs, endMs, text}] — accumulated across chunks
+let transcriptSegments = [];        // [{startMs, endMs, text, tokens}] — accumulated across chunks
 let segmentViewActive = false;
+let confidenceThreshold = 0.6;      // Words below this prob get highlighted
 let currentPlaybackBlob = null;
 let currentPlaybackUrl = null;
 // audioPlayer is resolved after DOM is ready (must be in DOM for WKWebView)
@@ -125,6 +126,7 @@ function loadSettings() {
   const wasapi = localStorage.getItem("wasapiEnabled");
   const vocab = localStorage.getItem("personalVocabulary");
   const autoMask = localStorage.getItem("autoMaskPii");
+  const confThresh = localStorage.getItem("confidenceThreshold");
 
   if (size) modelSize = size;
   if (revision) modelRevision = revision;
@@ -136,12 +138,18 @@ function loadSettings() {
     try { personalVocabulary = JSON.parse(vocab); } catch { personalVocabulary = []; }
   }
   if (autoMask !== null) autoMaskPii = autoMask === "true";
+  if (confThresh !== null) confidenceThreshold = parseFloat(confThresh);
 
   const wasapiToggle = document.getElementById("wasapi-toggle");
   if (wasapiToggle) wasapiToggle.checked = wasapiEnabled;
 
   const autoMaskToggle = document.getElementById("auto-mask-toggle");
   if (autoMaskToggle) autoMaskToggle.checked = autoMaskPii;
+
+  const confSlider = document.getElementById("confidence-threshold-slider");
+  const confLabel = document.getElementById("confidence-threshold-label");
+  if (confSlider) confSlider.value = Math.round(confidenceThreshold * 100);
+  if (confLabel) confLabel.textContent = Math.round(confidenceThreshold * 100) + "%";
 
   const vocabInput = document.getElementById("vocabulary-input");
   if (vocabInput) vocabInput.value = personalVocabulary.join("\n");
@@ -689,6 +697,12 @@ btnCloseSettings.addEventListener("click", () => {
   settingsModal.classList.add("hidden");
 });
 
+// Live-update confidence threshold label as slider moves
+document.getElementById("confidence-threshold-slider")?.addEventListener("input", (e) => {
+  const label = document.getElementById("confidence-threshold-label");
+  if (label) label.textContent = e.target.value + "%";
+});
+
 btnSaveSettings.addEventListener("click", async () => {
   const newLang = selLanguage ? selLanguage.value : "sv";
   const newMicId = selMic ? selMic.value : "default";
@@ -711,6 +725,15 @@ btnSaveSettings.addEventListener("click", async () => {
   if (autoMaskToggle) {
     autoMaskPii = autoMaskToggle.checked;
     localStorage.setItem("autoMaskPii", autoMaskPii.toString());
+  }
+
+  // Confidence threshold
+  const confSlider = document.getElementById("confidence-threshold-slider");
+  if (confSlider) {
+    confidenceThreshold = parseInt(confSlider.value) / 100;
+    localStorage.setItem("confidenceThreshold", confidenceThreshold.toString());
+    // Re-render segment editor if visible to reflect new threshold
+    if (segmentViewActive && transcriptSegments.length > 0) renderSegmentEditor();
   }
 
   transcriptionLanguage = newLang;
@@ -1349,7 +1372,8 @@ async function transcribeBlob(blob, label, blobOffsetMs = 0) {
         const adjusted = chunkSegs.map(s => ({
           startMs: s.start_ms + chunkOffsetMs,
           endMs: s.end_ms + chunkOffsetMs,
-          text: s.text
+          text: s.text,
+          tokens: s.tokens || []
         }));
         transcriptSegments.push(...adjusted);
         const chunkText = adjusted.map(s => s.text).join("\n");
@@ -1481,7 +1505,8 @@ async function transcribeFloat32(rawFloat32Data) {
         const adjusted = chunkSegs.map(s => ({
           startMs: s.start_ms + chunkOffsetMs,
           endMs: s.end_ms + chunkOffsetMs,
-          text: s.text
+          text: s.text,
+          tokens: s.tokens || []
         }));
         transcriptSegments.push(...adjusted);
         const chunkText = adjusted.map(s => s.text).join("\n");
@@ -1524,6 +1549,33 @@ function buildPlainText() {
 }
 
 // Render the segment editor from transcriptSegments
+function buildConfidenceView(seg) {
+  const div = document.createElement("div");
+  div.className = "segment-view";
+  if (seg.tokens && seg.tokens.length > 0) {
+    seg.tokens.forEach(tok => {
+      // Tokens starting with a space indicate word boundary
+      const hasLeadingSpace = tok.text.startsWith(" ");
+      if (hasLeadingSpace) div.appendChild(document.createTextNode(" "));
+      const word = tok.text.trimStart();
+      if (!word) return;
+      const span = document.createElement("span");
+      span.textContent = word;
+      if (tok.prob < confidenceThreshold * 0.6) {
+        span.className = "tok tok-very-low";
+        span.title = `Konfidenspoäng: ${Math.round(tok.prob * 100)}%`;
+      } else if (tok.prob < confidenceThreshold) {
+        span.className = "tok tok-low";
+        span.title = `Konfidenspoäng: ${Math.round(tok.prob * 100)}%`;
+      }
+      div.appendChild(span);
+    });
+  } else {
+    div.textContent = seg.text;
+  }
+  return div;
+}
+
 function renderSegmentEditor() {
   const editor = document.getElementById("segment-editor");
   if (!editor) return;
@@ -1540,23 +1592,50 @@ function renderSegmentEditor() {
     ts.title = "Klicka för att spela från denna tidpunkt";
     ts.addEventListener("click", () => seekPlayer(seg.startMs));
 
+    // Confidence view (default, read-only with colored tokens)
+    const confView = buildConfidenceView(seg);
+    confView.title = "Klicka för att redigera";
+
+    // Editable textarea (hidden by default)
     const ta = document.createElement("textarea");
-    ta.className = "segment-input";
+    ta.className = "segment-input hidden";
     ta.value = seg.text;
     ta.rows = 1;
-    // Auto-grow
     const autoGrow = () => { ta.style.height = "auto"; ta.style.height = ta.scrollHeight + "px"; };
     ta.addEventListener("input", () => {
       transcriptSegments[idx].text = ta.value;
+      // Clear tokens since text changed; confidence view will show plain text
+      transcriptSegments[idx].tokens = [];
       outputText.value = buildPlainText();
       autoGrow();
     });
     ta.addEventListener("focus", () => row.classList.add("ring-1", "ring-primary/30", "rounded-lg"));
-    ta.addEventListener("blur", () => row.classList.remove("ring-1", "ring-primary/30", "rounded-lg"));
-    // Initial height
+    ta.addEventListener("blur", () => {
+      row.classList.remove("ring-1", "ring-primary/30", "rounded-lg");
+      // Rebuild confidence view from (possibly updated) text, switch back
+      const newView = buildConfidenceView(transcriptSegments[idx]);
+      newView.title = "Klicka för att redigera";
+      newView.addEventListener("click", () => { newView.classList.add("hidden"); ta.classList.remove("hidden"); requestAnimationFrame(autoGrow); ta.focus(); });
+      row.replaceChild(newView, confView.parentNode ? confView : newView);
+      // Swap: hide textarea, show new view
+      ta.classList.add("hidden");
+      const existing = row.querySelector(".segment-view");
+      if (existing) row.replaceChild(newView, existing);
+      else row.insertBefore(newView, ta);
+    });
+
+    // Click confidence view → switch to textarea
+    confView.addEventListener("click", () => {
+      confView.classList.add("hidden");
+      ta.classList.remove("hidden");
+      requestAnimationFrame(autoGrow);
+      ta.focus();
+    });
+
     requestAnimationFrame(autoGrow);
 
     row.appendChild(ts);
+    row.appendChild(confView);
     row.appendChild(ta);
     frag.appendChild(row);
   });
@@ -1795,7 +1874,8 @@ async function processAudioBlob(blob) {
           const adjusted = chunkSegs.map(s => ({
             startMs: s.start_ms + chunkOffsetMs,
             endMs: s.end_ms + chunkOffsetMs,
-            text: s.text
+            text: s.text,
+            tokens: s.tokens || []
           }));
           transcriptSegments.push(...adjusted);
           const chunkText = adjusted.map(s => s.text).join("\n");
