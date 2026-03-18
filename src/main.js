@@ -1163,6 +1163,7 @@ async function stopSession() {
       // Setup segment editor and player
       if (transcriptSegments.length > 0) {
         renderSegmentEditor();
+        showSegmentView();
         const btnSeg = document.getElementById("btn-segment-toggle");
         if (btnSeg) { btnSeg.classList.remove("hidden"); btnSeg.style.display = "inline-flex"; }
         setupPlayer(currentPlaybackBlob);
@@ -1307,6 +1308,7 @@ async function processSegments(segments) {
 
     if (transcriptSegments.length > 0) {
       renderSegmentEditor();
+      showSegmentView();
       const btnSeg = document.getElementById("btn-segment-toggle");
       if (btnSeg) { btnSeg.classList.remove("hidden"); btnSeg.style.display = "inline-flex"; }
       setupPlayer(currentPlaybackBlob);
@@ -1926,6 +1928,7 @@ async function processAudioBlob(blob) {
     if (transcriptSegments.length > 0) {
       renderSegmentEditor();
       const btnSeg = document.getElementById("btn-segment-toggle");
+      showSegmentView();
       if (btnSeg) { btnSeg.classList.remove("hidden"); btnSeg.style.display = "inline-flex"; }
       setupPlayer(currentPlaybackBlob);
     }

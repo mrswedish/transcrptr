@@ -48,7 +48,7 @@
         border-radius: 2px;
       }
       /* Segment editor */
-      #segment-editor { overflow-y: auto; height: 100%; }
+      #segment-editor { min-height: 100%; }
       .segment-row {
         display: flex;
         gap: 10px;
@@ -100,9 +100,9 @@
   <script type="module" src="/main.js" defer></script>
 </head>
 
-<body class="bg-background-light dark:bg-background-dark text-slate-900 dark:text-slate-100 min-h-screen flex flex-col">
+<body class="bg-background-light dark:bg-background-dark text-slate-900 dark:text-slate-100 h-screen overflow-hidden flex flex-col">
   <div class="h-6 w-full bg-transparent"></div>
-  <main class="flex-1 flex flex-col px-6 pb-12">
+  <main class="flex-1 flex flex-col px-6 pb-4 overflow-hidden">
     <header class="flex items-center justify-between mb-8">
       <div class="flex flex-col gap-0.5">
         <div class="flex items-center gap-2">
@@ -171,7 +171,7 @@
         <span id="disk-forecast" class="hidden"></span>
       </div>
     </div>
-    <section class="flex flex-col flex-1">
+    <section class="flex flex-col flex-1 overflow-hidden">
       <div class="flex items-center justify-between mb-4 px-1">
         <h2 class="text-lg font-bold text-slate-800 dark:text-slate-200">Transkribering</h2>
         <div class="flex items-center gap-3">
@@ -216,17 +216,6 @@
           </button>
         </div>
       </div>
-      <!-- Audio Player Bar -->
-      <div id="player-bar" class="hidden mt-3 flex items-center gap-3 px-1">
-        <button id="btn-play-pause" class="flex items-center justify-center w-8 h-8 rounded-full bg-primary hover:bg-teal-500 transition-colors shrink-0">
-          <span id="play-icon" class="material-symbols-outlined text-white text-base">play_arrow</span>
-        </button>
-        <span id="player-time" class="text-xs font-mono text-slate-400 shrink-0 w-10">0:00</span>
-        <div id="player-track" class="flex-1 h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden cursor-pointer">
-          <div id="player-fill" class="h-full bg-primary transition-none" style="width:0%"></div>
-        </div>
-        <span id="player-duration" class="text-xs font-mono text-slate-400 shrink-0 w-10 text-right">0:00</span>
-      </div>
       <!-- Search/Replace Toolbar -->
       <div id="search-bar" class="hidden mb-3 flex items-center gap-2 p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl">
         <span class="material-symbols-outlined text-slate-400 text-base">search</span>
@@ -244,12 +233,30 @@
         </button>
       </div>
       <div
-        class="relative flex-1 min-h-[300px] bg-white dark:bg-slate-900/50 border border-slate-200 dark:border-slate-700 rounded-3xl p-6 shadow-sm overflow-hidden flex flex-col">
-        <textarea id="output-text"
-          class="w-full h-full bg-transparent border-none focus:ring-0 p-0 text-slate-600 dark:text-slate-400 placeholder:text-slate-300 dark:placeholder:text-slate-600 resize-none text-base leading-relaxed flex-1"
-          placeholder="Din transkriberade text kommer att visas här..."></textarea>
-        <!-- Segment editor (hidden by default, shown in segment view) -->
-        <div id="segment-editor" class="hidden flex-1 text-slate-600 dark:text-slate-400"></div>
+        class="relative flex-1 bg-white dark:bg-slate-900/50 border border-slate-200 dark:border-slate-700 rounded-3xl shadow-sm overflow-hidden flex flex-col">
+
+        <!-- Audio Player — pinnad topsektion, alltid synlig -->
+        <div id="player-bar" class="hidden flex items-center gap-3 px-5 py-3 border-b border-slate-100 dark:border-slate-700/60 bg-slate-50/80 dark:bg-slate-800/40 shrink-0">
+          <button id="btn-play-pause" class="flex items-center justify-center w-9 h-9 rounded-full bg-primary hover:bg-teal-500 transition-colors shrink-0 shadow-sm">
+            <span id="play-icon" class="material-symbols-outlined text-white text-base">play_arrow</span>
+          </button>
+          <span id="player-time" class="text-xs font-mono text-slate-500 dark:text-slate-400 shrink-0 w-10">0:00</span>
+          <div id="player-track" class="flex-1 h-2 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden cursor-pointer">
+            <div id="player-fill" class="h-full bg-primary transition-none" style="width:0%"></div>
+          </div>
+          <span id="player-duration" class="text-xs font-mono text-slate-500 dark:text-slate-400 shrink-0 w-10 text-right">0:00</span>
+        </div>
+
+        <!-- Scrollbart textinnehåll -->
+        <div class="flex-1 overflow-y-auto p-6 custom-scrollbar flex flex-col">
+          <textarea id="output-text"
+            class="flex-1 w-full bg-transparent border-none focus:ring-0 p-0 text-slate-600 dark:text-slate-400 placeholder:text-slate-300 dark:placeholder:text-slate-600 resize-none text-base leading-relaxed"
+            style="min-height: 200px;"
+            placeholder="Din transkriberade text kommer att visas här..."></textarea>
+          <!-- Segment editor (hidden by default, shown in segment view) -->
+          <div id="segment-editor" class="hidden flex-1 text-slate-600 dark:text-slate-400" style="min-height: 200px;"></div>
+        </div>
+
         <div
           class="absolute bottom-0 left-0 right-0 h-12 bg-gradient-to-t from-white/50 dark:from-slate-900/50 to-transparent pointer-events-none">
         </div>
@@ -313,16 +320,9 @@
           </select>
         </div>
 
-        <!-- WASAPI toggle -->
-        <div class="flex items-center justify-between gap-3 p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl">
-          <div>
-            <p class="text-sm font-medium text-slate-700 dark:text-slate-300">Spela in systemljud (WASAPI)</p>
-            <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5">Fångar Teams, Zoom, Spotify m.fl. Pausfunktionen inaktiveras.</p>
-          </div>
-          <label class="relative inline-flex items-center cursor-pointer shrink-0">
-            <input type="checkbox" id="wasapi-toggle" class="sr-only peer">
-            <div class="w-11 h-6 bg-slate-300 dark:bg-slate-600 peer-checked:bg-primary rounded-full transition-colors after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-5"></div>
-          </label>
+        <!-- WASAPI toggle (dolt tills vidare, utreds senare) -->
+        <div class="hidden">
+          <input type="checkbox" id="wasapi-toggle" class="sr-only">
         </div>
 
         <div class="flex flex-col gap-2">
