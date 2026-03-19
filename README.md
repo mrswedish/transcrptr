@@ -15,7 +15,7 @@ Transcrptr använder [KB-whisper](https://huggingface.co/KBLab/kb-whisper-small)
 ## ✨ Funktioner
 - **🔒 Integritet:** Ditt ljud stannar på din dator. Inget skickas till externa servrar. [Integritetspolicy](PRIVACY.md)
 - **⚡ Hårdvaruaccelererad:** Vulkan utnyttjar din GPU för snabbare transkribering.
-- **🎙️ Mötesinspelning (Windows):** Spela in både mikrofon och datorljud från t.ex. Teams/Zoom — med Stereo Mix (se guide nedan).
+- **🎙️ Mötesinspelning (Windows):** Spela in både mikrofon och datorljud från t.ex. Teams/Zoom — via Application Loopback API eller Stereo Mix (se guide nedan).
 - **⏸️ Pausa inspelning:** Pausa och återuppta. Varje del tidsstämplas automatiskt.
 - **🔄 Gör om transkribering:** Byt modell och kör om utan att spela in på nytt.
 - **✏️ Redigera transkribering:** Redigera, sök och ersätt direkt i appen (Ctrl+F).
@@ -66,26 +66,29 @@ OpenAIs officiella large-v3-turbo-modell från [ggerganov/whisper.cpp](https://h
 > [!NOTE]
 > Välj stil i inställningarna innan nedladdning. Varje kombination av storlek + stil är en separat modell. Turbo har ingen stilvariant.
 
-## 🎙️ Spela in möten — WASAPI vs Stereo Mix (Windows)
+## 🎙️ Spela in möten — Systemljud (Windows)
 
 Det finns två sätt att spela in både mikrofon och datorns systemljud (Teams, Zoom, Spotify m.fl.):
 
-| | **WASAPI** *(inbyggt)* | **Stereo Mix** *(Windows-funktion)* |
+| | **Spela in systemljud** *(Application Loopback)* | **Stereo Mix** *(Windows-funktion)* |
 |---|---|---|
 | **Kräver inställning** | Nej | Ja (engångsinställning) |
-| **Pausa inspelning** | Nej | Ja |
+| **Windows-version** | Windows 10 build 20348+ / Windows 11 | Alla versioner |
+| **Pausa inspelning** | Ja | Ja |
 | **Välj mikrofon i appen** | Ja | Nej (styrs av Windows) |
 | **Systemljud** | Ja | Ja |
-| **Drivrutinsstöd** | Beror på ljudkortet | Beror på ljudkortet |
+| **Drivrutinsstöd** | Oberoende av hårdvara | Beror på ljudkortet |
 
-### Alternativ 1: WASAPI (inbyggt, ingen installation)
+### Alternativ 1: Spela in systemljud (rekommenderas)
 
-Aktivera **"Spela in systemljud (WASAPI)"** i inställningarna (⚙️) i appen. Transcrptr spelar in datorns systemljud automatiskt och mixar det med den mikrofon du valt i listan.
+Aktivera **"Spela in systemljud"** i inställningarna (⚙️). Transcrptr använder Microsofts **Application Loopback API** för att fånga datorns systemljud digitalt — utan att gå via hårdvara eller externa drivrutiner. Ljudet mixas automatiskt med den mikrofon du valt i listan.
+
+**Hur det fungerar:** API:et fångar systemljud från alla andra appar (Teams, Zoom, webbläsaren m.fl.) och utesluter Transcrptr självt. Allt sker helt digitalt och oberoende av vilket ljudkort du har.
 
 > [!NOTE]
-> Pause-knappen är inte tillgänglig i WASAPI-läge.
+> Kräver Windows 10 (build 20348 / version 21H2) eller Windows 11. Kontrollera din version i `Inställningar → System → Om`.
 
-### Alternativ 2: Stereo Mix (rekommenderas för möten)
+### Alternativ 2: Stereo Mix (för äldre Windows-versioner)
 
 Stereo Mix är en virtuell Windows-enhet som fångar allt systemljud och mixar det med valfri mikrofon. Kräver en engångsinställning i Windows.
 
@@ -102,10 +105,27 @@ Stereo Mix är en virtuell Windows-enhet som fångar allt systemljud och mixar d
 > [!NOTE]
 > Syns inte Stereo Mix? Din dators ljudkort saknar stöd för det. Använd WASAPI-alternativet istället.
 
-## 📥 Ladda ner
-Gå till [Releases](https://github.com/mrswedish/transcrptr/releases) för senaste versionen:
+## 📥 Ladda ner och installera (Windows)
 
-- **Windows:** Ladda ner `Transcrptr-portable.exe` och kör direkt. Ingen installation krävs.
+Gå till [Releases](https://github.com/mrswedish/transcrptr/releases) för senaste versionen och ladda ner `Transcrptr-portable.exe`.
+
+### Windows SmartScreen och säkerhet
+
+Eftersom appen inte är köpt med ett kommersiellt kodsigneringscertifikat kan Windows varna vid första körningen. Så här hanterar du det:
+
+**SmartScreen-varning ("Windows skyddade din dator"):**
+1. Klicka på **"Mer information"**
+2. Klicka sedan på **"Kör ändå"**
+
+**Filen är "blockerad" av Windows:**
+På vissa Windows-versioner kan filer laddade från internet blockeras. Om appen inte startar:
+1. Högerklicka på `.exe`-filen
+2. Välj **"Egenskaper"**
+3. Längst ner under fliken **Allmänt** — kryssa i **"Avblockera"**
+4. Klicka **OK** och starta appen igen
+
+> [!NOTE]
+> Transcrptr innehåller ingen skadlig kod. Varningarna beror på att appen distribueras utan kommersiell kodsignering. Källkoden är öppen och granskningsbar på GitHub.
 
 ## 🏗️ Arkitektur
 - **Tauri** (Rust-backend, webbfrontend)
