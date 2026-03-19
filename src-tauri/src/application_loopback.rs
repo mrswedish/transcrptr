@@ -66,7 +66,7 @@ unsafe fn make_blob_propvariant(
     // PROPVARIANT is repr(transparent) over imp::PROPVARIANT — cast is safe.
     let inner = &mut *((&mut pv) as *mut windows_core::PROPVARIANT
         as *mut windows_core::imp::PROPVARIANT);
-    inner.Anonymous.Anonymous.vt = windows_core::imp::VARENUM(VT_BLOB as i32);
+    inner.Anonymous.Anonymous.vt = VT_BLOB; // VARENUM is u16
     inner.Anonymous.Anonymous.Anonymous.blob.cbSize =
         std::mem::size_of::<AUDIOCLIENT_ACTIVATION_PARAMS>() as u32;
     inner.Anonymous.Anonymous.Anonymous.blob.pBlobData =
@@ -136,8 +136,7 @@ impl ApplicationLoopback {
                 .ok_or_else(Error::from_win32)?;
 
             // Get the mix format
-            let mut format_ptr: *mut WAVEFORMATEX = std::ptr::null_mut();
-            audio_client.GetMixFormat(&mut format_ptr)?;
+            let format_ptr = audio_client.GetMixFormat()?;
             let format = *format_ptr;
 
             // Initialize in shared loopback mode with event-driven buffering
