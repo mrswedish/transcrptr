@@ -7,9 +7,13 @@ use windows::{
     Win32::Media::Audio::*,
     Win32::System::Com::*,
     Win32::System::Threading::*,
-    Win32::Media::Audio::Wasapi::*,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
+
+// COM interfaces are MTA-safe when CoInitializeEx(COINIT_MULTITHREADED) is used.
+// We declare Send+Sync so Tauri state and thread::spawn work.
+unsafe impl Send for ApplicationLoopback {}
+unsafe impl Sync for ApplicationLoopback {}
 
 #[implement(IActivateAudioInterfaceCompletionHandler)]
 struct Handler {
@@ -23,8 +27,8 @@ impl Handler {
     }
 }
 
-impl IActivateAudioInterfaceCompletionHandler_Impl for Handler {
-    fn ActivateCompleted(&self, activate_operation: Ref<'_, IActivateAudioInterfaceAsyncOperation>) -> Result<()> {
+impl IActivateAudioInterfaceCompletionHandler_Impl for Handler_Impl {
+    fn ActivateCompleted(&self, activate_operation: Ref<IActivateAudioInterfaceAsyncOperation>) -> Result<()> {
         let mut activate_result = HRESULT(0);
         let mut activated_interface: Option<IUnknown> = None;
 
@@ -57,47 +61,47 @@ impl ApplicationLoopback {
 
             let audio_client_shared = Arc::new(Mutex::new(None));
             let completion_event = CreateEventW(None, true, false, None)?;
-            
+
             let handler: IActivateAudioInterfaceCompletionHandler = Handler::new(
                 Arc::clone(&audio_client_shared),
                 completion_event,
             ).into();
 
-            let mut params = AUDIOCLIENT_ACTIVATION_PARAMS::default();
-            params.ActivationType = AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK;
-            
-            // Loopback parameters
-            let mut lb_params = PROCESS_LOOPBACK_CAPTURE_INFORMATION::default();
-            lb_params.ProcessId = exclude_pid.unwrap_or(GetCurrentProcessId());
-            lb_params.ProcessLoopbackMode = PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS;
-
-            params.Anonymous.ProcessLoopbackParams = &lb_params;
+            // Set up activation params for Application Loopback API
+            // (Windows 10 build 20348+ / Windows 11)
+            let mut params = AUDIOCLIENT_ACTIVATION_PARAMS {
+                ActivationType: AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK,
+                Anonymous: AUDIOCLIENT_ACTIVATION_PARAMS_0 {
+                    ProcessLoopbackParams: AUDIOCLIENT_PROCESS_LOOPBACK_PARAMS {
+                        TargetProcessId: exclude_pid.unwrap_or(GetCurrentProcessId()),
+                        ProcessLoopbackMode: PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE,
+                    },
+                },
+            };
 
             let _operation = ActivateAudioInterfaceAsync(
                 VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK,
                 &IAudioClient::IID,
-                Some(&params),
+                Some(&mut params as *mut _ as *mut _),
                 &handler,
             )?;
 
-            // Wait for activation (timeout after 2s)
+            // Wait for async activation (timeout 2s)
             let wait_res = WaitForSingleObject(completion_event, 2000);
-            CloseHandle(completion_event)?;
+            let _ = CloseHandle(completion_event);
 
-            if wait_res != WAIT_OBJECT_0.0 {
+            if wait_res != WAIT_OBJECT_0 {
                 return Err(Error::from_win32());
             }
 
             let audio_client = audio_client_shared.lock().unwrap().take()
                 .ok_or_else(|| Error::from_win32())?;
 
-            // Get format
+            // Get mix format
             let mut format_ptr: *mut WAVEFORMATEX = std::ptr::null_mut();
             audio_client.GetMixFormat(&mut format_ptr)?;
             let format = *format_ptr;
 
-            // Initialize in shared mode with loopback
-            // Note: AUDCLNT_STREAMFLAGS_LOOPBACK is NOT needed for this new API type
             audio_client.Initialize(
                 AUDCLNT_SHAREMODE_SHARED,
                 AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
@@ -158,15 +162,13 @@ impl ApplicationLoopback {
                 let mut data: *mut u8 = std::ptr::null_mut();
                 let mut frames_available: u32 = 0;
                 let mut flags: u32 = 0;
-                let mut device_position: u64 = 0;
-                let mut qpc_position: u64 = 0;
 
                 let res = capture.GetBuffer(
                     &mut data,
                     &mut frames_available,
                     &mut flags,
-                    Some(&mut device_position),
-                    Some(&mut qpc_position),
+                    None,
+                    None,
                 );
 
                 if res.is_err() || frames_available == 0 {
@@ -174,13 +176,13 @@ impl ApplicationLoopback {
                 }
 
                 let channels = self.format.nChannels as usize;
-                let data_slice = std::slice::from_raw_parts(data as *const f32, frames_available as usize * channels);
-                
-                // If it's silent or invalid, handle it?
+                let n = frames_available as usize * channels;
+
                 if (flags & AUDCLNT_BUFFERFLAGS_SILENT.0 as u32) == 0 {
-                    all_samples.extend_from_slice(data_slice);
+                    let slice = std::slice::from_raw_parts(data as *const f32, n);
+                    all_samples.extend_from_slice(slice);
                 } else {
-                    all_samples.extend(std::iter::repeat(0.0).take(frames_available as usize * channels));
+                    all_samples.extend(std::iter::repeat(0.0f32).take(n));
                 }
 
                 let _ = capture.ReleaseBuffer(frames_available);
@@ -191,7 +193,7 @@ impl ApplicationLoopback {
 
     pub fn wait_for_buffer(&self, timeout_ms: u32) -> bool {
         unsafe {
-            WaitForSingleObject(self.buffer_event, timeout_ms) == WAIT_OBJECT_0.0
+            WaitForSingleObject(self.buffer_event, timeout_ms) == WAIT_OBJECT_0
         }
     }
 
@@ -206,8 +208,8 @@ impl ApplicationLoopback {
 
 impl Drop for ApplicationLoopback {
     fn drop(&mut self) {
+        let _ = self.stop();
         unsafe {
-            let _ = self.stop();
             if !self.buffer_event.is_invalid() {
                 let _ = CloseHandle(self.buffer_event);
             }
