@@ -1,6 +1,6 @@
 [package]
 name = "tauri-app"
-version = "1.1.74"
+version = "1.1.75"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -36,4 +36,13 @@ whisper-rs = { version = "0.15.1", features = ["metal"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 whisper-rs = { version = "0.15.1", features = ["vulkan"] }
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_Media_Audio",
+    "Win32_Media_Audio_Wasapi",
+    "Win32_System_Com",
+    "Win32_System_Threading",
+    "Win32_UI_Shell_PropertiesSystem",
+    "Win32_Media_Audio_Endpoints",
+] }
 

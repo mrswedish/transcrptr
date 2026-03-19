@@ -14,6 +14,8 @@ use sysinfo::Disks;
 use regex::Regex;
 
 mod audio;
+#[cfg(target_os = "windows")]
+mod application_loopback;
 use audio::AudioRecorder;
 
 pub struct AppState {
