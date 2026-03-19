@@ -55,23 +55,19 @@ impl IActivateAudioInterfaceCompletionHandler_Impl for Handler_Impl {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Build a VT_BLOB PROPVARIANT pointing to AUDIOCLIENT_ACTIVATION_PARAMS.
-// The struct must outlive the PROPVARIANT pointer.
+// Raw PROPVARIANT BLOB layout (no Drop — avoids PropVariantClear freeing our
+// stack-allocated AUDIOCLIENT_ACTIVATION_PARAMS via CoTaskMemFree).
+// Layout matches PROPVARIANT on 64-bit Windows: 24 bytes total.
 // ─────────────────────────────────────────────────────────────────────────────
-unsafe fn make_blob_propvariant(
-    params: &mut AUDIOCLIENT_ACTIVATION_PARAMS,
-) -> windows_core::PROPVARIANT {
-    const VT_BLOB: u16 = 65; // 0x41
-    let mut pv: windows_core::PROPVARIANT = std::mem::zeroed();
-    // PROPVARIANT is repr(transparent) over imp::PROPVARIANT — cast is safe.
-    let inner = &mut *((&mut pv) as *mut windows_core::PROPVARIANT
-        as *mut windows_core::imp::PROPVARIANT);
-    inner.Anonymous.Anonymous.vt = VT_BLOB; // VARENUM is u16
-    inner.Anonymous.Anonymous.Anonymous.blob.cbSize =
-        std::mem::size_of::<AUDIOCLIENT_ACTIVATION_PARAMS>() as u32;
-    inner.Anonymous.Anonymous.Anonymous.blob.pBlobData =
-        params as *mut _ as *mut u8;
-    pv
+#[repr(C)]
+struct RawPropVarBlob {
+    vt: u16,          // VT_BLOB = 65
+    reserved1: u16,
+    reserved2: u16,
+    reserved3: u16,
+    cb_size: u32,
+    _pad: u32,        // align pBlobData to 8 bytes
+    p_data: *mut u8,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -111,13 +107,19 @@ impl ApplicationLoopback {
                 },
             };
 
-            // Wrap in VT_BLOB PROPVARIANT
-            let pv = make_blob_propvariant(&mut ac_params);
+            // Wrap in VT_BLOB PROPVARIANT (raw — no Drop to avoid CoTaskMemFree crash)
+            let mut raw_pv = RawPropVarBlob {
+                vt: 65, // VT_BLOB
+                reserved1: 0, reserved2: 0, reserved3: 0,
+                cb_size: std::mem::size_of::<AUDIOCLIENT_ACTIVATION_PARAMS>() as u32,
+                _pad: 0,
+                p_data: &mut ac_params as *mut _ as *mut u8,
+            };
 
             let _operation = ActivateAudioInterfaceAsync(
                 VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK,
                 &IAudioClient::IID,
-                Some(&pv),
+                Some(&raw_pv as *const _ as *const windows_core::PROPVARIANT),
                 &handler,
             )?;
 
