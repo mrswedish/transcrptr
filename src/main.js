@@ -289,6 +289,10 @@ async function initialize() {
   setupV11Handlers();
   updateFooter();
   refreshModelList();
+  // Visa systemljud-toggle bara på Windows (Application Loopback API)
+  if (navigator.userAgent.includes('Windows')) {
+    document.getElementById('loopback-section')?.classList.remove('hidden');
+  }
   await ensureModelReady();
 }
 

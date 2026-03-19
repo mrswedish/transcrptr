@@ -46,7 +46,6 @@ fn to_mono(data: &[f32], channels: u16) -> Vec<f32> {
 // ─────────────────────────────────────────────────────────────────────────────
 pub struct AudioRecorder {
     mic_stream: Option<SendStream>,
-    loopback_stream: Option<SendStream>,
     /// Whether loopback actually started successfully on last recording
     pub loopback_active: bool,
     /// Final mixed buffer (used after stop)
@@ -63,7 +62,6 @@ impl AudioRecorder {
     pub fn new() -> Self {
         Self {
             mic_stream: None,
-            loopback_stream: None,
             loopback_active: false,
             recorded_samples: Arc::new(Mutex::new(Vec::new())),
             mic_samples: Arc::new(Mutex::new(Vec::new())),
@@ -164,7 +162,6 @@ impl AudioRecorder {
     pub fn stop_recording(&mut self) -> Vec<u8> {
         // Stop streams by dropping them
         self.mic_stream = None;
-        self.loopback_stream = None;
         #[cfg(target_os = "windows")]
         {
             if let Some(lb) = self.app_loopback.take() {
