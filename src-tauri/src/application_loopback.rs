@@ -1,5 +1,7 @@
 #![cfg(target_os = "windows")]
 
+extern crate windows_core;
+
 use std::sync::{Arc, Mutex};
 use windows::{
     core::*,

@@ -36,6 +36,7 @@ whisper-rs = { version = "0.15.1", features = ["metal"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 whisper-rs = { version = "0.15.1", features = ["vulkan"] }
+windows-core = "0.58"
 windows = { version = "0.58", features = [
     "Win32_Foundation",
     "Win32_Media_Audio",
