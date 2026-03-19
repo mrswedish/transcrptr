@@ -3,6 +3,7 @@
 extern crate windows_core;
 
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
 use windows::{
     core::*,
     Win32::Foundation::*,
@@ -10,13 +11,14 @@ use windows::{
     Win32::System::Com::*,
     Win32::System::Threading::*,
 };
-use std::sync::atomic::{AtomicBool, Ordering};
 
-// COM interfaces are MTA-safe when CoInitializeEx(COINIT_MULTITHREADED) is used.
-// We declare Send+Sync so Tauri state and thread::spawn work.
+// COM interfaces are MTA-safe (CoInitializeEx with COINIT_MULTITHREADED).
 unsafe impl Send for ApplicationLoopback {}
 unsafe impl Sync for ApplicationLoopback {}
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Completion handler for ActivateAudioInterfaceAsync
+// ─────────────────────────────────────────────────────────────────────────────
 #[implement(IActivateAudioInterfaceCompletionHandler)]
 struct Handler {
     audio_client: Arc<Mutex<Option<IAudioClient>>>,
@@ -30,16 +32,20 @@ impl Handler {
 }
 
 impl IActivateAudioInterfaceCompletionHandler_Impl for Handler_Impl {
-    fn ActivateCompleted(&self, activate_operation: Ref<IActivateAudioInterfaceAsyncOperation>) -> Result<()> {
-        let mut activate_result = HRESULT(0);
-        let mut activated_interface: Option<IUnknown> = None;
-
+    fn ActivateCompleted(
+        &self,
+        activate_operation: Option<&IActivateAudioInterfaceAsyncOperation>,
+    ) -> Result<()> {
         unsafe {
-            activate_operation.GetActivateResult(&mut activate_result, &mut activated_interface)?;
-            if activate_result.is_ok() {
-                if let Some(iface) = activated_interface {
-                    let client: IAudioClient = iface.cast()?;
-                    *self.audio_client.lock().unwrap() = Some(client);
+            if let Some(op) = activate_operation {
+                let mut activate_result = HRESULT(0);
+                let mut activated_interface: Option<IUnknown> = None;
+                op.GetActivateResult(&mut activate_result, &mut activated_interface)?;
+                if activate_result.is_ok() {
+                    if let Some(iface) = activated_interface {
+                        let client: IAudioClient = iface.cast()?;
+                        *self.audio_client.lock().unwrap() = Some(client);
+                    }
                 }
             }
             SetEvent(self.event)?;
@@ -48,6 +54,29 @@ impl IActivateAudioInterfaceCompletionHandler_Impl for Handler_Impl {
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Build a VT_BLOB PROPVARIANT pointing to AUDIOCLIENT_ACTIVATION_PARAMS.
+// The struct must outlive the PROPVARIANT pointer.
+// ─────────────────────────────────────────────────────────────────────────────
+unsafe fn make_blob_propvariant(
+    params: &mut AUDIOCLIENT_ACTIVATION_PARAMS,
+) -> windows_core::PROPVARIANT {
+    const VT_BLOB: u16 = 65; // 0x41
+    let mut pv: windows_core::PROPVARIANT = std::mem::zeroed();
+    // PROPVARIANT is repr(transparent) over imp::PROPVARIANT — cast is safe.
+    let inner = &mut *((&mut pv) as *mut windows_core::PROPVARIANT
+        as *mut windows_core::imp::PROPVARIANT);
+    inner.Anonymous.Anonymous.vt = windows_core::imp::VARENUM(VT_BLOB as i32);
+    inner.Anonymous.Anonymous.Anonymous.blob.cbSize =
+        std::mem::size_of::<AUDIOCLIENT_ACTIVATION_PARAMS>() as u32;
+    inner.Anonymous.Anonymous.Anonymous.blob.pBlobData =
+        params as *mut _ as *mut u8;
+    pv
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ApplicationLoopback
+// ─────────────────────────────────────────────────────────────────────────────
 pub struct ApplicationLoopback {
     audio_client: Option<IAudioClient>,
     capture_client: Option<IAudioCaptureClient>,
@@ -57,21 +86,22 @@ pub struct ApplicationLoopback {
 }
 
 impl ApplicationLoopback {
+    /// `exclude_pid`: PID to exclude from loopback (None = exclude self, i.e. capture everything else).
     pub fn new(exclude_pid: Option<u32>) -> Result<Self> {
         unsafe {
             CoInitializeEx(None, COINIT_MULTITHREADED).ok()?;
 
-            let audio_client_shared = Arc::new(Mutex::new(None));
-            let completion_event = CreateEventW(None, true, false, None)?;
+            let audio_client_shared: Arc<Mutex<Option<IAudioClient>>> =
+                Arc::new(Mutex::new(None));
+            let completion_event = CreateEventW(None, true, false, PCWSTR::null())?;
 
             let handler: IActivateAudioInterfaceCompletionHandler = Handler::new(
                 Arc::clone(&audio_client_shared),
                 completion_event,
             ).into();
 
-            // Set up activation params for Application Loopback API
-            // (Windows 10 build 20348+ / Windows 11)
-            let mut params = AUDIOCLIENT_ACTIVATION_PARAMS {
+            // Build AUDIOCLIENT_ACTIVATION_PARAMS for process loopback
+            let mut ac_params = AUDIOCLIENT_ACTIVATION_PARAMS {
                 ActivationType: AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK,
                 Anonymous: AUDIOCLIENT_ACTIVATION_PARAMS_0 {
                     ProcessLoopbackParams: AUDIOCLIENT_PROCESS_LOOPBACK_PARAMS {
@@ -81,14 +111,17 @@ impl ApplicationLoopback {
                 },
             };
 
+            // Wrap in VT_BLOB PROPVARIANT
+            let pv = make_blob_propvariant(&mut ac_params);
+
             let _operation = ActivateAudioInterfaceAsync(
                 VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK,
                 &IAudioClient::IID,
-                Some(&mut params as *mut _ as *mut _),
+                Some(&pv),
                 &handler,
             )?;
 
-            // Wait for async activation (timeout 2s)
+            // Wait for async activation (2 s timeout)
             let wait_res = WaitForSingleObject(completion_event, 2000);
             let _ = CloseHandle(completion_event);
 
@@ -96,14 +129,18 @@ impl ApplicationLoopback {
                 return Err(Error::from_win32());
             }
 
-            let audio_client = audio_client_shared.lock().unwrap().take()
-                .ok_or_else(|| Error::from_win32())?;
+            let audio_client = audio_client_shared
+                .lock()
+                .unwrap()
+                .take()
+                .ok_or_else(Error::from_win32)?;
 
-            // Get mix format
+            // Get the mix format
             let mut format_ptr: *mut WAVEFORMATEX = std::ptr::null_mut();
             audio_client.GetMixFormat(&mut format_ptr)?;
             let format = *format_ptr;
 
+            // Initialize in shared loopback mode with event-driven buffering
             audio_client.Initialize(
                 AUDCLNT_SHAREMODE_SHARED,
                 AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
@@ -113,7 +150,7 @@ impl ApplicationLoopback {
                 None,
             )?;
 
-            let buffer_event = CreateEventW(None, false, false, None)?;
+            let buffer_event = CreateEventW(None, false, false, PCWSTR::null())?;
             audio_client.SetEventHandle(buffer_event)?;
 
             let capture_client: IAudioCaptureClient = audio_client.GetService()?;
@@ -159,7 +196,6 @@ impl ApplicationLoopback {
                 Some(c) => c,
                 None => return all_samples,
             };
-
             loop {
                 let mut data: *mut u8 = std::ptr::null_mut();
                 let mut frames_available: u32 = 0;
@@ -194,9 +230,7 @@ impl ApplicationLoopback {
     }
 
     pub fn wait_for_buffer(&self, timeout_ms: u32) -> bool {
-        unsafe {
-            WaitForSingleObject(self.buffer_event, timeout_ms) == WAIT_OBJECT_0
-        }
+        unsafe { WaitForSingleObject(self.buffer_event, timeout_ms) == WAIT_OBJECT_0 }
     }
 
     pub fn get_sample_rate(&self) -> u32 {
