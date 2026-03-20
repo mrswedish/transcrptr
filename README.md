@@ -15,7 +15,7 @@ Transcrptr använder [KB-whisper](https://huggingface.co/KBLab/kb-whisper-small)
 ## ✨ Funktioner
 - **🔒 Integritet:** Ditt ljud stannar på din dator. Inget skickas till externa servrar. [Integritetspolicy](PRIVACY.md)
 - **⚡ Hårdvaruaccelererad:** Vulkan utnyttjar din GPU för snabbare transkribering.
-- **🎙️ Mötesinspelning (Windows):** Spela in både mikrofon och datorljud från t.ex. Teams/Zoom — via Application Loopback API eller Stereo Mix (se guide nedan).
+- **🎙️ Mötesinspelning (Windows):** Spela in både mikrofon och datorljud från t.ex. Teams/Zoom — via WASAPI Endpoint Loopback (fungerar från Windows 7) eller Stereo Mix (se guide nedan).
 - **⏸️ Pausa inspelning:** Pausa och återuppta. Varje del tidsstämplas automatiskt.
 - **🔄 Gör om transkribering:** Byt modell och kör om utan att spela in på nytt.
 - **✏️ Redigera transkribering:** Redigera, sök och ersätt direkt i appen (Ctrl+F).
@@ -70,10 +70,10 @@ OpenAIs officiella large-v3-turbo-modell från [ggerganov/whisper.cpp](https://h
 
 Det finns två sätt att spela in både mikrofon och datorns systemljud (Teams, Zoom, Spotify m.fl.):
 
-| | **Spela in systemljud** *(Application Loopback)* | **Stereo Mix** *(Windows-funktion)* |
+| | **Spela in systemljud** *(WASAPI Loopback)* | **Stereo Mix** *(Windows-funktion)* |
 |---|---|---|
 | **Kräver inställning** | Nej | Ja (engångsinställning) |
-| **Windows-version** | Windows 10 build 20348+ / Windows 11 | Alla versioner |
+| **Windows-version** | Windows 7+ | Alla versioner |
 | **Pausa inspelning** | Ja | Ja |
 | **Välj mikrofon i appen** | Ja | Nej (styrs av Windows) |
 | **Systemljud** | Ja | Ja |
@@ -81,14 +81,17 @@ Det finns två sätt att spela in både mikrofon och datorns systemljud (Teams, 
 
 ### Alternativ 1: Spela in systemljud (rekommenderas)
 
-Aktivera **"Spela in systemljud"** i inställningarna (⚙️). Transcrptr använder Microsofts **Application Loopback API** för att fånga datorns systemljud digitalt — utan att gå via hårdvara eller externa drivrutiner. Ljudet mixas automatiskt med den mikrofon du valt i listan.
+Aktivera **"Spela in systemljud"** i inställningarna (⚙️). Transcrptr använder **klassisk WASAPI Endpoint Loopback** för att fånga datorns systemljud digitalt — oberoende av hårdvara och drivrutiner.
 
-**Hur det fungerar:** API:et fångar systemljud från alla andra appar (Teams, Zoom, webbläsaren m.fl.) och utesluter Transcrptr självt. Allt sker helt digitalt och oberoende av vilket ljudkort du har.
+**Hur det fungerar:** Transcrptr lyssnar automatiskt på Windows standardljudenhet (t.ex. hörlurar eller högtalare) **och** på kommunikationsenheten (den enhet Teams, Zoom m.fl. använder). Om de är olika enheter — t.ex. Jabra Speak för möten men inbyggda högtalare för övrigt — fångas båda och mixas automatiskt. Under inspelning visas en <span style="color:red">●</span> röd pulserande punkt i inspelningsindikatorn som bekräftar att systemljudet spelas in.
 
 > [!NOTE]
-> Kräver Windows 10 (build 20348 / version 21H2) eller Windows 11. Kontrollera din version i `Inställningar → System → Om`.
+> Fungerar från Windows 7 och uppåt — inget behov av en specifik Windows-version.
 
-### Alternativ 2: Stereo Mix (för äldre Windows-versioner)
+> [!IMPORTANT]
+> Starta alltid mötet och se till att ljud spelas **innan** du trycker Spela in i Transcrptr. Om du använder en separat USB-enhet (t.ex. Jabra) för möten — se till att den är vald som kommunikationsenhet i Windows ljudinställningar.
+
+### Alternativ 2: Stereo Mix (alternativ metod)
 
 Stereo Mix är en virtuell Windows-enhet som fångar allt systemljud och mixar det med valfri mikrofon. Kräver en engångsinställning i Windows.
 
@@ -103,7 +106,7 @@ Stereo Mix är en virtuell Windows-enhet som fångar allt systemljud och mixar d
 > Starta alltid mötet och se till att ljud spelas **innan** du trycker Spela in i Transcrptr.
 
 > [!NOTE]
-> Syns inte Stereo Mix? Din dators ljudkort saknar stöd för det. Använd WASAPI-alternativet istället.
+> Syns inte Stereo Mix? Din dators ljudkort saknar stöd för det. Använd "Spela in systemljud" istället.
 
 ## 📥 Ladda ner och installera (Windows)
 
