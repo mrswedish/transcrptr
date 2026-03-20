@@ -47,14 +47,12 @@
         min-height: 8%;
         border-radius: 2px;
       }
-      @keyframes lb-pulse {
-        0%, 100% { height: 20%; }
-        50%       { height: 90%; }
+      @keyframes lb-glow {
+        0%, 100% { opacity: 0.35; transform: scale(1); }
+        50%       { opacity: 1;    transform: scale(1.25); }
       }
-      .lb-col {
-        min-height: 20%;
-        animation: lb-pulse 900ms ease-in-out infinite;
-        animation-delay: var(--d, 0ms);
+      .lb-dot {
+        animation: lb-glow 1.4s ease-in-out infinite;
       }
       /* Segment editor */
       #segment-editor { min-height: 100%; }
@@ -167,16 +165,9 @@
           <div class="eq-col w-[5px] bg-primary" style="height:25%"></div>
         </div>
 
-        <!-- Loopback indicator — pulsing EQ bar shown when system audio is active -->
-        <div id="loopback-indicator" class="hidden items-end gap-[3px] h-5 shrink-0">
-          <div class="lb-col w-[5px] bg-primary/60 rounded-sm" style="--d:0ms"></div>
-          <div class="lb-col w-[5px] bg-primary/60 rounded-sm" style="--d:120ms"></div>
-          <div class="lb-col w-[5px] bg-primary/60 rounded-sm" style="--d:240ms"></div>
-          <div class="lb-col w-[5px] bg-primary/60 rounded-sm" style="--d:360ms"></div>
-          <div class="lb-col w-[5px] bg-primary/60 rounded-sm" style="--d:240ms"></div>
-        </div>
-
-        <span id="recording-status-text" class="text-sm font-medium text-slate-600 dark:text-slate-300">Spelar in</span>
+        <span id="recording-status-text" class="text-sm font-medium text-slate-600 dark:text-slate-300 flex items-center gap-1.5">Spelar in
+          <span id="loopback-indicator" class="hidden lb-dot w-2 h-2 rounded-full bg-red-500 inline-block"></span>
+        </span>
 
         <div class="flex-1"></div>
 
