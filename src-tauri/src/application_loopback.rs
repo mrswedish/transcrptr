@@ -72,10 +72,13 @@ impl ApplicationLoopback {
             let channels = fmt.nChannels;
             let sample_rate = fmt.nSamplesPerSec;
             let sample_format = detect_format(fmt);
+            // Copy packed fields to locals to avoid misaligned reference UB
+            let fmt_tag = fmt.wFormatTag;
+            let fmt_bits = fmt.wBitsPerSample;
 
             eprintln!(
                 "[loopback] Endpoint loopback: {}ch @ {} Hz, {:?} (wFormatTag={:#06x}, bits={})",
-                channels, sample_rate, sample_format, fmt.wFormatTag, fmt.wBitsPerSample
+                channels, sample_rate, sample_format, fmt_tag, fmt_bits
             );
 
             // 5. Initialize in shared loopback mode with event-driven buffering
@@ -208,7 +211,9 @@ unsafe fn detect_format(fmt: &WAVEFORMATEX) -> SampleFormat {
         WAVE_FORMAT_EXTENSIBLE => {
             // Cast to WAVEFORMATEXTENSIBLE to read SubFormat
             let ext = &*(fmt as *const WAVEFORMATEX as *const WAVEFORMATEXTENSIBLE);
-            if ext.SubFormat == SUBFMT_IEEE_FLOAT {
+            // Copy packed field to local to avoid misaligned reference UB
+            let sub_format = std::ptr::read_unaligned(std::ptr::addr_of!(ext.SubFormat));
+            if sub_format == SUBFMT_IEEE_FLOAT {
                 SampleFormat::Float32
             } else {
                 // PCM subformat — use wBitsPerSample
