@@ -882,6 +882,7 @@ function getRecordedPartsLabel() {
 
 async function startRecording() {
   try {
+    let recordingStatusMsg = "Spelar in...";
     if (wasapiEnabled) {
       // Hybrid mode: browser records mic (reliable), Rust backend records loopback only.
       // Both are decoded and mixed in JS at stop time.
@@ -925,9 +926,9 @@ async function startRecording() {
       drawVisualizer();
       startRecordingMetrics();
 
-      if (!result.loopback_active && recordingStatusText) {
-        recordingStatusText.textContent = "Spelar in (mikrofon — systemljud ej tillgängligt)";
-      }
+      recordingStatusMsg = result.loopback_active
+        ? "Spelar in (mikrofon + systemljud)"
+        : "Spelar in (mikrofon — systemljud ej tillgängligt)";
     } else {
       // For "default", use the actual firstMicDeviceId if we found one,
       // because Tauri/WebView2 on Windows doesn't reliably handle implicit default
@@ -977,7 +978,7 @@ async function startRecording() {
     btnRecord.classList.add("recording");
     btnRecord.querySelector(".btn-text").textContent = "Stoppa";
     recordingIndicator.classList.remove("hidden");
-    if (recordingStatusText) recordingStatusText.textContent = "Spelar in...";
+    if (recordingStatusText) recordingStatusText.textContent = recordingStatusMsg;
     if (btnPause) {
       if (!wasapiEnabled) {
         btnPause.classList.remove("hidden");
