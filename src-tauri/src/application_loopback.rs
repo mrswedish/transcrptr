@@ -51,7 +51,44 @@ pub struct ApplicationLoopback {
 impl ApplicationLoopback {
     /// Caller must have called `CoInitializeEx(COINIT_MULTITHREADED)` on the
     /// current thread before calling `new()`.
-    pub fn new(_device_id: Option<&str>) -> Result<Self> {
+    /// Returns true if eConsole and eCommunications point to the same render device.
+    /// Call from a thread that has COM initialized (MTA or STA).
+    pub fn is_same_device() -> bool {
+        unsafe {
+            let enumerator: IMMDeviceEnumerator = match CoCreateInstance(
+                &CLSID_MMDEVICE_ENUMERATOR,
+                None::<&IUnknown>,
+                CLSCTX_ALL,
+            ) {
+                Ok(e) => e,
+                Err(_) => return true, // safe fallback: assume same device
+            };
+            let dev_console = match enumerator.GetDefaultAudioEndpoint(eRender, eConsole) {
+                Ok(d) => d,
+                Err(_) => return true,
+            };
+            let dev_comms = match enumerator.GetDefaultAudioEndpoint(eRender, eCommunications) {
+                Ok(d) => d,
+                Err(_) => return true,
+            };
+            let id_console = match dev_console.GetId() {
+                Ok(id) => id,
+                Err(_) => return true,
+            };
+            let id_comms = match dev_comms.GetId() {
+                Ok(id) => id,
+                Err(_) => return true,
+            };
+            // Compare null-terminated UTF-16 strings
+            let console_str = pwstr_to_string(id_console);
+            let comms_str = pwstr_to_string(id_comms);
+            CoTaskMemFree(Some(id_console.0 as *const std::ffi::c_void));
+            CoTaskMemFree(Some(id_comms.0 as *const std::ffi::c_void));
+            console_str == comms_str
+        }
+    }
+
+    pub fn new(role: ERole) -> Result<Self> {
         unsafe {
             // 1. Create device enumerator
             let enumerator: IMMDeviceEnumerator = CoCreateInstance(
@@ -60,8 +97,8 @@ impl ApplicationLoopback {
                 CLSCTX_ALL,
             )?;
 
-            // 2. Get default render endpoint (headset / speakers)
-            let device = enumerator.GetDefaultAudioEndpoint(eRender, eConsole)?;
+            // 2. Get default render endpoint for the requested role
+            let device = enumerator.GetDefaultAudioEndpoint(eRender, role)?;
 
             // 3. Activate IAudioClient from render device
             let audio_client: IAudioClient = device.Activate(CLSCTX_ALL, None)?;
@@ -256,4 +293,15 @@ unsafe fn convert_to_f32(data: *const u8, n: usize, fmt: SampleFormat) -> Vec<f3
             .map(|&s| s as f32 / 2_147_483_648.0)
             .collect(),
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Read a null-terminated UTF-16 PWSTR into a Rust String.
+// ─────────────────────────────────────────────────────────────────────────────
+unsafe fn pwstr_to_string(p: windows::core::PWSTR) -> String {
+    if p.is_null() {
+        return String::new();
+    }
+    let len = (0usize..).take_while(|&i| *p.0.add(i) != 0).count();
+    String::from_utf16_lossy(std::slice::from_raw_parts(p.0, len))
 }
