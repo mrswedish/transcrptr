@@ -2104,6 +2104,15 @@ btnPlayPause && btnPlayPause.addEventListener("click", () => {
 });
 
 // -------------------------------------------------------------
+// Systemljud-toggle — uppdatera direkt utan spara-krav
+// -------------------------------------------------------------
+const wasapiToggleEl = document.getElementById("wasapi-toggle");
+wasapiToggleEl && wasapiToggleEl.addEventListener("change", () => {
+  wasapiEnabled = wasapiToggleEl.checked;
+  localStorage.setItem("wasapiEnabled", wasapiEnabled.toString());
+});
+
+// -------------------------------------------------------------
 // Maskera PII — manuell knapp
 // -------------------------------------------------------------
 const btnMaskPii = document.getElementById("btn-mask-pii");
