@@ -54,8 +54,9 @@ pub struct AudioRecorder {
     mic_samples: Arc<Mutex<Vec<f32>>>,
     /// Separate loopback buffer (accumulated during recording)
     loopback_samples: Arc<Mutex<Vec<f32>>>,
+    /// Stop signal for the dedicated loopback thread (Windows only)
     #[cfg(target_os = "windows")]
-    app_loopback: Option<Arc<crate::application_loopback::ApplicationLoopback>>,
+    loopback_stop: Option<Arc<std::sync::atomic::AtomicBool>>,
 }
 
 impl AudioRecorder {
@@ -67,7 +68,7 @@ impl AudioRecorder {
             mic_samples: Arc::new(Mutex::new(Vec::new())),
             loopback_samples: Arc::new(Mutex::new(Vec::new())),
             #[cfg(target_os = "windows")]
-            app_loopback: None,
+            loopback_stop: None,
         }
     }
 
@@ -113,45 +114,70 @@ impl AudioRecorder {
         }
 
         // ── 2. Windows Application Loopback (New API) ────────────────────────
+        // Runs on a dedicated std::thread with its own MTA COM apartment.
+        // ActivateAudioInterfaceAsync requires MTA — Tauri's tokio threads may
+        // have STA COM already initialized, which would silently fail loopback.
         #[cfg(target_os = "windows")]
         {
-            match crate::application_loopback::ApplicationLoopback::new(None) {
-                Err(e) => {
-                    eprintln!("[audio] Application Loopback init failed: {e}");
-                    self.loopback_active = false;
+            use std::sync::atomic::{AtomicBool, Ordering};
+            use std::sync::mpsc;
+            use std::time::Duration;
+
+            let lb_buf = Arc::clone(&self.loopback_samples);
+            let stop = Arc::new(AtomicBool::new(false));
+            let stop_clone = Arc::clone(&stop);
+            let (tx, rx) = mpsc::channel::<bool>();
+
+            std::thread::spawn(move || {
+                // Initialize COM as MTA on this dedicated fresh thread.
+                unsafe {
+                    let _ = windows::Win32::System::Com::CoInitializeEx(
+                        None,
+                        windows::Win32::System::Com::COINIT_MULTITHREADED,
+                    );
                 }
-                Ok(lb) => {
-                    if let Err(e) = lb.start() {
-                        eprintln!("[audio] Application Loopback start failed: {e}");
-                        self.loopback_active = false;
-                    } else {
+
+                match crate::application_loopback::ApplicationLoopback::new(None) {
+                    Err(e) => {
+                        eprintln!("[audio] Application Loopback init failed: {e}");
+                        let _ = tx.send(false);
+                    }
+                    Ok(lb) => {
+                        if let Err(e) = lb.start() {
+                            eprintln!("[audio] Application Loopback start failed: {e}");
+                            let _ = tx.send(false);
+                            return;
+                        }
                         let lb_rate = lb.get_sample_rate();
                         let lb_channels = lb.get_channels();
-                        eprintln!("[audio] Application Loopback: {lb_channels}ch @ {lb_rate} Hz (Exclusion mode)");
+                        eprintln!("[audio] Application Loopback active: {lb_channels}ch @ {lb_rate} Hz");
+                        let _ = tx.send(true);
 
-                        let lb_arc = Arc::new(lb);
-                        self.app_loopback = Some(Arc::clone(&lb_arc));
-                        self.loopback_active = true;
-
-                        let lb_buf = Arc::clone(&self.loopback_samples);
-                        std::thread::spawn(move || {
-                            // Poll loop
-                            while lb_arc.is_active() && lb_arc.wait_for_buffer(500) {
-                                let samples = lb_arc.read_samples();
-                                if samples.is_empty() { continue; }
-                                
-                                let mono = to_mono(&samples, lb_channels);
-                                let resampled = resample_to_16k(&mono, lb_rate);
-                                
-                                if let Ok(mut buf) = lb_buf.lock() {
-                                    buf.extend_from_slice(&resampled);
-                                } else {
-                                    break; // Recorder might be dropped
-                                }
+                        while !stop_clone.load(Ordering::SeqCst) {
+                            if !lb.wait_for_buffer(200) { continue; }
+                            let samples = lb.read_samples();
+                            if samples.is_empty() { continue; }
+                            let mono = to_mono(&samples, lb_channels);
+                            let resampled = resample_to_16k(&mono, lb_rate);
+                            if let Ok(mut buf) = lb_buf.lock() {
+                                buf.extend_from_slice(&resampled);
+                            } else {
+                                break;
                             }
-                            eprintln!("[audio] Application Loopback polling thread exited");
-                        });
+                        }
+                        eprintln!("[audio] Application Loopback thread exited");
                     }
+                }
+            });
+
+            match rx.recv_timeout(Duration::from_secs(3)) {
+                Ok(true) => {
+                    self.loopback_active = true;
+                    self.loopback_stop = Some(stop);
+                }
+                _ => {
+                    eprintln!("[audio] Application Loopback unavailable");
+                    self.loopback_active = false;
                 }
             }
         }
@@ -164,9 +190,11 @@ impl AudioRecorder {
         self.mic_stream = None;
         #[cfg(target_os = "windows")]
         {
-            if let Some(lb) = self.app_loopback.take() {
-                let _ = lb.stop();
+            if let Some(stop) = self.loopback_stop.take() {
+                stop.store(true, std::sync::atomic::Ordering::SeqCst);
             }
+            // Give the loopback thread ~250 ms to flush its last buffer
+            std::thread::sleep(std::time::Duration::from_millis(250));
         }
 
         let mic = self.mic_samples.lock().unwrap();

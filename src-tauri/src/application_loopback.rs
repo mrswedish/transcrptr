@@ -85,7 +85,7 @@ impl ApplicationLoopback {
     /// `exclude_pid`: PID to exclude from loopback (None = exclude self, i.e. capture everything else).
     pub fn new(exclude_pid: Option<u32>) -> Result<Self> {
         unsafe {
-            CoInitializeEx(None, COINIT_MULTITHREADED).ok()?;
+            // COM must already be initialized as MTA by the calling thread.
 
             let audio_client_shared: Arc<Mutex<Option<IAudioClient>>> =
                 Arc::new(Mutex::new(None));
