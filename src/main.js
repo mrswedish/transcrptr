@@ -929,6 +929,11 @@ async function startRecording() {
       recordingStatusMsg = result.loopback_active
         ? "Spelar in (mikrofon + systemljud)"
         : "Spelar in (mikrofon — systemljud ej tillgängligt)";
+      const loopbackIndicator = document.getElementById("loopback-indicator");
+      if (loopbackIndicator) {
+        if (result.loopback_active) loopbackIndicator.classList.remove("hidden");
+        else loopbackIndicator.classList.add("hidden");
+      }
     } else {
       // For "default", use the actual firstMicDeviceId if we found one,
       // because Tauri/WebView2 on Windows doesn't reliably handle implicit default
@@ -1076,6 +1081,7 @@ async function stopSession() {
     const btnText = btnRecord.querySelector(".btn-text");
     if (btnText) btnText.textContent = "Spela in";
     recordingIndicator.classList.add("hidden");
+    document.getElementById("loopback-indicator")?.classList.add("hidden");
     btnPause.classList.add("hidden");
     disableControls();
 
@@ -1216,6 +1222,7 @@ async function stopSession() {
   const btnText = btnRecord.querySelector(".btn-text");
   if (btnText) btnText.textContent = "Spela in";
   recordingIndicator.classList.add("hidden");
+  document.getElementById("loopback-indicator")?.classList.add("hidden");
   btnPause.classList.add("hidden");
   if (recordingStatusText) {
     recordingStatusText.textContent = "Spelar in";

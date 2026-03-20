@@ -47,6 +47,15 @@
         min-height: 8%;
         border-radius: 2px;
       }
+      @keyframes lb-pulse {
+        0%, 100% { height: 20%; }
+        50%       { height: 90%; }
+      }
+      .lb-col {
+        min-height: 20%;
+        animation: lb-pulse 900ms ease-in-out infinite;
+        animation-delay: var(--d, 0ms);
+      }
       /* Segment editor */
       #segment-editor { min-height: 100%; }
       .segment-row {
@@ -147,7 +156,7 @@
       <!-- Recording status row — hidden when not recording -->
       <div id="recording-indicator" class="hidden mt-3 flex items-center gap-2.5">
 
-        <!-- EQ-bar audio level visualiser -->
+        <!-- EQ-bar audio level visualiser (mic) -->
         <div id="eq-bar" class="flex items-end gap-[3px] h-5 shrink-0">
           <div class="eq-col w-[5px] bg-primary" style="height:25%"></div>
           <div class="eq-col w-[5px] bg-primary" style="height:45%"></div>
@@ -156,6 +165,15 @@
           <div class="eq-col w-[5px] bg-primary" style="height:75%"></div>
           <div class="eq-col w-[5px] bg-primary" style="height:45%"></div>
           <div class="eq-col w-[5px] bg-primary" style="height:25%"></div>
+        </div>
+
+        <!-- Loopback indicator — pulsing EQ bar shown when system audio is active -->
+        <div id="loopback-indicator" class="hidden items-end gap-[3px] h-5 shrink-0">
+          <div class="lb-col w-[5px] bg-primary/60 rounded-sm" style="--d:0ms"></div>
+          <div class="lb-col w-[5px] bg-primary/60 rounded-sm" style="--d:120ms"></div>
+          <div class="lb-col w-[5px] bg-primary/60 rounded-sm" style="--d:240ms"></div>
+          <div class="lb-col w-[5px] bg-primary/60 rounded-sm" style="--d:360ms"></div>
+          <div class="lb-col w-[5px] bg-primary/60 rounded-sm" style="--d:240ms"></div>
         </div>
 
         <span id="recording-status-text" class="text-sm font-medium text-slate-600 dark:text-slate-300">Spelar in</span>
