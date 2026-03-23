@@ -72,6 +72,20 @@ struct DiskInfo {
     models_dir_size: u64,
 }
 
+/// Strip whisper special tokens like <|nospeech|>, <|en|> etc. and replacement chars from text.
+fn clean_whisper_text(s: &str) -> String {
+    let mut result = s.to_string();
+    while let Some(start) = result.find("<|") {
+        if let Some(rel_end) = result[start..].find("|>") {
+            result.replace_range(start..start + rel_end + 2, "");
+        } else {
+            break;
+        }
+    }
+    result.retain(|c| c != '\u{FFFD}');
+    result.trim().to_string()
+}
+
 fn get_model_info(size: &str, quantized: bool, revision: &str) -> (String, String) {
     // Turbo: ggerganov/whisper.cpp large-v3-turbo — always q8_0, no revision
     if size == "turbo" {
@@ -434,9 +448,9 @@ async fn transcribe_audio(app_handle: AppHandle, state: tauri::State<'_, AppStat
             for i in 0..num_segments {
                 let segment_obj = transcriber_state.get_segment(i).ok_or("Failed to get segment")?;
                 let segment = segment_obj.to_str_lossy().map_err(|e| format!("Failed to get text: {}", e))?;
-                let trimmed = segment.trim();
+                let trimmed = clean_whisper_text(segment.as_ref());
                 if !trimmed.is_empty() {
-                    result.push_str(trimmed);
+                    result.push_str(&trimmed);
                     result.push('\n');
                 }
             }
@@ -547,7 +561,7 @@ async fn transcribe_audio_segments(app_handle: AppHandle, state: tauri::State<'_
             for i in 0..num_segs {
                 let seg = transcriber_state.get_segment(i).ok_or("Failed to get segment")?;
                 let text = seg.to_str_lossy().map_err(|e| format!("Failed to get text: {:?}", e))?;
-                let trimmed = text.trim().to_string();
+                let trimmed = clean_whisper_text(text.as_ref());
                 if trimmed.is_empty() { continue; }
                 // whisper.cpp timestamps are in centiseconds → convert to ms (* 10)
                 let t0 = seg.start_timestamp() * 10;
@@ -558,8 +572,8 @@ async fn transcribe_audio_segments(app_handle: AppHandle, state: tauri::State<'_
                     if let Some(tok) = seg.get_token(t) {
                         if let Ok(tok_text) = tok.to_str_lossy() {
                             let tok_str = tok_text.into_owned();
-                            // Skip whisper special tokens
-                            if tok_str.starts_with("[_") { continue; }
+                            // Skip whisper special tokens ([_BEG_], [_TT_*], <|nospeech|> etc.)
+                            if tok_str.starts_with("[_") || tok_str.starts_with("<|") { continue; }
                             let prob = tok.token_probability();
                             tokens.push(TokenInfo { text: tok_str, prob });
                         }

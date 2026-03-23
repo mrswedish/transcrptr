@@ -1566,27 +1566,46 @@ function buildPlainText() {
 function buildConfidenceView(seg) {
   const div = document.createElement("div");
   div.className = "segment-view";
-  if (seg.tokens && seg.tokens.length > 0) {
-    seg.tokens.forEach(tok => {
-      // Tokens starting with a space indicate word boundary
-      const hasLeadingSpace = tok.text.startsWith(" ");
-      if (hasLeadingSpace) div.appendChild(document.createTextNode(" "));
-      const word = tok.text.trimStart();
-      if (!word) return;
-      const span = document.createElement("span");
-      span.textContent = word;
-      if (tok.prob < confidenceThreshold * 0.6) {
-        span.className = "tok tok-very-low";
-        span.title = `Konfidenspoäng: ${Math.round(tok.prob * 100)}%`;
-      } else if (tok.prob < confidenceThreshold) {
-        span.className = "tok tok-low";
-        span.title = `Konfidenspoäng: ${Math.round(tok.prob * 100)}%`;
-      }
-      div.appendChild(span);
-    });
-  } else {
+
+  const tokens = seg.tokens || [];
+  const words = seg.text.trim().split(/\s+/).filter(Boolean);
+
+  if (tokens.length === 0 || words.length === 0) {
     div.textContent = seg.text;
+    return div;
   }
+
+  // Group tokens into word-groups: a new group starts when tok.text begins with " ".
+  // tok.text is used ONLY for word-boundary detection — not for display.
+  // Display text always comes from seg.text (correctly assembled UTF-8 from whisper).
+  const groups = [];
+  let cur = [];
+  for (const tok of tokens) {
+    if (tok.text.startsWith(" ") && cur.length > 0) {
+      groups.push(cur);
+      cur = [];
+    }
+    cur.push(tok);
+  }
+  if (cur.length > 0) groups.push(cur);
+
+  words.forEach((word, i) => {
+    if (i > 0) div.appendChild(document.createTextNode(" "));
+    const span = document.createElement("span");
+    span.textContent = word;
+    if (i < groups.length) {
+      const minProb = Math.min(...groups[i].map(t => t.prob));
+      if (minProb < confidenceThreshold * 0.6) {
+        span.className = "tok tok-very-low";
+        span.title = `Konfidenspoäng: ${Math.round(minProb * 100)}%`;
+      } else if (minProb < confidenceThreshold) {
+        span.className = "tok tok-low";
+        span.title = `Konfidenspoäng: ${Math.round(minProb * 100)}%`;
+      }
+    }
+    div.appendChild(span);
+  });
+
   return div;
 }
 
