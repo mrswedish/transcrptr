@@ -317,7 +317,7 @@ async fn get_disk_info(app_handle: AppHandle) -> Result<DiskInfo, String> {
 }
 
 #[tauri::command]
-async fn transcribe_audio(app_handle: AppHandle, state: tauri::State<'_, AppState>, audio_bytes: Vec<u8>, size: String, quantized: bool, revision: String, language: String, initial_prompt: Option<String>, context_prefix: Option<String>) -> Result<String, String> {
+async fn transcribe_audio(app_handle: AppHandle, state: tauri::State<'_, AppState>, audio_bytes: Vec<u8>, size: String, quantized: bool, revision: String, language: String, initial_prompt: Option<String>, context_prefix: Option<String>, use_gpu: Option<bool>) -> Result<String, String> {
     state.inner().cancel_flag.store(false, Ordering::Relaxed);
     let model_path = get_model_path(&app_handle, &size, quantized, &revision)?;
     if !model_path.exists() {
@@ -336,9 +336,11 @@ async fn transcribe_audio(app_handle: AppHandle, state: tauri::State<'_, AppStat
             eprintln!("[transcrptr] Transcribing {} bytes ({} samples, {:.1}s of audio, lang={})",
                 audio_len, num_samples, num_samples as f64 / 16000.0, language);
 
+            let mut ctx_params = WhisperContextParameters::default();
+            ctx_params.use_gpu = use_gpu.unwrap_or(true);
             let ctx = WhisperContext::new_with_params(
                 &model_path.to_string_lossy(),
-                WhisperContextParameters::default()
+                ctx_params
             ).map_err(|e| format!("Failed to load model: {}", e))?;
             
             let mut transcriber_state = ctx.create_state().map_err(|e| format!("Failed to create state: {}", e))?;
@@ -477,7 +479,7 @@ async fn transcribe_audio(app_handle: AppHandle, state: tauri::State<'_, AppStat
 }
 
 #[tauri::command]
-async fn transcribe_audio_segments(app_handle: AppHandle, state: tauri::State<'_, AppState>, audio_bytes: Vec<u8>, size: String, quantized: bool, revision: String, language: String, initial_prompt: Option<String>, context_prefix: Option<String>) -> Result<Vec<TranscriptSegment>, String> {
+async fn transcribe_audio_segments(app_handle: AppHandle, state: tauri::State<'_, AppState>, audio_bytes: Vec<u8>, size: String, quantized: bool, revision: String, language: String, initial_prompt: Option<String>, context_prefix: Option<String>, use_gpu: Option<bool>) -> Result<Vec<TranscriptSegment>, String> {
     state.inner().cancel_flag.store(false, Ordering::Relaxed);
     let model_path = get_model_path(&app_handle, &size, quantized, &revision)?;
     if !model_path.exists() {
@@ -492,9 +494,11 @@ async fn transcribe_audio_segments(app_handle: AppHandle, state: tauri::State<'_
             let num_samples = audio_len / std::mem::size_of::<f32>();
             eprintln!("[transcrptr] transcribe_audio_segments {} samples, lang={}", num_samples, language);
 
+            let mut ctx_params = WhisperContextParameters::default();
+            ctx_params.use_gpu = use_gpu.unwrap_or(true);
             let ctx = WhisperContext::new_with_params(
                 &model_path.to_string_lossy(),
-                WhisperContextParameters::default()
+                ctx_params
             ).map_err(|e| format!("Failed to load model: {}", e))?;
 
             let mut transcriber_state = ctx.create_state().map_err(|e| format!("Failed to create state: {}", e))?;

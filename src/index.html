@@ -329,7 +329,19 @@
           </select>
         </div>
 
-        <!-- Systemljud via Application Loopback API (Windows 10 build 20348+ / Windows 11) -->
+        <!-- GPU-acceleration (Vulkan, Windows only) -->
+        <div id="gpu-section" class="hidden flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl">
+          <div>
+            <p class="text-sm font-medium text-slate-700 dark:text-slate-300">GPU-acceleration</p>
+            <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5">Använder grafikkortet (Vulkan) för snabbare transkribering. Stäng av vid problem med äldre eller integrerade grafikkort.</p>
+          </div>
+          <label class="relative inline-flex items-center cursor-pointer ml-4 flex-shrink-0">
+            <input type="checkbox" id="gpu-toggle" class="sr-only peer" checked>
+            <div class="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+          </label>
+        </div>
+
+        <!-- Systemljud via WASAPI Endpoint Loopback (Windows) -->
         <div id="loopback-section" class="hidden flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl">
           <div>
             <p class="text-sm font-medium text-slate-700 dark:text-slate-300">Spela in systemljud</p>

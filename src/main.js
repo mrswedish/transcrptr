@@ -96,6 +96,7 @@ let currentPlaybackUrl = null;
 let audioPlayer = null;
 let selectedMicId = "default";
 let wasapiEnabled = false;
+let useGpu = true;
 let audioContext = null;
 let analyzer = null;
 let micStream = null;
@@ -124,6 +125,7 @@ function loadSettings() {
   const lang = localStorage.getItem("transcriptionLanguage");
   const micId = localStorage.getItem("selectedMicId");
   const wasapi = localStorage.getItem("wasapiEnabled");
+  const gpu = localStorage.getItem("useGpu");
   const vocab = localStorage.getItem("personalVocabulary");
   const autoMask = localStorage.getItem("autoMaskPii");
   const confThresh = localStorage.getItem("confidenceThreshold");
@@ -134,6 +136,7 @@ function loadSettings() {
   if (lang) transcriptionLanguage = lang;
   if (micId) selectedMicId = micId;
   if (wasapi !== null) wasapiEnabled = wasapi === "true";
+  if (gpu !== null) useGpu = gpu === "true";
   if (vocab) {
     try { personalVocabulary = JSON.parse(vocab); } catch { personalVocabulary = []; }
   }
@@ -142,6 +145,8 @@ function loadSettings() {
 
   const wasapiToggle = document.getElementById("wasapi-toggle");
   if (wasapiToggle) wasapiToggle.checked = wasapiEnabled;
+  const gpuToggle = document.getElementById("gpu-toggle");
+  if (gpuToggle) gpuToggle.checked = useGpu;
 
   const autoMaskToggle = document.getElementById("auto-mask-toggle");
   if (autoMaskToggle) autoMaskToggle.checked = autoMaskPii;
@@ -292,6 +297,7 @@ async function initialize() {
   // Visa systemljud-toggle bara på Windows (Application Loopback API)
   if (navigator.userAgent.includes('Windows')) {
     document.getElementById('loopback-section')?.classList.remove('hidden');
+    document.getElementById('gpu-section')?.classList.remove('hidden');
   }
   await ensureModelReady();
 }
@@ -1380,7 +1386,8 @@ async function transcribeBlob(blob, label, blobOffsetMs = 0) {
         revision: modelRevision,
         language: transcriptionLanguage,
         initialPrompt,
-        contextPrefix
+        contextPrefix,
+        useGpu
       });
       if (chunkSegs && chunkSegs.length > 0) {
         const adjusted = chunkSegs.map(s => ({
@@ -1513,7 +1520,8 @@ async function transcribeFloat32(rawFloat32Data) {
         revision: modelRevision,
         language: transcriptionLanguage,
         initialPrompt,
-        contextPrefix
+        contextPrefix,
+        useGpu
       });
       if (chunkSegs && chunkSegs.length > 0) {
         const adjusted = chunkSegs.map(s => ({
@@ -1900,7 +1908,8 @@ async function processAudioBlob(blob) {
           revision: modelRevision,
           language: transcriptionLanguage,
           initialPrompt,
-          contextPrefix
+          contextPrefix,
+          useGpu
         });
 
         if (chunkSegs && chunkSegs.length > 0) {
@@ -2137,6 +2146,12 @@ const wasapiToggleEl = document.getElementById("wasapi-toggle");
 wasapiToggleEl && wasapiToggleEl.addEventListener("change", () => {
   wasapiEnabled = wasapiToggleEl.checked;
   localStorage.setItem("wasapiEnabled", wasapiEnabled.toString());
+});
+
+const gpuToggleEl = document.getElementById("gpu-toggle");
+gpuToggleEl && gpuToggleEl.addEventListener("change", () => {
+  useGpu = gpuToggleEl.checked;
+  localStorage.setItem("useGpu", useGpu.toString());
 });
 
 // -------------------------------------------------------------
