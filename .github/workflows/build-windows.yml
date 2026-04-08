@@ -60,7 +60,7 @@ jobs:
           CMAKE_MSVC_RUNTIME_LIBRARY: MultiThreaded
         with:
           tagName: transcrptr-v__VERSION__
-          releaseName: 'Transcrptr v__VERSION__'
+          releaseName: 'Transkribera v__VERSION__'
           releaseBody: 'See the assets to download this version and install.'
           releaseDraft: false
           prerelease: ${{ contains(github.ref, '-beta') || contains(github.ref, '-alpha') }}
@@ -78,15 +78,15 @@ jobs:
           $targetPath = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { "src-tauri/target" }
           $exePaths = @(
             "$targetPath/release/tauri-app.exe",
-            "$targetPath/release/Transcrptr.exe",
+            "$targetPath/release/Transkribera.exe",
             "$targetPath/x86_64-pc-windows-msvc/release/tauri-app.exe",
-            "$targetPath/x86_64-pc-windows-msvc/release/Transcrptr.exe"
+            "$targetPath/x86_64-pc-windows-msvc/release/Transkribera.exe"
           )
           
           $found = $false
           foreach ($p in $exePaths) {
             if (Test-Path $p) {
-              Copy-Item -Path $p -Destination "Transcrptr-portable.exe"
+              Copy-Item -Path $p -Destination "Transkribera-portable.exe"
               $found = $true
               break
             }
@@ -113,7 +113,7 @@ jobs:
             if (Test-Path $dir) {
               $installer = Get-ChildItem -Path $dir -Filter $nsisPattern | Select-Object -First 1
               if ($installer) {
-                Copy-Item -Path $installer.FullName -Destination "Transcrptr_x64-setup.exe"
+                Copy-Item -Path $installer.FullName -Destination "Transkribera_x64-setup.exe"
                 Write-Host "Found NSIS installer: $($installer.FullName)"
                 $found = $true
                 break
@@ -130,6 +130,6 @@ jobs:
         with:
           tag_name: transcrptr-v${{ env.APP_VERSION }}
           files: |
-            Transcrptr-portable.exe
-            Transcrptr_x64-setup.exe
+            Transkribera-portable.exe
+            Transkribera_x64-setup.exe
           make_latest: true
