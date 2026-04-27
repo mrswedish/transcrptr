@@ -270,6 +270,25 @@
           class="absolute bottom-0 left-0 right-0 h-12 bg-gradient-to-t from-white/50 dark:from-slate-900/50 to-transparent pointer-events-none">
         </div>
 
+        <!-- Post-recording choice overlay -->
+        <div id="post-recording-actions"
+          class="hidden absolute inset-0 bg-white/92 dark:bg-slate-900/92 backdrop-blur-sm flex flex-col justify-center items-center z-10 rounded-3xl gap-5 px-8">
+          <span class="material-symbols-outlined text-4xl text-primary">mic_off</span>
+          <p class="text-slate-700 dark:text-slate-200 font-semibold text-center">Inspelningen är klar</p>
+          <div class="flex flex-col sm:flex-row gap-3 w-full max-w-xs">
+            <button id="btn-start-transcription"
+              class="flex-1 flex items-center justify-center gap-2 px-5 py-3 bg-primary hover:bg-teal-500 text-white font-semibold rounded-2xl transition-colors shadow-sm">
+              <span class="material-symbols-outlined text-base">transcribe</span>
+              <span>Transkribera</span>
+            </button>
+            <button id="btn-save-audio-only"
+              class="flex-1 flex items-center justify-center gap-2 px-5 py-3 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold rounded-2xl transition-colors">
+              <span class="material-symbols-outlined text-base">audio_file</span>
+              <span>Spara inspelning</span>
+            </button>
+          </div>
+        </div>
+
         <!-- Loading overlay -->
         <div id="loading-overlay"
           class="hidden absolute inset-0 bg-white/80 dark:bg-slate-900/80 backdrop-blur-sm flex flex-col justify-center items-center z-10 rounded-3xl">

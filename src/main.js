@@ -97,6 +97,7 @@ let audioPlayer = null;
 let selectedMicId = "default";
 let wasapiEnabled = false;
 let useGpu = true;
+let pendingRecording = null; // { type:'float32', data:Float32Array } | { type:'segments', segments:[] }
 let audioContext = null;
 let analyzer = null;
 let micStream = null;
@@ -887,6 +888,11 @@ function getRecordedPartsLabel() {
 }
 
 async function startRecording() {
+  // Discard any pending post-recording choice if user starts a new recording
+  if (pendingRecording) {
+    pendingRecording = null;
+    hidePostRecordingActions();
+  }
   try {
     let recordingStatusMsg = "Spelar in...";
     if (wasapiEnabled) {
@@ -1077,6 +1083,71 @@ function resumeSession() {
   btnPause.querySelector(".material-symbols-outlined").textContent = "pause";
 }
 
+function showPostRecordingActions() {
+  document.getElementById("post-recording-actions")?.classList.remove("hidden");
+}
+
+function hidePostRecordingActions() {
+  document.getElementById("post-recording-actions")?.classList.add("hidden");
+}
+
+async function saveRecordedAudio() {
+  try {
+    if (!lastRecordedSegments || lastRecordedSegments.length === 0) {
+      await message("Ingen inspelning att spara.", { title: "Fel", kind: "error" });
+      return;
+    }
+    const blobs = lastRecordedSegments.map(s => s.blob);
+    const combined = new Blob(blobs, { type: blobs[0].type });
+    const float32Data = await decodeAudioToFloat32(combined);
+    const wavBlob = float32ToPCM16WavBlob(float32Data, 16000);
+    const wavBytes = Array.from(new Uint8Array(await wavBlob.arrayBuffer()));
+    await invoke("save_audio_data", { audioData: wavBytes });
+  } catch (err) {
+    const msg = typeof err === "string" ? err : err.message || String(err);
+    if (!msg.includes("cancelled") && !msg.includes("canceled")) {
+      await message(`Kunde inte spara ljudfilen: ${msg}`, { title: "Fel", kind: "error" });
+    }
+  }
+}
+
+async function startPendingTranscription() {
+  if (!pendingRecording) return;
+  hidePostRecordingActions();
+  const rec = pendingRecording;
+  pendingRecording = null;
+
+  btnRedo.classList.remove("hidden"); btnRedo.style.display = "inline-flex";
+  if (btnSaveAudio) { btnSaveAudio.classList.remove("hidden"); btnSaveAudio.style.display = "inline-flex"; }
+
+  if (rec.type === "float32") {
+    disableControls();
+    loadingOverlay.classList.remove("hidden");
+    try {
+      transcriptSegments = [];
+      showRawView();
+      const text = await transcribeFloat32(rec.data);
+      if (!text || !text.trim()) outputText.value = "[Ingen text hittades i inspelningen]";
+      if (transcriptSegments.length > 0) {
+        renderSegmentEditor();
+        showSegmentView();
+        const btnSeg = document.getElementById("btn-segment-toggle");
+        if (btnSeg) { btnSeg.classList.remove("hidden"); btnSeg.style.display = "inline-flex"; }
+        setupPlayer(currentPlaybackBlob);
+      }
+    } finally {
+      loadingOverlay.classList.add("hidden");
+      enableControls();
+    }
+  } else if (rec.type === "segments") {
+    if (rec.segments.length > 1) {
+      await processSegments(rec.segments);
+    } else {
+      await processAudioBlob(rec.segments[0].blob);
+    }
+  }
+}
+
 async function stopSession() {
   if (wasapiEnabled) {
     isRecording = false;
@@ -1166,25 +1237,11 @@ async function stopSession() {
       // Store as PCM WAV blob so save-button can export it correctly
       const redoBlob = float32ToPCM16WavBlob(float32Data, 16000);
       lastRecordedSegments = [{ blob: redoBlob, startTime: new Date() }];
-      btnRedo.classList.remove("hidden");
-      btnRedo.style.display = "inline-flex";
-      if (btnSaveAudio) { btnSaveAudio.classList.remove("hidden"); btnSaveAudio.style.display = "inline-flex"; }
 
-      // Transcribe directly from Float32 — no WAV encode/decode roundtrip
-      transcriptSegments = [];
-      showRawView();
-      const text = await transcribeFloat32(float32Data);
-      if (!text || !text.trim()) {
-        outputText.value = "[Ingen text hittades i inspelningen]";
-      }
-      // Setup segment editor and player
-      if (transcriptSegments.length > 0) {
-        renderSegmentEditor();
-        showSegmentView();
-        const btnSeg = document.getElementById("btn-segment-toggle");
-        if (btnSeg) { btnSeg.classList.remove("hidden"); btnSeg.style.display = "inline-flex"; }
-        setupPlayer(currentPlaybackBlob);
-      }
+      // Let the user choose: transcribe now or just save the audio
+      pendingRecording = { type: "float32", data: float32Data };
+      loadingOverlay.classList.add("hidden");
+      showPostRecordingActions();
     } catch (err) {
       console.error("WASAPI stop error:", err);
       await message("Kunde inte hämta ljud: " + err, { title: 'Fel', kind: 'error' });
@@ -1242,19 +1299,11 @@ async function stopSession() {
     lastRecordedSegments = [...sessionSegments];
     const segments = [...sessionSegments];
     sessionSegments = [];
-    const multiSegment = segments.length > 1;
-    
-    btnRedo.classList.remove("hidden");
-    btnRedo.style.display = "inline-flex";
-    if (btnSaveAudio) { btnSaveAudio.classList.remove("hidden"); btnSaveAudio.style.display = "inline-flex"; }
 
-    if (multiSegment) {
-      // Multiple segments: process each with section headers
-      await processSegments(segments);
-    } else {
-      // Single segment (no pauses): process normally without headers
-      await processAudioBlob(segments[0].blob);
-    }
+    // Let the user choose: transcribe now or just save the audio
+    pendingRecording = { type: "segments", segments };
+    showPostRecordingActions();
+    enableControls();
   } else {
     enableControls();
   }
@@ -2086,25 +2135,7 @@ btnReplaceAll && btnReplaceAll.addEventListener("click", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 const btnSaveAudio = document.getElementById("btn-save-audio");
 
-btnSaveAudio && btnSaveAudio.addEventListener("click", async () => {
-  try {
-    if (!lastRecordedSegments || lastRecordedSegments.length === 0) {
-      await message("Ingen inspelning att spara.", { title: "Fel", kind: "error" });
-      return;
-    }
-    const blobs = lastRecordedSegments.map(s => s.blob);
-    const combined = new Blob(blobs, { type: blobs[0].type });
-    const float32Data = await decodeAudioToFloat32(combined);
-    const wavBlob = float32ToPCM16WavBlob(float32Data, 16000);
-    const wavBytes = Array.from(new Uint8Array(await wavBlob.arrayBuffer()));
-    await invoke("save_audio_data", { audioData: wavBytes });
-  } catch (err) {
-    const msg = typeof err === "string" ? err : err.message || String(err);
-    if (!msg.includes("cancelled") && !msg.includes("canceled")) {
-      await message(`Kunde inte spara ljudfilen: ${msg}`, { title: "Fel", kind: "error" });
-    }
-  }
-});
+btnSaveAudio && btnSaveAudio.addEventListener("click", () => saveRecordedAudio());
 
 // Show Save Audio button after recording completes (hooked into existing flow)
 // We patch the existing transcription end so the button shows
@@ -2142,6 +2173,16 @@ btnPlayPause && btnPlayPause.addEventListener("click", () => {
 // -------------------------------------------------------------
 // Systemljud-toggle — uppdatera direkt utan spara-krav
 // -------------------------------------------------------------
+// Post-recording action buttons
+document.getElementById("btn-start-transcription")?.addEventListener("click", () => startPendingTranscription());
+document.getElementById("btn-save-audio-only")?.addEventListener("click", async () => {
+  hidePostRecordingActions();
+  pendingRecording = null;
+  btnRedo.classList.remove("hidden"); btnRedo.style.display = "inline-flex";
+  if (btnSaveAudio) { btnSaveAudio.classList.remove("hidden"); btnSaveAudio.style.display = "inline-flex"; }
+  await saveRecordedAudio();
+});
+
 const wasapiToggleEl = document.getElementById("wasapi-toggle");
 wasapiToggleEl && wasapiToggleEl.addEventListener("change", () => {
   wasapiEnabled = wasapiToggleEl.checked;
