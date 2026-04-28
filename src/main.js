@@ -1845,13 +1845,13 @@ function normalizeAudio(float32Data) {
     const abs = Math.abs(float32Data[i]);
     if (abs > peak) peak = abs;
   }
-  if (peak < 0.001) return float32Data; // silence — skip
+  if (peak < 0.001) return float32Data;
   const scale = 0.95 / peak;
-  const normalized = new Float32Array(float32Data.length);
+  // Normalize in-place to avoid doubling the memory allocation for large files
   for (let i = 0; i < float32Data.length; i++) {
-    normalized[i] = float32Data[i] * scale;
+    float32Data[i] *= scale;
   }
-  return normalized;
+  return float32Data;
 }
 
 // Audio Processing and Transcription (chunked for large files)
@@ -1862,53 +1862,44 @@ const CHUNK_DURATION_SECONDS = 300; // 5 minutes
 const CHUNK_SAMPLES = 16000 * CHUNK_DURATION_SECONDS;
 
 // Decode an audio or video file to Float32Array at 16kHz.
-// First tries AudioContext.decodeAudioData (fast, works for MP3/WAV/OGG/MP4/WebM).
-// Falls back to HTMLVideoElement routing through AudioContext for other video formats.
+// Uses AudioContext.decodeAudioData (supports MP3/WAV/OGG/AAC/M4A/MP4/WebM).
 async function decodeFileToFloat32(blob) {
-  const decodeCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+  const fileSizeMB = blob.size / 1_048_576;
 
-  // Try direct decode first
+  // Reject files that are too large to safely load into memory on Windows.
+  // An uncompressed 2-hour stereo WAV can be 1+ GB and will silently crash WebView2.
+  if (blob.size > 400 * 1_048_576) {
+    throw new Error(
+      `Filen är för stor (${fileSizeMB.toFixed(0)} MB) för att läsas in i minnet. ` +
+      `Om det är en okomprimerad WAV-inspelning, konvertera den till M4A eller MP3 och försök igen.`
+    );
+  }
+
+  const decodeCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
   try {
     const arrayBuffer = await blob.arrayBuffer();
     const audioBuffer = await decodeCtx.decodeAudioData(arrayBuffer);
-    return normalizeAudio(audioBuffer.getChannelData(0));
-  } catch (directErr) {
-    console.warn("[decode] Direct decode failed, trying video element fallback:", directErr);
+    // .slice() copies data out of the AudioBuffer before closing the context
+    const data = audioBuffer.getChannelData(0).slice();
+    decodeCtx.close();
+    return normalizeAudio(data);
+  } catch (err) {
+    decodeCtx.close();
+    console.error("[decode] decodeAudioData misslyckades:", err);
+    throw new Error(
+      `Kunde inte avkoda ljudfilen (${fileSizeMB.toFixed(0)} MB). ` +
+      `Kontrollera att formatet stöds (WAV, MP3, M4A, OGG) och att filen inte är skadad.` +
+      (err?.message ? ` Detaljer: ${err.message}` : "")
+    );
   }
-
-  // Fallback: load via HTMLVideoElement and capture via MediaElementSource
-  return new Promise((resolve, reject) => {
-    const url = URL.createObjectURL(blob);
-    const video = document.createElement("video");
-    video.src = url;
-    video.preload = "auto";
-    video.muted = false;
-
-    video.addEventListener("error", () => {
-      URL.revokeObjectURL(url);
-      reject(new Error("Kunde inte avkoda filen. Format stöds ej."));
-    });
-
-    video.addEventListener("canplaythrough", async () => {
-      try {
-        const offlineCtx = new OfflineAudioContext(1, Math.ceil(video.duration * 16000), 16000);
-        const source = offlineCtx.createMediaElementSource(video);
-        source.connect(offlineCtx.destination);
-        video.play();
-        const renderedBuffer = await offlineCtx.startRendering();
-        URL.revokeObjectURL(url);
-        resolve(normalizeAudio(renderedBuffer.getChannelData(0)));
-      } catch (err) {
-        URL.revokeObjectURL(url);
-        reject(err);
-      }
-    });
-  });
 }
 
 async function processAudioBlob(blob) {
   try {
-    loadingText.innerText = "Bearbetar ljud...";
+    const fileSizeMB = blob.size / 1_048_576;
+    loadingText.innerText = fileSizeMB > 50
+      ? `Avkodar ljudfil (${fileSizeMB.toFixed(0)} MB)...`
+      : "Bearbetar ljud...";
     loadingOverlay.classList.remove("hidden");
     if (progressContainer) progressContainer.classList.add("hidden");
 

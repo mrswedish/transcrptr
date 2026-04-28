@@ -288,18 +288,21 @@ impl AudioRecorder {
         // Store in recorded_samples so save_audio_file can access it
         *self.recorded_samples.lock().unwrap() = mixed.clone();
 
-        // Convert to WAV bytes for the frontend
+        // Convert to 16-bit PCM WAV for the frontend.
+        // 16-bit is half the size of 32-bit float with no transcription quality loss
+        // (Whisper uses 16-bit internally). Smaller payload = less IPC pressure on Windows.
         let mut cursor = std::io::Cursor::new(Vec::new());
         let spec = hound::WavSpec {
             channels: 1,
             sample_rate: 16000,
-            bits_per_sample: 32,
-            sample_format: hound::SampleFormat::Float,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
         };
 
         if let Ok(mut writer) = hound::WavWriter::new(&mut cursor, spec) {
             for &s in &mixed {
-                let _ = writer.write_sample(s);
+                let pcm = (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
+                let _ = writer.write_sample(pcm);
             }
             let _ = writer.finalize();
         }
