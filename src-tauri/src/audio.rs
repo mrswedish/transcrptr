@@ -10,7 +10,7 @@ unsafe impl Sync for SendStream {}
 // ─────────────────────────────────────────────────────────────────────────────
 // Resampler: linear interpolation from any Hz to 16kHz (Whisper input rate).
 // ─────────────────────────────────────────────────────────────────────────────
-fn resample_to_16k(input: &[f32], src_rate: u32) -> Vec<f32> {
+pub fn resample_to_16k(input: &[f32], src_rate: u32) -> Vec<f32> {
     if src_rate == 16000 {
         return input.to_vec();
     }
@@ -30,7 +30,7 @@ fn resample_to_16k(input: &[f32], src_rate: u32) -> Vec<f32> {
 // ─────────────────────────────────────────────────────────────────────────────
 // Downmix interleaved multi-channel to mono.
 // ─────────────────────────────────────────────────────────────────────────────
-fn to_mono(data: &[f32], channels: u16) -> Vec<f32> {
+pub fn to_mono(data: &[f32], channels: u16) -> Vec<f32> {
     if channels == 1 {
         return data.to_vec();
     }

@@ -18,6 +18,80 @@ mod audio;
 mod application_loopback;
 use audio::AudioRecorder;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Decode an audio file from disk to 16 kHz mono f32 chunks using Symphonia.
+// Nothing is held in the JS heap — memory per chunk is ~19 MB regardless of
+// total file duration.
+// ─────────────────────────────────────────────────────────────────────────────
+fn decode_audio_to_f32_chunks(path: &str, chunk_samples: usize) -> Result<Vec<Vec<f32>>, String> {
+    use symphonia::core::{
+        audio::SampleBuffer,
+        codecs::{DecoderOptions, CODEC_TYPE_NULL},
+        errors::Error as SymphoniaError,
+        formats::FormatOptions,
+        io::MediaSourceStream,
+        meta::MetadataOptions,
+        probe::Hint,
+    };
+
+    let file = std::fs::File::open(path)
+        .map_err(|e| format!("Kunde inte öppna filen: {e}"))?;
+    let mss  = MediaSourceStream::new(Box::new(file), Default::default());
+
+    let probed = symphonia::default::get_probe()
+        .format(&Hint::new(), mss, &FormatOptions::default(), &MetadataOptions::default())
+        .map_err(|e| format!("Okänt filformat: {e}"))?;
+
+    let mut format = probed.format;
+    let track = format.tracks().iter()
+        .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
+        .ok_or_else(|| "Ingen ljudspår hittades i filen".to_string())?;
+
+    let track_id = track.id;
+    let src_rate = track.codec_params.sample_rate.unwrap_or(44100);
+    let channels = track.codec_params.channels.map(|c| c.count() as u16).unwrap_or(1);
+
+    let mut decoder = symphonia::default::get_codecs()
+        .make(&track.codec_params, &DecoderOptions::default())
+        .map_err(|e| format!("Kunde inte skapa avkodare: {e}"))?;
+
+    let mut chunks: Vec<Vec<f32>> = Vec::new();
+    let mut current: Vec<f32>    = Vec::new();
+
+    loop {
+        let packet = match format.next_packet() {
+            Ok(p)                              => p,
+            Err(SymphoniaError::IoError(_))    => break,
+            Err(SymphoniaError::ResetRequired) => { decoder.reset(); continue; }
+            Err(_)                             => break,
+        };
+
+        if packet.track_id() != track_id { continue; }
+
+        let decoded = match decoder.decode(&packet) {
+            Ok(d)  => d,
+            Err(_) => continue,
+        };
+
+        let mut sample_buf = SampleBuffer::<f32>::new(decoded.capacity() as u64, *decoded.spec());
+        sample_buf.copy_interleaved_ref(decoded);
+
+        let mono      = audio::to_mono(sample_buf.samples(), channels);
+        let resampled = audio::resample_to_16k(&mono, src_rate);
+        current.extend_from_slice(&resampled);
+
+        while current.len() >= chunk_samples {
+            chunks.push(current.drain(..chunk_samples).collect());
+        }
+    }
+
+    if !current.is_empty() {
+        chunks.push(current);
+    }
+
+    Ok(chunks)
+}
+
 pub struct AppState {
     pub cancel_flag: Arc<AtomicBool>,
     pub audio_recorder: Mutex<AudioRecorder>,
@@ -604,6 +678,166 @@ async fn transcribe_audio_segments(app_handle: AppHandle, state: tauri::State<'_
 }
 
 #[tauri::command]
+async fn transcribe_file(
+    app_handle: AppHandle,
+    state: tauri::State<'_, AppState>,
+    file_path: String,
+    size: String,
+    quantized: bool,
+    revision: String,
+    language: String,
+    initial_prompt: Option<String>,
+    use_gpu: Option<bool>,
+) -> Result<Vec<TranscriptSegment>, String> {
+    state.inner().cancel_flag.store(false, Ordering::Relaxed);
+    let model_path = get_model_path(&app_handle, &size, quantized, &revision)?;
+    if !model_path.exists() {
+        return Err("Modell saknas. Ladda ned den först.".to_string());
+    }
+
+    const CHUNK_SAMPLES: usize = 16000 * 300; // 5 min per chunk
+    let chunks       = decode_audio_to_f32_chunks(&file_path, CHUNK_SAMPLES)?;
+    let total_chunks = chunks.len();
+    if total_chunks == 0 {
+        return Err("Filen verkar inte innehålla något ljud.".to_string());
+    }
+
+    let cancel_flag = Arc::clone(&state.inner().cancel_flag);
+    let use_gpu_val = use_gpu.unwrap_or(true);
+
+    let mut all_segments: Vec<TranscriptSegment> = Vec::new();
+    let mut context_prefix: Option<String>       = None;
+    let mut cumulative_offset_ms: i64            = 0;
+
+    for (chunk_idx, chunk_samples) in chunks.into_iter().enumerate() {
+        if cancel_flag.load(Ordering::Relaxed) { break; }
+
+        let chunk_offset_ms   = cumulative_offset_ms;
+        cumulative_offset_ms += (chunk_samples.len() as i64 * 1000) / 16000;
+
+        // Build prompt same way as transcribe_audio_segments
+        let lang_hint = match language.as_str() {
+            "sv" => "Följande är en transkribering på svenska.",
+            "en" => "The following is a transcription in English.",
+            _    => "",
+        };
+        let mut composed = lang_hint.to_string();
+        if let Some(ctx) = &context_prefix {
+            let ctx = ctx.trim();
+            if !ctx.is_empty() { if !composed.is_empty() { composed.push(' '); } composed.push_str(ctx); }
+        }
+        if let Some(vocab) = &initial_prompt {
+            let vocab = vocab.trim();
+            if !vocab.is_empty() { if !composed.is_empty() { composed.push(' '); } composed.push_str(vocab); }
+        }
+
+        let progress       = Arc::new(AtomicI32::new(0));
+        let progress_clone = Arc::clone(&progress);
+        let app_clone      = app_handle.clone();
+        let cancel_poller  = Arc::clone(&cancel_flag);
+        let model_clone    = model_path.clone();
+        let lang_clone     = language.clone();
+        let composed_clone = composed.clone();
+
+        let segs: Result<Vec<TranscriptSegment>, String> = tokio::task::spawn_blocking(move || {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let mut ctx_params = WhisperContextParameters::default();
+                ctx_params.use_gpu = use_gpu_val;
+                let ctx = WhisperContext::new_with_params(&model_clone.to_string_lossy(), ctx_params)
+                    .map_err(|e| format!("Kunde inte ladda modell: {e}"))?;
+                let mut wstate = ctx.create_state()
+                    .map_err(|e| format!("Kunde inte skapa state: {e}"))?;
+                let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
+
+                match lang_clone.as_str() {
+                    "sv" => params.set_language(Some("sv")),
+                    "en" => params.set_language(Some("en")),
+                    _    => params.set_language(None),
+                }
+                if !composed_clone.is_empty() { params.set_initial_prompt(&composed_clone); }
+                params.set_print_progress(false);
+                params.set_print_special(false);
+                params.set_print_realtime(false);
+                params.set_print_timestamps(false);
+
+                let prog_cb = Arc::clone(&progress_clone);
+                params.set_progress_callback_safe(move |p| { prog_cb.store(p, Ordering::Relaxed); });
+
+                // Progress poller — emits overall progress across all chunks
+                let app_poll    = app_clone.clone();
+                let prog_poll   = Arc::clone(&progress);
+                let cancel_poll = Arc::clone(&cancel_poller);
+                let poller = tokio::spawn(async move {
+                    let mut last = -1i32;
+                    loop {
+                        if cancel_poll.load(Ordering::Relaxed) { break; }
+                        let p = prog_poll.load(Ordering::Relaxed);
+                        if p != last {
+                            let overall = ((chunk_idx as i32 * 100 + p) / total_chunks as i32).min(99);
+                            let _ = app_poll.emit("transcription_progress",
+                                TranscriptionProgressPayload { progress: overall });
+                            last = p;
+                        }
+                        if p >= 100 { break; }
+                        tokio::time::sleep(Duration::from_millis(500)).await;
+                    }
+                });
+
+                let res = wstate.full(params, &chunk_samples);
+                poller.abort();
+                if let Err(e) = res { return Err(format!("Transkribering misslyckades: {e:?}")); }
+
+                let n = wstate.full_n_segments();
+                let mut out = Vec::new();
+                for i in 0..n {
+                    let seg     = wstate.get_segment(i).ok_or("Segment saknas")?;
+                    let text    = seg.to_str_lossy().map_err(|e| format!("Texthämtning: {e:?}"))?;
+                    let trimmed = clean_whisper_text(text.as_ref());
+                    if trimmed.is_empty() { continue; }
+                    let t0 = seg.start_timestamp() * 10 + chunk_offset_ms;
+                    let t1 = seg.end_timestamp()   * 10 + chunk_offset_ms;
+                    let mut tokens = Vec::new();
+                    for t in 0..seg.n_tokens() {
+                        if let Some(tok) = seg.get_token(t) {
+                            if let Ok(tt) = tok.to_str_lossy() {
+                                let s = tt.into_owned();
+                                if s.starts_with("[_") || s.starts_with("<|") { continue; }
+                                tokens.push(TokenInfo { text: s, prob: tok.token_probability() });
+                            }
+                        }
+                    }
+                    out.push(TranscriptSegment { start_ms: t0, end_ms: t1, text: trimmed, tokens });
+                }
+                Ok::<Vec<TranscriptSegment>, String>(out)
+            }));
+            match result {
+                Ok(inner) => inner,
+                Err(p) => {
+                    let msg = if let Some(s) = p.downcast_ref::<&str>() { s.to_string() }
+                              else if let Some(s) = p.downcast_ref::<String>() { s.clone() }
+                              else { "Unknown panic".to_string() };
+                    Err(format!("Krasch i del {}: {msg}", chunk_idx + 1))
+                }
+            }
+        }).await.map_err(|e| format!("Task-fel: {e}"))?;
+
+        let segs = segs?;
+
+        if !segs.is_empty() {
+            let chunk_text: String = segs.iter().map(|s| s.text.as_str()).collect::<Vec<_>>().join(" ");
+            let words: Vec<&str>   = chunk_text.split_whitespace().collect();
+            context_prefix = Some(
+                words.iter().rev().take(30).rev().cloned().collect::<Vec<_>>().join(" ")
+            );
+        }
+        all_segments.extend(segs);
+    }
+
+    let _ = app_handle.emit("transcription_progress", TranscriptionProgressPayload { progress: 100 });
+    Ok(all_segments)
+}
+
+#[tauri::command]
 fn mask_pii_regex(text: String) -> Result<String, String> {
     // Swedish personnummer: YYMMDD-NNNN or YYYYMMDD-NNNN or YYMMDD+NNNN
     let personnummer = Regex::new(r"\b\d{6,8}[-+]\d{4}\b").map_err(|e| e.to_string())?;
@@ -704,6 +938,7 @@ pub fn run() {
             stop_backend_recording,
             transcribe_audio,
             transcribe_audio_segments,
+            transcribe_file,
             cancel_transcription,
             mask_pii_regex,
             save_text_file,

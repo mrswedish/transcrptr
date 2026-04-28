@@ -1464,17 +1464,18 @@ async function transcribeBlob(blob, label, blobOffsetMs = 0) {
 // -------------------------------------------------------------
 // File Selection Logic
 // -------------------------------------------------------------
-btnFile.addEventListener("click", () => {
-  fileInput.click();
-});
-
-fileInput.addEventListener("change", async (e) => {
-  if (e.target.files.length > 0) {
-    const file = e.target.files[0];
-    disableControls();
-    await processAudioBlob(file);
-    // Reset file input
-    fileInput.value = "";
+btnFile.addEventListener("click", async () => {
+  try {
+    const selected = await window.__TAURI__.dialog.open({
+      multiple: false,
+      filters: [{ name: "Ljud/Video", extensions: ["mp3","m4a","aac","wav","ogg","flac","mp4","webm","mkv"] }]
+    });
+    if (selected) {
+      disableControls();
+      await processAudioFile(selected);
+    }
+  } catch (e) {
+    console.error("Filval misslyckades:", e);
   }
 });
 
@@ -2029,6 +2030,80 @@ async function processAudioBlob(blob) {
     } else {
       const errorMsg = typeof err === 'string' ? err : err.message || String(err);
       await message(`Transkribering misslyckades: ${errorMsg}`, { title: 'Fel', kind: 'error' });
+    }
+  } finally {
+    loadingOverlay.classList.add("hidden");
+    enableControls();
+  }
+}
+
+// -------------------------------------------------------------
+// processAudioFile — Rust-side decode + transcribe (no JS heap allocation)
+// -------------------------------------------------------------
+async function processAudioFile(filePath) {
+  try {
+    const fileName = filePath.split(/[/\\]/).pop();
+    loadingText.innerText = `Avkodar ${fileName}...`;
+    loadingOverlay.classList.remove("hidden");
+    if (progressContainer) progressContainer.classList.remove("hidden");
+    if (progressBar) progressBar.style.width = "0%";
+
+    outputText.value = "";
+    transcriptSegments = [];
+    currentPlaybackBlob = null;
+    showRawView();
+
+    const initialPrompt = personalVocabulary.length > 0 ? personalVocabulary.join(", ") : null;
+    const startTime = performance.now();
+
+    const segs = await invoke("transcribe_file", {
+      filePath,
+      size:         modelSize,
+      quantized:    modelQuantized,
+      revision:     modelRevision,
+      language:     transcriptionLanguage,
+      initialPrompt,
+      useGpu
+    });
+
+    if (segs && segs.length > 0) {
+      transcriptSegments = segs.map(s => ({
+        startMs: s.start_ms,
+        endMs:   s.end_ms,
+        text:    s.text,
+        tokens:  s.tokens || []
+      }));
+      outputText.value = transcriptSegments.map(s => s.text).join("\n");
+    }
+
+    if (progressBar) progressBar.style.width = "100%";
+    const elapsed = Math.round((performance.now() - startTime) / 1000);
+    const elMin   = Math.floor(elapsed / 60);
+    const elSec   = elapsed % 60;
+    loadingText.innerText = `Klar! (${elMin > 0 ? `${elMin}m ` : ""}${elSec}s)`;
+    outputText.value += `\n\n[Transkribering klar]`;
+    outputText.scrollTop = outputText.scrollHeight;
+
+    if (autoMaskPii && outputText.value.trim()) {
+      try {
+        const masked = await invoke("mask_pii_regex", { text: outputText.value });
+        outputText.value = masked;
+      } catch (e) { console.warn("PII-maskning misslyckades:", e); }
+    }
+
+    if (transcriptSegments.length > 0) {
+      renderSegmentEditor();
+      const btnSeg = document.getElementById("btn-segment-toggle");
+      showSegmentView();
+      if (btnSeg) { btnSeg.classList.remove("hidden"); btnSeg.style.display = "inline-flex"; }
+    }
+  } catch (err) {
+    console.error("transcribe_file error:", err);
+    if (typeof err === "string" && err.toLowerCase().includes("cancel")) {
+      outputText.value += "\n\n[Transkribering avbruten]";
+    } else {
+      const msg = typeof err === "string" ? err : err.message || String(err);
+      await message(`Transkribering misslyckades: ${msg}`, { title: "Fel", kind: "error" });
     }
   } finally {
     loadingOverlay.classList.add("hidden");

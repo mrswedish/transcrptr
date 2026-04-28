@@ -30,6 +30,9 @@ tauri-plugin-dialog = "2"
 cpal = "0.15.3"
 sysinfo = "0.33.1"
 regex = "1"
+symphonia = { version = "0.5", default-features = false, features = [
+    "mp3", "aac", "isomp4", "wav", "ogg", "vorbis", "flac"
+] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 whisper-rs = { version = "0.15.1", features = ["metal"] }
