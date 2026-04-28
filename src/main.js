@@ -1424,8 +1424,9 @@ async function transcribeBlob(blob, label, blobOffsetMs = 0) {
     const start = chunkIdx * CHUNK_SAMPLES;
     const end = Math.min(start + CHUNK_SAMPLES, totalSamples);
     const chunkFloat32 = float32Data.slice(start, end);
-    const chunkBytes = new Uint8Array(chunkFloat32.buffer, chunkFloat32.byteOffset, chunkFloat32.byteLength);
-    const chunkBytesArray = Array.from(chunkBytes);
+    const chunkI16 = new Int16Array(chunkFloat32.length);
+    for (let i = 0; i < chunkFloat32.length; i++) chunkI16[i] = Math.round(chunkFloat32[i] * 32767);
+    const chunkBytesArray = Array.from(new Uint8Array(chunkI16.buffer));
 
     try {
       const chunkSegs = await invoke("transcribe_audio_segments", {
@@ -1558,8 +1559,9 @@ async function transcribeFloat32(rawFloat32Data) {
     const start = chunkIdx * CHUNK_SAMPLES;
     const end = Math.min(start + CHUNK_SAMPLES, totalSamples);
     const chunkFloat32 = float32Data.slice(start, end);
-    const chunkBytes = new Uint8Array(chunkFloat32.buffer, chunkFloat32.byteOffset, chunkFloat32.byteLength);
-    const chunkBytesArray = Array.from(chunkBytes);
+    const chunkI16 = new Int16Array(chunkFloat32.length);
+    for (let i = 0; i < chunkFloat32.length; i++) chunkI16[i] = Math.round(chunkFloat32[i] * 32767);
+    const chunkBytesArray = Array.from(new Uint8Array(chunkI16.buffer));
     console.log(`[wasapi] Chunk ${chunkIdx + 1}/${numChunks}: ${chunkFloat32.length} samples`);
     try {
       const chunkSegs = await invoke("transcribe_audio_segments", {
@@ -1936,8 +1938,9 @@ async function processAudioBlob(blob) {
       const start = chunkIdx * CHUNK_SAMPLES;
       const end = Math.min(start + CHUNK_SAMPLES, totalSamples);
       const chunkFloat32 = float32Data.slice(start, end);
-      const chunkBytes = new Uint8Array(chunkFloat32.buffer, chunkFloat32.byteOffset, chunkFloat32.byteLength);
-      const chunkBytesArray = Array.from(chunkBytes);
+      const chunkI16 = new Int16Array(chunkFloat32.length);
+      for (let i = 0; i < chunkFloat32.length; i++) chunkI16[i] = Math.round(chunkFloat32[i] * 32767);
+      const chunkBytesArray = Array.from(new Uint8Array(chunkI16.buffer));
       console.log(`Sending chunk ${chunkIdx + 1}/${numChunks}: ${chunkFloat32.length} samples`);
 
       try {

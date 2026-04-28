@@ -332,7 +332,7 @@ async fn transcribe_audio(app_handle: AppHandle, state: tauri::State<'_, AppStat
     let text = tokio::task::spawn_blocking(move || {
         // Wrap everything in catch_unwind to prevent silent crashes (segfaults in whisper.cpp)
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let num_samples = audio_len / std::mem::size_of::<f32>();
+            let num_samples = audio_len / std::mem::size_of::<i16>();
             eprintln!("[transcrptr] Transcribing {} bytes ({} samples, {:.1}s of audio, lang={})",
                 audio_len, num_samples, num_samples as f64 / 16000.0, language);
 
@@ -424,11 +424,11 @@ async fn transcribe_audio(app_handle: AppHandle, state: tauri::State<'_, AppStat
                 }
             });
 
-            // Safely convert Vec<u8> (little-endian f32 bytes) to Vec<f32>.
-            // The unsafe cast from &[u8] to &[f32] is UB due to alignment — use safe conversion instead.
+            // Convert little-endian i16 bytes to f32 samples for whisper.
+            // JS sends 2 bytes/sample (i16) instead of 4 (f32) to halve IPC payload.
             let samples: Vec<f32> = audio_bytes
-                .chunks_exact(4)
-                .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+                .chunks_exact(2)
+                .map(|b| i16::from_le_bytes([b[0], b[1]]) as f32 / 32768.0)
                 .collect();
 
             // Run the main transcription
@@ -491,7 +491,7 @@ async fn transcribe_audio_segments(app_handle: AppHandle, state: tauri::State<'_
 
     let segments = tokio::task::spawn_blocking(move || {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let num_samples = audio_len / std::mem::size_of::<f32>();
+            let num_samples = audio_len / std::mem::size_of::<i16>();
             eprintln!("[transcrptr] transcribe_audio_segments {} samples, lang={}", num_samples, language);
 
             let mut ctx_params = WhisperContextParameters::default();
@@ -547,8 +547,8 @@ async fn transcribe_audio_segments(app_handle: AppHandle, state: tauri::State<'_
             });
 
             let samples: Vec<f32> = audio_bytes
-                .chunks_exact(4)
-                .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+                .chunks_exact(2)
+                .map(|b| i16::from_le_bytes([b[0], b[1]]) as f32 / 32768.0)
                 .collect();
 
             let res = transcriber_state.full(params, &samples);
