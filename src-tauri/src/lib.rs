@@ -919,6 +919,19 @@ async fn save_text_file(app_handle: AppHandle, content: String) -> Result<(), St
     }
 }
 
+#[tauri::command]
+async fn pick_audio_file(app_handle: AppHandle) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::FilePath;
+    let path = app_handle.dialog()
+        .file()
+        .add_filter("Ljud/Video", &["mp3","m4a","aac","wav","ogg","flac","mp4","webm","mkv"])
+        .blocking_pick_file();
+    match path {
+        Some(FilePath::Path(p)) => Ok(Some(p.to_string_lossy().to_string())),
+        _ => Ok(None),
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -943,7 +956,8 @@ pub fn run() {
             mask_pii_regex,
             save_text_file,
             save_audio_file,
-            save_audio_data
+            save_audio_data,
+            pick_audio_file
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

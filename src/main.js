@@ -1466,10 +1466,7 @@ async function transcribeBlob(blob, label, blobOffsetMs = 0) {
 // -------------------------------------------------------------
 btnFile.addEventListener("click", async () => {
   try {
-    const selected = await window.__TAURI__.dialog.open({
-      multiple: false,
-      filters: [{ name: "Ljud/Video", extensions: ["mp3","m4a","aac","wav","ogg","flac","mp4","webm","mkv"] }]
-    });
+    const selected = await invoke("pick_audio_file");
     if (selected) {
       disableControls();
       await processAudioFile(selected);
