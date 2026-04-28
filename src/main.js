@@ -1881,8 +1881,9 @@ async function decodeFileToFloat32(blob) {
   try {
     const arrayBuffer = await blob.arrayBuffer();
     const audioBuffer = await decodeCtx.decodeAudioData(arrayBuffer);
-    // .slice() copies data out of the AudioBuffer before closing the context
-    const data = audioBuffer.getChannelData(0).slice();
+    // No .slice() — the Float32Array view keeps the backing memory alive.
+    // Skipping the copy saves ~460 MB for a 2-hour file.
+    const data = audioBuffer.getChannelData(0);
     decodeCtx.close();
     return normalizeAudio(data);
   } catch (err) {
@@ -1913,8 +1914,13 @@ async function processAudioBlob(blob) {
     const totalSamples = float32Data.length;
     const totalDuration = (totalSamples / 16000).toFixed(0);
     console.log(`Audio decoded: ${totalSamples} samples (${totalDuration}s)`);
-    // Convert to 16-bit PCM WAV for playback (WKWebView/Safari doesn't support WebM/Opus)
-    currentPlaybackBlob = float32ToPCM16WavBlob(float32Data, 16000);
+    // Skip the playback WAV blob for files longer than 30 minutes — creating a 230 MB
+    // ArrayBuffer on top of the already-large Float32 buffer crashes WebView2 on Windows.
+    if (totalSamples <= 16000 * 1800) {
+      currentPlaybackBlob = float32ToPCM16WavBlob(float32Data, 16000);
+    } else {
+      currentPlaybackBlob = null;
+    }
 
     const numChunks = Math.ceil(totalSamples / CHUNK_SAMPLES);
     totalChunks = numChunks;
