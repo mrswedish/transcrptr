@@ -68,6 +68,12 @@ const confirmModal = document.getElementById("confirm-modal");
 const confirmOk = document.getElementById("confirm-ok");
 const confirmCancel = document.getElementById("confirm-cancel");
 
+const btnCancelTranscription = document.getElementById("btn-cancel-transcription");
+btnCancelTranscription?.addEventListener("click", async () => {
+  isCancelling = true;
+  await invoke("cancel_transcription");
+});
+
 // State
 let isRecording = false;
 let isPaused = false;
@@ -97,6 +103,7 @@ let audioPlayer = null;
 let selectedMicId = "default";
 let wasapiEnabled = false;
 let useGpu = true;
+let isCancelling = false;
 let pendingRecording = null; // { type:'float32', data:Float32Array } | { type:'segments', segments:[] }
 let audioContext = null;
 let analyzer = null;
@@ -1322,10 +1329,14 @@ async function processSegments(segments) {
     currentPlaybackBlob = null;
     transcribeBlob._float32Chunks = [];
 
+    isCancelling = false;
+    if (btnCancelTranscription) btnCancelTranscription.classList.remove("hidden");
+
     const startTime = performance.now();
     let cumulativeOffsetMs = 0;
 
     for (let i = 0; i < segments.length; i++) {
+      if (isCancelling) break;
       const seg = segments[i];
       const partNum = i + 1;
       const timestamp = formatTimestamp(seg.startTime);
@@ -1383,9 +1394,15 @@ async function processSegments(segments) {
 
   } catch (err) {
     console.error("processSegments error:", err);
-    const errorMsg = typeof err === 'string' ? err : err.message || String(err);
-    await message(`Transkribering misslyckades: ${errorMsg}`, { title: 'Fel', kind: 'error' });
+    const errMsg = typeof err === 'string' ? err : err.message || String(err);
+    if (isCancelling || errMsg.includes("canceled") || errMsg.includes("cancelled")) {
+      outputText.value += "\n\n[Transkribering avbruten]";
+    } else {
+      await message(`Transkribering misslyckades: ${errMsg}`, { title: 'Fel', kind: 'error' });
+    }
   } finally {
+    isCancelling = false;
+    if (btnCancelTranscription) btnCancelTranscription.classList.add("hidden");
     loadingOverlay.classList.add("hidden");
     enableControls();
   }
@@ -1419,6 +1436,7 @@ async function transcribeBlob(blob, label, blobOffsetMs = 0) {
   const initialPrompt = personalVocabulary.length > 0 ? personalVocabulary.join(", ") : null;
 
   for (let chunkIdx = 0; chunkIdx < numChunks; chunkIdx++) {
+    if (isCancelling) throw new Error("canceled");
     currentChunkIdx = chunkIdx;
     const chunkOffsetMs = blobOffsetMs + chunkIdx * CHUNK_DURATION_SECONDS * 1000;
     const start = chunkIdx * CHUNK_SAMPLES;
@@ -1930,6 +1948,8 @@ async function processAudioBlob(blob) {
     loadingText.innerText = `Transkriberar ${durationStr} ljud...`;
     if (progressContainer) progressContainer.classList.remove("hidden");
     if (progressBar) progressBar.style.width = "0%";
+    isCancelling = false;
+    if (btnCancelTranscription) btnCancelTranscription.classList.remove("hidden");
 
     const startTime = performance.now();
     let fullResult = "";
@@ -1937,6 +1957,7 @@ async function processAudioBlob(blob) {
     const initialPrompt = personalVocabulary.length > 0 ? personalVocabulary.join(", ") : null;
 
     for (let chunkIdx = 0; chunkIdx < numChunks; chunkIdx++) {
+      if (isCancelling) break;
       currentChunkIdx = chunkIdx;
       const chunkOffsetMs = chunkIdx * CHUNK_DURATION_SECONDS * 1000;
       const start = chunkIdx * CHUNK_SAMPLES;
@@ -2022,13 +2043,15 @@ async function processAudioBlob(blob) {
 
   } catch (err) {
     console.error("Transcription error:", err);
-    if (typeof err === 'string' && err.includes("canceled")) {
+    const errStr = typeof err === 'string' ? err : err.message || String(err);
+    if (isCancelling || errStr.includes("canceled") || errStr.includes("cancelled")) {
       outputText.value += "\n\n[Transkribering avbruten]";
     } else {
-      const errorMsg = typeof err === 'string' ? err : err.message || String(err);
-      await message(`Transkribering misslyckades: ${errorMsg}`, { title: 'Fel', kind: 'error' });
+      await message(`Transkribering misslyckades: ${errStr}`, { title: 'Fel', kind: 'error' });
     }
   } finally {
+    isCancelling = false;
+    if (btnCancelTranscription) btnCancelTranscription.classList.add("hidden");
     loadingOverlay.classList.add("hidden");
     enableControls();
   }
@@ -2051,6 +2074,8 @@ async function processAudioFile(filePath) {
     showRawView();
 
     const initialPrompt = personalVocabulary.length > 0 ? personalVocabulary.join(", ") : null;
+    isCancelling = false;
+    if (btnCancelTranscription) btnCancelTranscription.classList.remove("hidden");
     const startTime = performance.now();
 
     const segs = await invoke("transcribe_file", {
@@ -2096,13 +2121,15 @@ async function processAudioFile(filePath) {
     }
   } catch (err) {
     console.error("transcribe_file error:", err);
-    if (typeof err === "string" && err.toLowerCase().includes("cancel")) {
+    const errMsg = typeof err === "string" ? err : err.message || String(err);
+    if (isCancelling || errMsg.toLowerCase().includes("cancel")) {
       outputText.value += "\n\n[Transkribering avbruten]";
     } else {
-      const msg = typeof err === "string" ? err : err.message || String(err);
-      await message(`Transkribering misslyckades: ${msg}`, { title: "Fel", kind: "error" });
+      await message(`Transkribering misslyckades: ${errMsg}`, { title: "Fel", kind: "error" });
     }
   } finally {
+    isCancelling = false;
+    if (btnCancelTranscription) btnCancelTranscription.classList.add("hidden");
     loadingOverlay.classList.add("hidden");
     enableControls();
   }
