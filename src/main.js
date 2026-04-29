@@ -105,6 +105,8 @@ let wasapiEnabled = false;
 let useGpu = true;
 let isCancelling = false;
 let pendingRecording = null; // { type:'float32', data:Float32Array } | { type:'segments', segments:[] }
+let wasapiRecordingReady = false; // Rust har recorded_samples — save_audio_file kan anropas direkt
+let wasapiDecodePromise  = null;  // Promise<Float32Array> för JS-mix, behövs vid transkribering
 let audioContext = null;
 let analyzer = null;
 let micStream = null;
@@ -900,6 +902,8 @@ async function startRecording() {
     pendingRecording = null;
     hidePostRecordingActions();
   }
+  wasapiRecordingReady = false;
+  wasapiDecodePromise  = null;
   try {
     let recordingStatusMsg = "Spelar in...";
     if (wasapiEnabled) {
@@ -1100,7 +1104,12 @@ function hidePostRecordingActions() {
 
 async function saveRecordedAudio() {
   try {
-    if (!lastRecordedSegments || lastRecordedSegments.length === 0) {
+    if (wasapiRecordingReady) {
+      // Rust har recorded_samples klart — spara direkt utan JS-kodning eller IPC-transfer
+      await invoke("save_audio_file");
+      return;
+    }
+    if (!lastRecordedSegments || lastRecordedSegments.length === 0 || !lastRecordedSegments[0].blob) {
       await message("Ingen inspelning att spara.", { title: "Fel", kind: "error" });
       return;
     }
@@ -1131,6 +1140,15 @@ async function startPendingTranscription() {
     disableControls();
     loadingOverlay.classList.remove("hidden");
     try {
+      // Om WASAPI-avkodning fortfarande pågår i bakgrunden — invänta den
+      if (!rec.data && wasapiDecodePromise) {
+        loadingText.innerText = "Förbereder ljud...";
+        rec.data = await wasapiDecodePromise;
+      }
+      if (!rec.data) {
+        outputText.value = "[Ingen ljuddata tillgänglig]";
+        return;
+      }
       transcriptSegments = [];
       showRawView();
       const text = await transcribeFloat32(rec.data);
@@ -1189,68 +1207,22 @@ async function stopSession() {
 
     try {
       const loopbackBytes = await invoke("stop_backend_recording");
+      // recorded_samples är nu fyllt i Rust — save_audio_file kan användas direkt
+      wasapiRecordingReady = true;
 
       const micBlobs = sessionSegments.map(s => s.blob);
-      const hasMic = micBlobs.length > 0;
-      const hasLoopback = loopbackBytes && loopbackBytes.length > 44;
 
-      // Decode each stream independently — one failure won't kill the other
-      loadingText.innerText = "Bearbetar ljud...";
-      outputText.value = "";
+      // Starta avkodning+mix asynkront — behövs bara om användaren väljer Transkribera
+      wasapiDecodePromise = decodeWasapiMix(micBlobs, loopbackBytes);
 
-      let micFloat32 = null;
-      let loopbackFloat32 = null;
-
-      if (hasMic) {
-        try {
-          const micBlob = new Blob(micBlobs, { type: micBlobs[0].type });
-          micFloat32 = await decodeAudioToFloat32(micBlob);
-          console.log(`[wasapi] Mic decoded: ${micFloat32.length} samples (${(micFloat32.length/16000).toFixed(1)}s)`);
-        } catch (e) {
-          console.warn('[wasapi] Mic decode failed:', e);
-        }
-      }
-
-      if (hasLoopback) {
-        try {
-          const loopbackBlob = new Blob([new Uint8Array(loopbackBytes)], { type: 'audio/wav' });
-          loopbackFloat32 = await decodeAudioToFloat32(loopbackBlob);
-          console.log(`[wasapi] Loopback decoded: ${loopbackFloat32.length} samples (${(loopbackFloat32.length/16000).toFixed(1)}s)`);
-        } catch (e) {
-          console.warn('[wasapi] Loopback decode failed:', e);
-        }
-      }
-
-      let float32Data;
-      if (micFloat32 && loopbackFloat32) {
-        const len = Math.max(micFloat32.length, loopbackFloat32.length);
-        float32Data = new Float32Array(len);
-        for (let i = 0; i < len; i++) {
-          const a = i < micFloat32.length ? micFloat32[i] : 0;
-          const b = i < loopbackFloat32.length ? loopbackFloat32[i] : 0;
-          float32Data[i] = Math.max(-1, Math.min(1, a + b));
-        }
-        console.log(`[wasapi] Mixed: ${float32Data.length} samples (${(float32Data.length/16000).toFixed(1)}s)`);
-      } else if (micFloat32) {
-        float32Data = micFloat32;
-        console.log('[wasapi] Mic only (loopback unavailable)');
-      } else if (loopbackFloat32) {
-        float32Data = loopbackFloat32;
-        console.log('[wasapi] Loopback only (mic unavailable)');
-      } else {
-        throw new Error('Kunde inte avkoda varken mikrofon eller systemljud. Kontrollera att din mikrofon är aktiv och att WASAPI stöds av ditt ljudkort.');
-      }
-
-      // Store as PCM WAV blob so save-button can export it correctly
-      const redoBlob = float32ToPCM16WavBlob(float32Data, 16000);
-      lastRecordedSegments = [{ blob: redoBlob, startTime: new Date() }];
-
-      // Let the user choose: transcribe now or just save the audio
-      pendingRecording = { type: "float32", data: float32Data };
+      // Visa dialog direkt utan att vänta på avkodning
+      pendingRecording = { type: "float32", data: null };
+      lastRecordedSegments = [{ startTime: new Date() }];
       loadingOverlay.classList.add("hidden");
       showPostRecordingActions();
     } catch (err) {
       console.error("WASAPI stop error:", err);
+      wasapiRecordingReady = false;
       await message("Kunde inte hämta ljud: " + err, { title: 'Fel', kind: 'error' });
     } finally {
       loadingOverlay.classList.add("hidden");
@@ -1313,6 +1285,57 @@ async function stopSession() {
     enableControls();
   } else {
     enableControls();
+  }
+}
+
+// Avkodar och mixar WASAPI mic + loopback till en Float32Array.
+// Körs asynkront i bakgrunden direkt efter stop — resultatet behövs
+// bara om användaren väljer att transkribera.
+async function decodeWasapiMix(micBlobs, loopbackBytes) {
+  const hasMic = micBlobs && micBlobs.length > 0;
+  const hasLoopback = loopbackBytes && loopbackBytes.length > 44;
+
+  let micFloat32 = null;
+  let loopbackFloat32 = null;
+
+  if (hasMic) {
+    try {
+      const micBlob = new Blob(micBlobs, { type: micBlobs[0].type });
+      micFloat32 = await decodeAudioToFloat32(micBlob);
+      console.log(`[wasapi] Mic decoded: ${micFloat32.length} samples (${(micFloat32.length/16000).toFixed(1)}s)`);
+    } catch (e) {
+      console.warn('[wasapi] Mic decode failed:', e);
+    }
+  }
+
+  if (hasLoopback) {
+    try {
+      const loopbackBlob = new Blob([new Uint8Array(loopbackBytes)], { type: 'audio/wav' });
+      loopbackFloat32 = await decodeAudioToFloat32(loopbackBlob);
+      console.log(`[wasapi] Loopback decoded: ${loopbackFloat32.length} samples (${(loopbackFloat32.length/16000).toFixed(1)}s)`);
+    } catch (e) {
+      console.warn('[wasapi] Loopback decode failed:', e);
+    }
+  }
+
+  if (micFloat32 && loopbackFloat32) {
+    const len = Math.max(micFloat32.length, loopbackFloat32.length);
+    const mixed = new Float32Array(len);
+    for (let i = 0; i < len; i++) {
+      const a = i < micFloat32.length ? micFloat32[i] : 0;
+      const b = i < loopbackFloat32.length ? loopbackFloat32[i] : 0;
+      mixed[i] = Math.max(-1, Math.min(1, a + b));
+    }
+    console.log(`[wasapi] Mixed: ${mixed.length} samples (${(mixed.length/16000).toFixed(1)}s)`);
+    return mixed;
+  } else if (micFloat32) {
+    console.log('[wasapi] Mic only (loopback unavailable)');
+    return micFloat32;
+  } else if (loopbackFloat32) {
+    console.log('[wasapi] Loopback only (mic unavailable)');
+    return loopbackFloat32;
+  } else {
+    throw new Error('Kunde inte avkoda varken mikrofon eller systemljud.');
   }
 }
 
