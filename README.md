@@ -14,8 +14,10 @@ Transkribera använder [KB-whisper](https://huggingface.co/KBLab/kb-whisper-smal
 
 ## ✨ Funktioner
 - **🔒 Integritet:** Ditt ljud stannar på din dator. Inget skickas till externa servrar. [Integritetspolicy](PRIVACY.md)
-- **⚡ Hårdvaruaccelererad:** Vulkan utnyttjar din GPU för snabbare transkribering. Kan stängas av för äldre grafikkort.
+- **⚡ Hårdvaruaccelererad:** Vulkan (Windows) och Metal (Mac) utnyttjar din GPU för snabbare transkribering. Kan stängas av för äldre grafikkort.
 - **🎙️ Mötesinspelning (Windows):** Spela in både mikrofon och datorljud från t.ex. Teams/Zoom — via WASAPI Endpoint Loopback (fungerar från Windows 7) eller Stereo Mix (se guide nedan).
+- **📂 Filimport:** Transkribera valfri ljudfil direkt — MP3, M4A, AAC, WAV, OGG, FLAC, MP4, WebM, MKV. Avkodningen sker helt i Rust (Symphonia) utan att belasta JS-heapen — fungerar även för inspelningar på flera timmar.
+- **⏹️ Avbryt transkribering:** Avbryt pågående transkribering när som helst med en knapp. Inspelad audio bevaras alltid och kan sparas även efter avbrott.
 - **⏸️ Pausa inspelning:** Pausa och återuppta. Varje del tidsstämplas automatiskt.
 - **🔄 Gör om transkribering:** Byt modell och kör om utan att spela in på nytt.
 - **✏️ Redigera transkribering:** Redigera, sök och ersätt direkt i appen (Ctrl+F).
@@ -130,10 +132,80 @@ På vissa Windows-versioner kan filer laddade från internet blockeras. Om appen
 > [!NOTE]
 > Transkribera innehåller ingen skadlig kod. Varningarna beror på att appen distribueras utan kommersiell kodsignering. Källkoden är öppen och granskningsbar på GitHub.
 
-## 🏗️ Arkitektur
-- **Tauri** (Rust-backend, webbfrontend)
-- **Whisper.cpp** via `whisper-rs` för C++-optimerad transkribering
-- **Vanilla JS + CSS** för ett snabbt gränssnitt
+## 🏗️ Teknisk arkitektur
+
+Transkribera bygger på **Tauri 2** — en Rust-backend kombinerad med ett webbfrontend. All tung bearbetning sker i Rust; webbvyn hanterar enbart UI.
+
+### Kärnkomponenter
+
+| Komponent | Teknologi | Roll |
+|-----------|-----------|------|
+| **Desktop-ram** | Tauri 2 (Rust) | Fönsterhantering, IPC-brygga, systemdialog |
+| **Transkribering** | whisper-rs / whisper.cpp | C++-optimerad Whisper-inferens |
+| **GPU-acceleration** | Metal (Mac) / Vulkan (Windows) | Hårdvaruaccelererad modellkörning |
+| **Ljudavkodning (fil)** | Symphonia (Rust) | Avkodar MP3, M4A/AAC, WAV, OGG, FLAC utan JS-heap |
+| **Ljudavkodning (mic)** | Web Audio API | Avkodar MediaRecorder-output för Mac-mikrofon |
+| **Mikrofon (inspelning)** | cpal (Rust) + MediaRecorder | Rust fångar mic via WASAPI/CoreAudio; browser komplettar |
+| **Systemljud (Windows)** | WASAPI Endpoint Loopback | Fångar eConsole + eCommunications, mixas i Rust |
+| **WAV-kodning** | hound (Rust) | Skriver 16-bit PCM WAV direkt till disk |
+| **Frontend** | Vanilla JS + Tailwind CSS | Snabb, beroendefri UI |
+
+### Minneshantering och Windows-optimeringar
+
+WebView2 (Chromium-motorn i Tauri på Windows) kan inte allokera stora sammanhängande block i JS-heapen. En 2-timmars M4A-inspelning kräver ~460 MB som ett enda block vid avkodning i JavaScript — vilket kraschar processen tyst.
+
+Transkribera löser detta genom att flytta all tung bearbetning till Rust:
+
+**Filimport — Rust-side avkodning med Symphonia:**
+- JS skickar enbart filsökvägen (en sträng) till Rust via Tauri-kommandot `transcribe_file`
+- Rust avkodar filen med Symphonia, resamplar till 16 kHz mono och delar upp i 5-minuters-chunks
+- Whisper-inferens sker direkt på varje chunk i Rust — JS-heap belastas aldrig med audiodata
+- Minnespeak: ~19 MB per chunk, oavsett fillängd
+
+**IPC-optimering — 16-bit PCM:**
+- Ljud skickas som 16-bit PCM (i16) över Tauri IPC-bryggan, inte 32-bit float
+- Halverar nyttolaststorleken: ~25 MB per 5-min-chunk istället för ~50 MB
+- Whisper.cpp använder 16-bit internt — ingen kvalitetsförlust
+
+**WASAPI-inspelning — omedelbar dialog och effektivt sparande:**
+- Vid inspelningsstopp lagrar Rust det mixade ljudet i minnet (`recorded_samples`) och returnerar omedelbart
+- Dialogen "Transkribera / Spara" visas direkt — JS-mix körs asynkront i bakgrunden
+- Sparande via "Spara inspelning" läser direkt från `recorded_samples` i Rust (`save_audio_file`) utan IPC-transfer — filväljaren öppnas omedelbart
+
+### Dataflöde — filimport
+
+```
+Fil på disk (MP3 / M4A / WAV / OGG / FLAC / …)
+  │
+  ▼  Rust: Symphonia avkodar + resamplar till 16 kHz mono f32
+  │
+  ▼  Rust: delar upp i 5-min-chunks (~19 MB/st)
+  │
+  ▼  Rust: whisper.cpp transkriberar chunk för chunk
+  │        (cancel_flag kontrolleras mellan varje chunk)
+  │
+  ▼  JS: tar emot segmentlista [{start_ms, end_ms, text, tokens}]
+  │
+  ▼  UI: visar transkribering + segmentredigerare
+```
+
+### Dataflöde — WASAPI-inspelning (Windows)
+
+```
+Mikrofon ──► cpal / WASAPI ──────────────────► Rust mic-buffer
+                                                        │
+Systemljud ► WASAPI Endpoint Loopback ────────► Rust loopback-buffer(ar)
+                                                        │
+                                stop_recording(): mix + resample → recorded_samples
+                                                        │
+                                      ┌─────────────────┴──────────────────────┐
+                                      │                                         │
+                            "Spara inspelning"                       "Transkribera"
+                                      │                                         │
+                            save_audio_file()                  decodeWasapiMix() (JS, asynkront)
+                            Rust läser recorded_samples         → Float32Array → chunks → whisper
+                            och visar filväljare direkt
+```
 
 ## 🛠️ Bygga från källkod
 
