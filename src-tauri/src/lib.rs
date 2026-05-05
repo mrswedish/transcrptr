@@ -48,8 +48,6 @@ fn decode_audio_to_f32_chunks(path: &str, chunk_samples: usize) -> Result<Vec<Ve
         .ok_or_else(|| "Ingen ljudspår hittades i filen".to_string())?;
 
     let track_id = track.id;
-    let src_rate = track.codec_params.sample_rate.unwrap_or(44100);
-    let channels = track.codec_params.channels.map(|c| c.count() as u16).unwrap_or(1);
 
     let mut decoder = symphonia::default::get_codecs()
         .make(&track.codec_params, &DecoderOptions::default())
@@ -73,11 +71,15 @@ fn decode_audio_to_f32_chunks(path: &str, chunk_samples: usize) -> Result<Vec<Ve
             Err(_) => continue,
         };
 
-        let mut sample_buf = SampleBuffer::<f32>::new(decoded.capacity() as u64, *decoded.spec());
+        let spec = *decoded.spec();
+        let mut sample_buf = SampleBuffer::<f32>::new(decoded.capacity() as u64, spec);
         sample_buf.copy_interleaved_ref(decoded);
 
-        let mono      = audio::to_mono(sample_buf.samples(), channels);
-        let resampled = audio::resample_to_16k(&mono, src_rate);
+        // Använd faktisk spec från dekodat buffer — codec_params kan sakna kanal/rate-info
+        let actual_channels = spec.channels.count() as u16;
+        let actual_rate     = spec.rate;
+        let mono      = audio::to_mono(sample_buf.samples(), actual_channels);
+        let resampled = audio::resample_to_16k(&mono, actual_rate);
         current.extend_from_slice(&resampled);
 
         while current.len() >= chunk_samples {
