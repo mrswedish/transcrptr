@@ -2099,6 +2099,10 @@ async function processAudioFile(filePath) {
     const initialPrompt = personalVocabulary.length > 0 ? personalVocabulary.join(", ") : null;
     isCancelling = false;
     if (btnCancelTranscription) btnCancelTranscription.classList.remove("hidden");
+    // Rust beräknar overall-progress (0–99%) och emitterar det direkt.
+    // Sätt totalChunks=1 så att JS-lyssnaren passerar Rusts värde rakt igenom.
+    totalChunks     = 1;
+    currentChunkIdx = 0;
     const startTime = performance.now();
 
     const segs = await invoke("transcribe_file", {
