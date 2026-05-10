@@ -8,42 +8,12 @@ unsafe impl Send for SendStream {}
 unsafe impl Sync for SendStream {}
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Resampler: anti-aliased sinc-interpolation till 16kHz (Whisper-input).
-// rubato applicerar lågpassfilter före nedsampling — undviker aliasing-artefakter
-// som annars försämrar transkriberingen från 44.1k/48k-källor (iPhone, Mac mic).
-// Vid init-fel faller vi tillbaka till linjär interpolation.
+// Resampler: linear interpolation from any Hz to 16kHz (Whisper input rate).
 // ─────────────────────────────────────────────────────────────────────────────
 pub fn resample_to_16k(input: &[f32], src_rate: u32) -> Vec<f32> {
-    if src_rate == 16000 || input.is_empty() {
+    if src_rate == 16000 {
         return input.to_vec();
     }
-    use rubato::{Resampler, SincFixedIn, SincInterpolationParameters,
-                 SincInterpolationType, WindowFunction};
-    let params = SincInterpolationParameters {
-        sinc_len:            128,
-        f_cutoff:            0.95,
-        interpolation:       SincInterpolationType::Linear,
-        oversampling_factor: 256,
-        window:              WindowFunction::BlackmanHarris2,
-    };
-    let resampler = SincFixedIn::<f32>::new(
-        16000.0 / src_rate as f64,
-        2.0,
-        params,
-        input.len(),
-        1,
-    );
-    let mut resampler = match resampler {
-        Ok(r)  => r,
-        Err(_) => return resample_linear_fallback(input, src_rate),
-    };
-    match resampler.process(&[input], None) {
-        Ok(mut out) => out.pop().unwrap_or_default(),
-        Err(_)      => resample_linear_fallback(input, src_rate),
-    }
-}
-
-fn resample_linear_fallback(input: &[f32], src_rate: u32) -> Vec<f32> {
     let ratio = src_rate as f64 / 16000.0;
     let out_len = (input.len() as f64 / ratio).ceil() as usize;
     let mut output = Vec::with_capacity(out_len);

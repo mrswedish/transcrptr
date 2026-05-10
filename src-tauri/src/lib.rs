@@ -479,10 +479,6 @@ async fn transcribe_audio(app_handle: AppHandle, state: tauri::State<'_, AppStat
                 progress_clone.store(p, Ordering::Relaxed);
             });
 
-            // Avbryt mid-transkribering om cancel_flag sätts
-            let cancel_for_abort = Arc::clone(&cancel_flag);
-            params.set_abort_callback_safe(move || cancel_for_abort.load(Ordering::Relaxed));
-
             // Start a polling task to emit progress to the frontend
             let app_handle_clone = app_handle.clone();
             let progress_poller = Arc::clone(&progress);
@@ -615,10 +611,6 @@ async fn transcribe_audio_segments(app_handle: AppHandle, state: tauri::State<'_
             let progress = Arc::new(AtomicI32::new(0));
             let progress_clone = Arc::clone(&progress);
             params.set_progress_callback_safe(move |p| { progress_clone.store(p, Ordering::Relaxed); });
-
-            // Avbryt mid-transkribering om cancel_flag sätts
-            let cancel_for_abort = Arc::clone(&cancel_flag);
-            params.set_abort_callback_safe(move || cancel_for_abort.load(Ordering::Relaxed));
 
             let app_handle_clone = app_handle.clone();
             let progress_poller = Arc::clone(&progress);
@@ -762,14 +754,17 @@ async fn transcribe_file(
             let _ = app_for_task.emit("transcription_progress",
                 TranscriptionProgressPayload { progress: chunk_start_progress });
 
-            let composed_cln          = composed.clone();
-            let language_cln          = language.clone();
-            let progress              = Arc::new(AtomicI32::new(0));
-            let prog_cb               = Arc::clone(&progress);
-            let prog_poll             = Arc::clone(&progress);
-            let app_poll              = app_for_task.clone();
-            let cancel_poll           = Arc::clone(&cancel_flag);
-            let cancel_flag_for_abort = Arc::clone(&cancel_flag);
+            let composed_cln = composed.clone();
+            let language_cln = language.clone();
+            let progress     = Arc::new(AtomicI32::new(0));
+            let prog_cb      = Arc::clone(&progress);
+            let prog_poll    = Arc::clone(&progress);
+            let app_poll     = app_for_task.clone();
+            let cancel_poll  = Arc::clone(&cancel_flag);
+
+            eprintln!("[transcrptr] chunk {}/{}: {} samples ({:.1}s), n_threads={}",
+                chunk_idx + 1, total_chunks, chunk_samples.len(),
+                chunk_samples.len() as f32 / 16000.0, n_threads);
 
             let segs: Result<Vec<TranscriptSegment>, String> = {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -791,10 +786,6 @@ async fn transcribe_file(
 
                     params.set_progress_callback_safe(move |p| { prog_cb.store(p, Ordering::Relaxed); });
 
-                    // Avbryt mid-chunk om cancel_flag sätts (whisper.cpp pollar mellan token-steg)
-                    let cancel_for_abort = Arc::clone(&cancel_flag_for_abort);
-                    params.set_abort_callback_safe(move || cancel_for_abort.load(Ordering::Relaxed));
-
                     let poller = tokio::spawn(async move {
                         let mut last = -1i32;
                         loop {
@@ -813,7 +804,10 @@ async fn transcribe_file(
 
                     let res = wstate.full(params, &chunk_samples);
                     poller.abort();
-                    if let Err(e) = res { return Err(format!("Transkribering misslyckades: {e:?}")); }
+                    if let Err(e) = res {
+                        eprintln!("[transcrptr] wstate.full failed for chunk {}: {e:?}", chunk_idx + 1);
+                        return Err(format!("Transkribering misslyckades: {e:?}"));
+                    }
 
                     let n = wstate.full_n_segments();
                     let mut out = Vec::new();
