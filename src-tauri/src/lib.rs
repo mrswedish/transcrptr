@@ -467,7 +467,12 @@ async fn transcribe_audio(app_handle: AppHandle, state: tauri::State<'_, AppStat
             params.set_print_special(false);
             params.set_print_realtime(false);
             params.set_print_timestamps(false);
-            
+
+            // Kvalitets-tweaks: minskar hallucinationer på tystnad och tomma segment
+            params.set_temperature(0.0);
+            params.set_no_speech_thold(0.6);
+            params.set_suppress_blank(true);
+            params.set_split_on_word(true);
 
             // SAFE PROGRESS TRACKING
             // We use an AtomicI32 because it is 100% thread-safe and requires no memory allocation.
@@ -607,6 +612,11 @@ async fn transcribe_audio_segments(app_handle: AppHandle, state: tauri::State<'_
             params.set_print_special(false);
             params.set_print_realtime(false);
             params.set_print_timestamps(false);
+
+            params.set_temperature(0.0);
+            params.set_no_speech_thold(0.6);
+            params.set_suppress_blank(true);
+            params.set_split_on_word(true);
 
             let progress = Arc::new(AtomicI32::new(0));
             let progress_clone = Arc::clone(&progress);
@@ -783,6 +793,11 @@ async fn transcribe_file(
                     params.set_print_special(false);
                     params.set_print_realtime(false);
                     params.set_print_timestamps(false);
+
+                    params.set_temperature(0.0);
+                    params.set_no_speech_thold(0.6);
+                    params.set_suppress_blank(true);
+                    params.set_split_on_word(true);
 
                     params.set_progress_callback_safe(move |p| { prog_cb.store(p, Ordering::Relaxed); });
 

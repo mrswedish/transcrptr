@@ -8,23 +8,61 @@ unsafe impl Send for SendStream {}
 unsafe impl Sync for SendStream {}
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Resampler: linear interpolation from any Hz to 16kHz (Whisper input rate).
+// Resampler: 2:a-ordningens Butterworth-lowpass + linjär interpolation till 16 kHz.
+// Lowpass:en (cutoff 7 kHz) dämpar frekvenser nära Nyquist (8 kHz vid 16k mål)
+// så vi undviker aliasing-artefakter när 44.1k/48k-källor skalas ned. Whisper är
+// tränad på band-begränsat ljud — bättre transkribering på iPhone/Mac mic.
 // ─────────────────────────────────────────────────────────────────────────────
 pub fn resample_to_16k(input: &[f32], src_rate: u32) -> Vec<f32> {
-    if src_rate == 16000 {
+    if src_rate == 16000 || input.is_empty() {
         return input.to_vec();
     }
+    // Endast nedsampling kan introducera aliasing — uppsampling hoppar över filtret.
+    let filtered: Vec<f32> = if src_rate > 16000 {
+        butterworth_lowpass(input, src_rate, 7000.0)
+    } else {
+        input.to_vec()
+    };
     let ratio = src_rate as f64 / 16000.0;
-    let out_len = (input.len() as f64 / ratio).ceil() as usize;
+    let out_len = (filtered.len() as f64 / ratio).ceil() as usize;
     let mut output = Vec::with_capacity(out_len);
     for i in 0..out_len {
         let src_idx = i as f64 * ratio;
         let lo = src_idx.floor() as usize;
-        let hi = (lo + 1).min(input.len().saturating_sub(1));
+        let hi = (lo + 1).min(filtered.len().saturating_sub(1));
         let frac = (src_idx - src_idx.floor()) as f32;
-        output.push(input[lo] * (1.0 - frac) + input[hi] * frac);
+        output.push(filtered[lo] * (1.0 - frac) + filtered[hi] * frac);
     }
     output
+}
+
+/// 2:a-ordningens RBJ Butterworth-lowpass (Q = 1/√2). Stateless per anrop —
+/// kort transient i början av varje paket (~5 samples) men acceptabelt för Whisper.
+fn butterworth_lowpass(input: &[f32], src_rate: u32, cutoff_hz: f32) -> Vec<f32> {
+    use std::f32::consts::PI;
+    let fs = src_rate as f32;
+    let fc = cutoff_hz.min(fs * 0.45); // säkerhetsmarginal under Nyquist
+    let w0 = 2.0 * PI * fc / fs;
+    let cos_w0 = w0.cos();
+    let sin_w0 = w0.sin();
+    // Q = 1/√2 för Butterworth → α = sin(ω0) / (2·Q) = sin(ω0) · √2/2
+    let alpha  = sin_w0 * std::f32::consts::FRAC_1_SQRT_2;
+    let a0     = 1.0 + alpha;
+    let b0     = ((1.0 - cos_w0) / 2.0) / a0;
+    let b1     = (1.0 - cos_w0)         / a0;
+    let b2     = ((1.0 - cos_w0) / 2.0) / a0;
+    let a1     = (-2.0 * cos_w0)        / a0;
+    let a2     = (1.0 - alpha)          / a0;
+
+    let mut out = Vec::with_capacity(input.len());
+    let (mut x1, mut x2, mut y1, mut y2) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
+    for &x in input {
+        let y = b0 * x + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
+        x2 = x1; x1 = x;
+        y2 = y1; y1 = y;
+        out.push(y);
+    }
+    out
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -268,13 +306,16 @@ impl AudioRecorder {
         let comms: Vec<f32> = Vec::new();
 
         // 3-way mix: mic + eConsole + eCommunications, padded to the longest.
-        let len = mic.len().max(lb.len()).max(comms.len());
+        // Skala summan med antal aktiva källor så att två "fulla" källor inte hårdklipper.
+        let active = (!mic.is_empty()) as u32 + (!lb.is_empty()) as u32 + (!comms.is_empty()) as u32;
+        let scale  = if active > 0 { 1.0 / active as f32 } else { 1.0 };
+        let len    = mic.len().max(lb.len()).max(comms.len());
         let mut mixed: Vec<f32> = Vec::with_capacity(len);
         for i in 0..len {
             let m = if i < mic.len()   { mic[i]   } else { 0.0 };
             let l = if i < lb.len()    { lb[i]    } else { 0.0 };
             let c = if i < comms.len() { comms[i] } else { 0.0 };
-            mixed.push((m + l + c).clamp(-1.0, 1.0));
+            mixed.push(((m + l + c) * scale).clamp(-1.0, 1.0));
         }
 
         eprintln!(

@@ -94,6 +94,8 @@ let autoMaskPii = false;
 
 // Segment editor & audio player state
 let transcriptSegments = [];        // [{startMs, endMs, text, tokens}] — accumulated across chunks
+let segmentRowsCache = [];          // DOM-elementen i samma ordning som transcriptSegments — undviker O(n) querySelectorAll per timeupdate
+let currentActiveSegIdx = -1;       // index för aktivt segment under uppspelning
 let segmentViewActive = false;
 let confidenceThreshold = 0.6;      // Words below this prob get highlighted
 let currentPlaybackBlob = null;
@@ -1771,6 +1773,9 @@ function renderSegmentEditor() {
     frag.appendChild(row);
   });
   editor.appendChild(frag);
+  // Bygg index-cache så timeupdate inte behöver querySelectorAll varje frame.
+  segmentRowsCache = Array.from(editor.querySelectorAll(".segment-row"));
+  currentActiveSegIdx = -1;
 }
 
 // Switch to segment view
@@ -1840,18 +1845,29 @@ function initPlayer() {
     const playerTime = document.getElementById("player-time");
     if (playerTime) playerTime.textContent = formatMs(ms);
 
-    if (segmentViewActive) {
-      document.querySelectorAll(".segment-row").forEach((row) => {
-        const idx = parseInt(row.dataset.idx, 10);
-        const seg = transcriptSegments[idx];
-        const active = seg && ms >= seg.startMs && ms < seg.endMs;
-        if (active) {
-          row.classList.add("segment-active");
-          row.scrollIntoView({ block: "nearest", behavior: "smooth" });
-        } else {
-          row.classList.remove("segment-active");
+    if (segmentViewActive && segmentRowsCache.length > 0) {
+      // Binary search istället för O(n) querySelectorAll på varje timeupdate-event
+      let lo = 0, hi = transcriptSegments.length - 1, found = -1;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        const seg = transcriptSegments[mid];
+        if (ms < seg.startMs)     hi = mid - 1;
+        else if (ms >= seg.endMs) lo = mid + 1;
+        else { found = mid; break; }
+      }
+      if (found !== currentActiveSegIdx) {
+        if (currentActiveSegIdx >= 0) {
+          segmentRowsCache[currentActiveSegIdx]?.classList.remove("segment-active");
         }
-      });
+        if (found >= 0) {
+          const row = segmentRowsCache[found];
+          if (row) {
+            row.classList.add("segment-active");
+            row.scrollIntoView({ block: "nearest", behavior: "smooth" });
+          }
+        }
+        currentActiveSegIdx = found;
+      }
     }
   });
 
@@ -2038,9 +2054,11 @@ async function processAudioBlob(blob) {
       try {
         const masked = await invoke("mask_pii_regex", { text: outputText.value });
         outputText.value = masked;
-        // Re-sync segment texts
+        // Re-sync segment texts — cachen är redan byggd; inga ytterligare DOM-queries i loopen
+        const rows = segmentRowsCache.length === transcriptSegments.length
+          ? segmentRowsCache
+          : document.querySelectorAll(".segment-row");
         transcriptSegments.forEach((seg, i) => {
-          const rows = document.querySelectorAll(".segment-row");
           if (rows[i]) seg.text = rows[i].querySelector(".segment-input")?.value ?? seg.text;
         });
       } catch (maskErr) {
