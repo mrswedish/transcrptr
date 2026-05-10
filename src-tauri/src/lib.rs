@@ -425,9 +425,10 @@ async fn transcribe_audio(app_handle: AppHandle, state: tauri::State<'_, AppStat
             ).map_err(|e| format!("Failed to load model: {}", e))?;
             
             let mut transcriber_state = ctx.create_state().map_err(|e| format!("Failed to create state: {}", e))?;
-            
+
             let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
-            
+            params.set_n_threads(num_cpus::get() as i32);
+
             // Build initial prompt: language hint + optional context from previous chunk + optional user vocabulary
             let lang_hint = match language.as_str() {
                 "sv" => {
@@ -478,11 +479,15 @@ async fn transcribe_audio(app_handle: AppHandle, state: tauri::State<'_, AppStat
                 progress_clone.store(p, Ordering::Relaxed);
             });
 
+            // Avbryt mid-transkribering om cancel_flag sätts
+            let cancel_for_abort = Arc::clone(&cancel_flag);
+            params.set_abort_callback_safe(move || cancel_for_abort.load(Ordering::Relaxed));
+
             // Start a polling task to emit progress to the frontend
             let app_handle_clone = app_handle.clone();
             let progress_poller = Arc::clone(&progress);
             let cancel_poller = Arc::clone(&cancel_flag);
-            
+
             let poller_handle = tokio::spawn(async move {
                 let mut last_emitted = -1;
                 loop {
@@ -584,6 +589,7 @@ async fn transcribe_audio_segments(app_handle: AppHandle, state: tauri::State<'_
 
             let mut transcriber_state = ctx.create_state().map_err(|e| format!("Failed to create state: {}", e))?;
             let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
+            params.set_n_threads(num_cpus::get() as i32);
 
             let lang_hint = match language.as_str() {
                 "sv" => { params.set_language(Some("sv")); "Följande är en transkribering på svenska." }
@@ -609,6 +615,10 @@ async fn transcribe_audio_segments(app_handle: AppHandle, state: tauri::State<'_
             let progress = Arc::new(AtomicI32::new(0));
             let progress_clone = Arc::clone(&progress);
             params.set_progress_callback_safe(move |p| { progress_clone.store(p, Ordering::Relaxed); });
+
+            // Avbryt mid-transkribering om cancel_flag sätts
+            let cancel_for_abort = Arc::clone(&cancel_flag);
+            params.set_abort_callback_safe(move || cancel_for_abort.load(Ordering::Relaxed));
 
             let app_handle_clone = app_handle.clone();
             let progress_poller = Arc::clone(&progress);
@@ -718,6 +728,14 @@ async fn transcribe_file(
         let mut cum_offset   = 0i64;
         let mut chunk_idx    = 0usize;
 
+        // Ladda modellen EN gång — återanvänds över alla chunks.
+        // För en 2h-fil sparar detta ~23 onödiga modell-laddningar (varje ~1.5 GB från disk + GPU-init).
+        let mut ctx_params = WhisperContextParameters::default();
+        ctx_params.use_gpu = use_gpu_val;
+        let ctx = WhisperContext::new_with_params(&model_path.to_string_lossy(), ctx_params)
+            .map_err(|e| format!("Kunde inte ladda modell: {e}"))?;
+        let n_threads = num_cpus::get() as i32;
+
         while let Some(chunk_samples) = dec.next_chunk(CHUNK_SAMPLES)? {
             if cancel_flag.load(Ordering::Relaxed) { break; }
 
@@ -744,24 +762,21 @@ async fn transcribe_file(
             let _ = app_for_task.emit("transcription_progress",
                 TranscriptionProgressPayload { progress: chunk_start_progress });
 
-            let model_clone  = model_path.clone();
-            let composed_cln = composed.clone();
-            let language_cln = language.clone();
-            let progress     = Arc::new(AtomicI32::new(0));
-            let prog_cb      = Arc::clone(&progress);
-            let prog_poll    = Arc::clone(&progress);
-            let app_poll     = app_for_task.clone();
-            let cancel_poll  = Arc::clone(&cancel_flag);
+            let composed_cln          = composed.clone();
+            let language_cln          = language.clone();
+            let progress              = Arc::new(AtomicI32::new(0));
+            let prog_cb               = Arc::clone(&progress);
+            let prog_poll             = Arc::clone(&progress);
+            let app_poll              = app_for_task.clone();
+            let cancel_poll           = Arc::clone(&cancel_flag);
+            let cancel_flag_for_abort = Arc::clone(&cancel_flag);
 
             let segs: Result<Vec<TranscriptSegment>, String> = {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    let mut ctx_params = WhisperContextParameters::default();
-                    ctx_params.use_gpu = use_gpu_val;
-                    let ctx = WhisperContext::new_with_params(&model_clone.to_string_lossy(), ctx_params)
-                        .map_err(|e| format!("Kunde inte ladda modell: {e}"))?;
                     let mut wstate = ctx.create_state()
                         .map_err(|e| format!("Kunde inte skapa state: {e}"))?;
                     let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
+                    params.set_n_threads(n_threads);
 
                     match language_cln.as_str() {
                         "sv" => params.set_language(Some("sv")),
@@ -775,6 +790,10 @@ async fn transcribe_file(
                     params.set_print_timestamps(false);
 
                     params.set_progress_callback_safe(move |p| { prog_cb.store(p, Ordering::Relaxed); });
+
+                    // Avbryt mid-chunk om cancel_flag sätts (whisper.cpp pollar mellan token-steg)
+                    let cancel_for_abort = Arc::clone(&cancel_flag_for_abort);
+                    params.set_abort_callback_safe(move || cancel_for_abort.load(Ordering::Relaxed));
 
                     let poller = tokio::spawn(async move {
                         let mut last = -1i32;
