@@ -108,6 +108,11 @@ fn cancel_transcription(state: tauri::State<AppState>) {
     state.inner().cancel_flag.store(true, Ordering::Relaxed);
 }
 
+#[tauri::command]
+fn get_app_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
 #[derive(Serialize, Clone)]
 struct ProgressPayload {
     progress: f32,
@@ -974,6 +979,7 @@ pub fn run() {
             transcribe_audio_segments,
             transcribe_file,
             cancel_transcription,
+            get_app_version,
             save_text_file,
             save_audio_file,
             save_audio_data,

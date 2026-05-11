@@ -317,15 +317,15 @@ async function setupEventListeners() {
 
 // Initialize Application
 async function initialize() {
-  // Visa app-version i fönstertiteln och i inställningar-panelen.
-  // getVersion() läser från tauri.conf.json så ingen hårdkodning behövs.
+  // Visa app-version i inställningar-panelen.
+  // Hämtas via Rust-kommando (env!("CARGO_PKG_VERSION")) istället för window.__TAURI__.app,
+  // eftersom den senare har visat sig krascha appen på vissa WebView2-versioner.
   try {
-    const version = await window.__TAURI__.app.getVersion();
-    await window.__TAURI__.window.getCurrentWindow().setTitle(`Transkribera v${version}`);
+    const version = await invoke("get_app_version");
     const versionLabel = document.getElementById("app-version");
     if (versionLabel) versionLabel.textContent = `v${version}`;
   } catch (e) {
-    console.warn("Kunde inte sätta version:", e);
+    console.warn("Kunde inte hämta version:", e);
   }
   initPlayer();
   loadSettings();
