@@ -317,6 +317,16 @@ async function setupEventListeners() {
 
 // Initialize Application
 async function initialize() {
+  // Visa app-version i fönstertiteln och i inställningar-panelen.
+  // getVersion() läser från tauri.conf.json så ingen hårdkodning behövs.
+  try {
+    const version = await window.__TAURI__.app.getVersion();
+    await window.__TAURI__.window.getCurrentWindow().setTitle(`Transkribera v${version}`);
+    const versionLabel = document.getElementById("app-version");
+    if (versionLabel) versionLabel.textContent = `v${version}`;
+  } catch (e) {
+    console.warn("Kunde inte sätta version:", e);
+  }
   initPlayer();
   loadSettings();
   await loadMicrophones();
@@ -1119,18 +1129,24 @@ function hidePostRecordingActions() {
 }
 
 async function saveRecordedAudio() {
+  let overlayWasShown = false;
   try {
     if (wasapiRecordingReady) {
       // recorded_samples i Rust har bara loopback — mic går via JS MediaRecorder i WASAPI-läget.
       // Vänta in JS-mixen som har båda spår, konvertera till WAV och spara via save_audio_data.
-      if (wasapiDecodePromise) {
-        const mixed = await wasapiDecodePromise;
-        if (mixed && mixed.length > 0) {
-          const wavBlob  = float32ToPCM16WavBlob(mixed, 16000);
-          const wavBytes = Array.from(new Uint8Array(await wavBlob.arrayBuffer()));
-          await invoke("save_audio_data", { audioData: wavBytes });
-          return;
-        }
+      loadingText.innerText = "Förbereder ljud för sparande...";
+      loadingOverlay.classList.remove("hidden");
+      overlayWasShown = true;
+
+      let mixed = null;
+      if (wasapiDecodePromise) mixed = await wasapiDecodePromise;
+      if (mixed && mixed.length > 0) {
+        loadingText.innerText = "Kodar WAV-fil...";
+        const wavBlob  = float32ToPCM16WavBlob(mixed, 16000);
+        loadingText.innerText = "Sparar fil...";
+        const wavBytes = Array.from(new Uint8Array(await wavBlob.arrayBuffer()));
+        await invoke("save_audio_data", { audioData: wavBytes });
+        return;
       }
       // Fallback om mix saknas (t.ex. ingen mic-stream): använd Rusts loopback-only
       await invoke("save_audio_file");
@@ -1140,10 +1156,17 @@ async function saveRecordedAudio() {
       await message("Ingen inspelning att spara.", { title: "Fel", kind: "error" });
       return;
     }
-    const blobs = lastRecordedSegments.map(s => s.blob);
+    loadingText.innerText = "Förbereder ljud för sparande...";
+    loadingOverlay.classList.remove("hidden");
+    overlayWasShown = true;
+
+    const blobs    = lastRecordedSegments.map(s => s.blob);
     const combined = new Blob(blobs, { type: blobs[0].type });
+    loadingText.innerText = "Avkodar ljud...";
     const float32Data = await decodeAudioToFloat32(combined);
+    loadingText.innerText = "Kodar WAV-fil...";
     const wavBlob = float32ToPCM16WavBlob(float32Data, 16000);
+    loadingText.innerText = "Sparar fil...";
     const wavBytes = Array.from(new Uint8Array(await wavBlob.arrayBuffer()));
     await invoke("save_audio_data", { audioData: wavBytes });
   } catch (err) {
@@ -1151,6 +1174,8 @@ async function saveRecordedAudio() {
     if (!msg.includes("cancelled") && !msg.includes("canceled")) {
       await message(`Kunde inte spara ljudfilen: ${msg}`, { title: "Fel", kind: "error" });
     }
+  } finally {
+    if (overlayWasShown) loadingOverlay.classList.add("hidden");
   }
 }
 
