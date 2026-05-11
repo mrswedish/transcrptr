@@ -17,13 +17,13 @@ Transkribera använder [KB-whisper](https://huggingface.co/KBLab/kb-whisper-smal
 - **⚡ Hårdvaruaccelererad:** Vulkan (Windows) och Metal (Mac) utnyttjar din GPU för snabbare transkribering. Kan stängas av för äldre grafikkort.
 - **🎙️ Mötesinspelning (Windows):** Spela in både mikrofon och datorljud från t.ex. Teams/Zoom — via WASAPI Endpoint Loopback (fungerar från Windows 7) eller Stereo Mix (se guide nedan).
 - **📂 Filimport:** Transkribera valfri ljudfil direkt — MP3, M4A, AAC, WAV, OGG, FLAC, MP4, WebM, MKV. Avkodningen sker helt i Rust (Symphonia) utan att belasta JS-heapen — fungerar även för inspelningar på flera timmar.
+- **🎚️ Antialiaserad ljudbehandling:** Lågpassfilter (cutoff 7 kHz) före nedsampling till 16 kHz — minskar aliasing-artefakter från 44.1k/48k-källor (iPhone, Mac mic) för bättre transkribering.
 - **⏹️ Avbryt transkribering:** Avbryt pågående transkribering när som helst med en knapp. Inspelad audio bevaras alltid och kan sparas även efter avbrott.
 - **⏸️ Pausa inspelning:** Pausa och återuppta. Varje del tidsstämplas automatiskt.
 - **🔄 Gör om transkribering:** Byt modell och kör om utan att spela in på nytt.
 - **✏️ Redigera transkribering:** Redigera, sök och ersätt direkt i appen (Ctrl+F).
 - **📝 Personlig ordlista:** Mata in facktermer och medicinsk terminologi som skickas som ledtrådar till transkriberingsmotorn — förbättrar igenkänning av domänspecifika ord.
-- **🛡️ GDPR-maskning:** Maskera personnummer, telefonnummer och e-postadresser automatiskt eller med ett knapptryck — direkt på enheten, ingen data lämnar din dator.
-- **🎬 Segmentredigering:** Visa transkriberingen som tidsstämplade rader — klicka på en tidsstämpel för att hoppa direkt till den punkten i inspelningen.
+- **🎬 Segmentredigering:** Visa transkriberingen som tidsstämplade rader — klicka på en tidsstämpel för att hoppa direkt till den punkten i inspelningen. Progressiv rendering håller UI:t responsivt även för flertimmes-transkriberingar.
 - **🔊 Synkad ljudspelare:** Spela upp inspelningen direkt i appen med automatisk markering av det aktiva textsegmentet.
 - **🟡 Konfidensfärgning:** Ord med låg igenkänningssäkerhet markeras med färg i segmentvyn — gul = osäker, röd = mycket osäker. Tröskelvärdet justeras i inställningarna.
 - **💾 Spara:** Exportera text som `.txt` eller ljud som `.wav`.

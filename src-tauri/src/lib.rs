@@ -11,7 +11,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri_plugin_dialog::DialogExt;
 use sysinfo::Disks;
-use regex::Regex;
 
 mod audio;
 #[cfg(target_os = "windows")]
@@ -875,22 +874,6 @@ async fn transcribe_file(
     Ok(all_segments)
 }
 
-#[tauri::command]
-fn mask_pii_regex(text: String) -> Result<String, String> {
-    // Swedish personnummer: YYMMDD-NNNN or YYYYMMDD-NNNN or YYMMDD+NNNN
-    let personnummer = Regex::new(r"\b\d{6,8}[-+]\d{4}\b").map_err(|e| e.to_string())?;
-    // Swedish phone numbers: 07X, +46 7X, 08-XXXX etc
-    let phone = Regex::new(r"\b(\+46|0)[\s.-]?\d{1,3}[\s.-]?\d{2,4}[\s.-]?\d{2,4}[\s.-]?\d{0,4}\b").map_err(|e| e.to_string())?;
-    // Email addresses
-    let email = Regex::new(r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b").map_err(|e| e.to_string())?;
-
-    let result = personnummer.replace_all(&text, "[PERSONNUMMER]");
-    let result = email.replace_all(&result, "[E-POST]");
-    let result = phone.replace_all(&result, "[TELEFON]");
-
-    Ok(result.into_owned())
-}
-
 #[derive(Serialize)]
 struct RecordingStartResult {
     loopback_active: bool,
@@ -991,7 +974,6 @@ pub fn run() {
             transcribe_audio_segments,
             transcribe_file,
             cancel_transcription,
-            mask_pii_regex,
             save_text_file,
             save_audio_file,
             save_audio_data,

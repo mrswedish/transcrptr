@@ -11,8 +11,29 @@ const fileInput = document.getElementById("file-input");
 const btnCopy = document.getElementById("btn-copy");
 const btnSave = document.getElementById("btn-save");
 const outputText = document.getElementById("output-text");
-const recordingIndicator = document.getElementById("recording-indicator");
+// Inspelningstillstånds-element (control-row layout, v1.1.96)
+const recordingIndicator = document.getElementById("recording-status");
 const recordingStatusText = document.getElementById("recording-status-text");
+const idleHint = document.getElementById("idle-hint");
+
+// Central UI-state-växling för inspelningskontrollerna
+function setRecordingUI(state) {                // "idle" | "recording" | "paused"
+  const recIcon = btnRecord && btnRecord.querySelector(".btn-icon");
+  if (state === "idle") {
+    if (recIcon) recIcon.className = "btn-icon block w-4 h-4 rounded-full bg-white";
+    if (idleHint) idleHint.classList.remove("hidden");
+    if (recordingIndicator) recordingIndicator.classList.add("hidden");
+    if (btnPause) btnPause.classList.add("hidden");
+    if (btnRecord) btnRecord.setAttribute("aria-label", "Spela in");
+  } else {
+    if (recIcon) recIcon.className = "btn-icon block w-3.5 h-3.5 rounded-sm bg-white";
+    if (idleHint) idleHint.classList.add("hidden");
+    if (recordingIndicator) recordingIndicator.classList.remove("hidden");
+    if (btnPause) btnPause.classList.remove("hidden");
+    if (recordingStatusText) recordingStatusText.textContent = state === "paused" ? "Pausad" : "Spelar in";
+    if (btnRecord) btnRecord.setAttribute("aria-label", "Stoppa inspelning");
+  }
+}
 const segmentBadge = document.getElementById("segment-badge");
 const loadingOverlay = document.getElementById("loading-overlay");
 const loadingText = document.getElementById("loading-text");
@@ -88,9 +109,8 @@ let dlSize = "medium";
 let dlRevision = "standard";
 let transcriptionLanguage = "sv";
 
-// Personlig ordlista & PII-maskning
+// Personlig ordlista
 let personalVocabulary = [];  // Array of strings
-let autoMaskPii = false;
 
 // Segment editor & audio player state
 let transcriptSegments = [];        // [{startMs, endMs, text, tokens}] — accumulated across chunks
@@ -139,7 +159,6 @@ function loadSettings() {
   const wasapi = localStorage.getItem("wasapiEnabled");
   const gpu = localStorage.getItem("useGpu");
   const vocab = localStorage.getItem("personalVocabulary");
-  const autoMask = localStorage.getItem("autoMaskPii");
   const confThresh = localStorage.getItem("confidenceThreshold");
 
   if (size) modelSize = size;
@@ -152,7 +171,6 @@ function loadSettings() {
   if (vocab) {
     try { personalVocabulary = JSON.parse(vocab); } catch { personalVocabulary = []; }
   }
-  if (autoMask !== null) autoMaskPii = autoMask === "true";
   if (confThresh !== null) confidenceThreshold = parseFloat(confThresh);
 
   const wasapiToggle = document.getElementById("wasapi-toggle");
@@ -742,13 +760,6 @@ btnSaveSettings.addEventListener("click", async () => {
     localStorage.setItem("personalVocabulary", JSON.stringify(personalVocabulary));
   }
 
-  // Auto-mask PII
-  const autoMaskToggle = document.getElementById("auto-mask-toggle");
-  if (autoMaskToggle) {
-    autoMaskPii = autoMaskToggle.checked;
-    localStorage.setItem("autoMaskPii", autoMaskPii.toString());
-  }
-
   // Confidence threshold
   const confSlider = document.getElementById("confidence-threshold-slider");
   if (confSlider) {
@@ -1006,13 +1017,10 @@ async function startRecording() {
 
     // UI Updates
     btnRecord.classList.add("recording");
-    btnRecord.querySelector(".btn-text").textContent = "Stoppa";
-    recordingIndicator.classList.remove("hidden");
+    setRecordingUI("recording");
     if (recordingStatusText) recordingStatusText.textContent = recordingStatusMsg;
     if (btnPause) {
       if (!wasapiEnabled) {
-        btnPause.classList.remove("hidden");
-        btnPause.querySelector(".btn-pause-text").textContent = "Pausa";
         btnPause.querySelector(".material-symbols-outlined").textContent = "pause";
       } else {
         btnPause.classList.add("hidden"); // Pause not supported in WASAPI mode
@@ -1059,8 +1067,10 @@ function pauseSession() {
     recordingStatusText.classList.add("text-amber-500");
   }
   if (eqBar) eqBar.querySelectorAll(".eq-col").forEach(c => c.style.backgroundColor = "#f59e0b");
-  btnPause.querySelector(".btn-pause-text").textContent = "Fortsätt";
-  btnPause.querySelector(".material-symbols-outlined").textContent = "play_arrow";
+  if (btnPause) {
+    btnPause.querySelector(".material-symbols-outlined").textContent = "play_arrow";
+    btnPause.setAttribute("aria-label", "Fortsätt inspelning");
+  }
 }
 
 function resumeSession() {
@@ -1092,8 +1102,10 @@ function resumeSession() {
     recordingStatusText.classList.remove("text-amber-500");
     recordingStatusText.classList.add("text-slate-600", "dark:text-slate-300");
   }
-  btnPause.querySelector(".btn-pause-text").textContent = "Pausa";
-  btnPause.querySelector(".material-symbols-outlined").textContent = "pause";
+  if (btnPause) {
+    btnPause.querySelector(".material-symbols-outlined").textContent = "pause";
+    btnPause.setAttribute("aria-label", "Pausa");
+  }
 }
 
 function showPostRecordingActions() {
@@ -1182,11 +1194,8 @@ async function stopSession() {
     stopRecordingMetrics();
 
     btnRecord.classList.remove("recording");
-    const btnText = btnRecord.querySelector(".btn-text");
-    if (btnText) btnText.textContent = "Spela in";
-    recordingIndicator.classList.add("hidden");
+    setRecordingUI("idle");
     document.getElementById("loopback-indicator")?.classList.add("hidden");
-    btnPause.classList.add("hidden");
     disableControls();
 
     // Flush the last mic chunk from MediaRecorder
@@ -1263,15 +1272,9 @@ async function stopSession() {
 
   // UI Updates – reset
   btnRecord.classList.remove("recording");
-  const btnText = btnRecord.querySelector(".btn-text");
-  if (btnText) btnText.textContent = "Spela in";
-  recordingIndicator.classList.add("hidden");
+  setRecordingUI("idle");
   document.getElementById("loopback-indicator")?.classList.add("hidden");
-  btnPause.classList.add("hidden");
-  if (recordingStatusText) {
-    recordingStatusText.textContent = "Spelar in";
-    recordingStatusText.classList.remove("text-amber-500");
-  }
+  if (recordingStatusText) recordingStatusText.classList.remove("text-amber-500");
   if (segmentBadge) segmentBadge.classList.add("hidden");
   disableControls();
 
@@ -1709,73 +1712,117 @@ function buildConfidenceView(seg) {
   return div;
 }
 
+// Bygger en enskild segment-rad. Extraherad från renderSegmentEditor så att
+// progressive rendering kan anropa den per chunk.
+function buildSegmentRow(seg, idx) {
+  const row = document.createElement("div");
+  row.className = "segment-row";
+  row.dataset.idx = idx;
+
+  const ts = document.createElement("span");
+  ts.className = "segment-ts";
+  ts.textContent = formatMs(seg.startMs);
+  ts.title = "Klicka för att spela från denna tidpunkt";
+  ts.addEventListener("click", () => seekPlayer(seg.startMs));
+
+  const confView = buildConfidenceView(seg);
+  confView.title = "Klicka för att redigera";
+
+  const ta = document.createElement("textarea");
+  ta.className = "segment-input hidden";
+  ta.value = seg.text;
+  ta.rows = 1;
+  const autoGrow = () => { ta.style.height = "auto"; ta.style.height = ta.scrollHeight + "px"; };
+  ta.addEventListener("input", () => {
+    transcriptSegments[idx].text = ta.value;
+    transcriptSegments[idx].tokens = [];
+    outputText.value = buildPlainText();
+    autoGrow();
+  });
+  ta.addEventListener("focus", () => row.classList.add("ring-1", "ring-primary/30", "rounded-lg"));
+  ta.addEventListener("blur", () => {
+    row.classList.remove("ring-1", "ring-primary/30", "rounded-lg");
+    const newView = buildConfidenceView(transcriptSegments[idx]);
+    newView.title = "Klicka för att redigera";
+    newView.addEventListener("click", () => { newView.classList.add("hidden"); ta.classList.remove("hidden"); requestAnimationFrame(autoGrow); ta.focus(); });
+    row.replaceChild(newView, confView.parentNode ? confView : newView);
+    ta.classList.add("hidden");
+    const existing = row.querySelector(".segment-view");
+    if (existing) row.replaceChild(newView, existing);
+    else row.insertBefore(newView, ta);
+  });
+
+  confView.addEventListener("click", () => {
+    confView.classList.add("hidden");
+    ta.classList.remove("hidden");
+    requestAnimationFrame(autoGrow);
+    ta.focus();
+  });
+
+  row.appendChild(ts);
+  row.appendChild(confView);
+  row.appendChild(ta);
+  // autoGrow körs lazy via IntersectionObserver i renderSegmentEditor
+  // — bara för rader som faktiskt scrollas in i bild.
+  row._autoGrowFn = autoGrow;
+  return row;
+}
+
+// Aktiv observer för lazy autoGrow — avregistreras vid omrendering
+let autoGrowObserver = null;
+
 function renderSegmentEditor() {
   const editor = document.getElementById("segment-editor");
   if (!editor) return;
-  editor.innerHTML = "";
-  const frag = document.createDocumentFragment();
-  transcriptSegments.forEach((seg, idx) => {
-    const row = document.createElement("div");
-    row.className = "segment-row";
-    row.dataset.idx = idx;
-
-    const ts = document.createElement("span");
-    ts.className = "segment-ts";
-    ts.textContent = formatMs(seg.startMs);
-    ts.title = "Klicka för att spela från denna tidpunkt";
-    ts.addEventListener("click", () => seekPlayer(seg.startMs));
-
-    // Confidence view (default, read-only with colored tokens)
-    const confView = buildConfidenceView(seg);
-    confView.title = "Klicka för att redigera";
-
-    // Editable textarea (hidden by default)
-    const ta = document.createElement("textarea");
-    ta.className = "segment-input hidden";
-    ta.value = seg.text;
-    ta.rows = 1;
-    const autoGrow = () => { ta.style.height = "auto"; ta.style.height = ta.scrollHeight + "px"; };
-    ta.addEventListener("input", () => {
-      transcriptSegments[idx].text = ta.value;
-      // Clear tokens since text changed; confidence view will show plain text
-      transcriptSegments[idx].tokens = [];
-      outputText.value = buildPlainText();
-      autoGrow();
-    });
-    ta.addEventListener("focus", () => row.classList.add("ring-1", "ring-primary/30", "rounded-lg"));
-    ta.addEventListener("blur", () => {
-      row.classList.remove("ring-1", "ring-primary/30", "rounded-lg");
-      // Rebuild confidence view from (possibly updated) text, switch back
-      const newView = buildConfidenceView(transcriptSegments[idx]);
-      newView.title = "Klicka för att redigera";
-      newView.addEventListener("click", () => { newView.classList.add("hidden"); ta.classList.remove("hidden"); requestAnimationFrame(autoGrow); ta.focus(); });
-      row.replaceChild(newView, confView.parentNode ? confView : newView);
-      // Swap: hide textarea, show new view
-      ta.classList.add("hidden");
-      const existing = row.querySelector(".segment-view");
-      if (existing) row.replaceChild(newView, existing);
-      else row.insertBefore(newView, ta);
-    });
-
-    // Click confidence view → switch to textarea
-    confView.addEventListener("click", () => {
-      confView.classList.add("hidden");
-      ta.classList.remove("hidden");
-      requestAnimationFrame(autoGrow);
-      ta.focus();
-    });
-
-    requestAnimationFrame(autoGrow);
-
-    row.appendChild(ts);
-    row.appendChild(confView);
-    row.appendChild(ta);
-    frag.appendChild(row);
-  });
-  editor.appendChild(frag);
-  // Bygg index-cache så timeupdate inte behöver querySelectorAll varje frame.
-  segmentRowsCache = Array.from(editor.querySelectorAll(".segment-row"));
+  editor.replaceChildren();
+  segmentRowsCache = [];
   currentActiveSegIdx = -1;
+
+  if (autoGrowObserver) autoGrowObserver.disconnect();
+  autoGrowObserver = new IntersectionObserver((entries) => {
+    entries.forEach((e) => {
+      if (!e.isIntersecting) return;
+      const row = e.target;
+      if (row.dataset.grown) return;
+      if (typeof row._autoGrowFn === "function") row._autoGrowFn();
+      row.dataset.grown = "1";
+    });
+  }, { rootMargin: "200px" });
+
+  const CHUNK = 50;
+  let i = 0;
+  const total = transcriptSegments.length;
+
+  function renderBatch(deadline) {
+    const frag = document.createDocumentFragment();
+    let added = 0;
+    const hasDeadline = deadline && typeof deadline.timeRemaining === "function";
+    while (i < total && added < CHUNK && (!hasDeadline || deadline.timeRemaining() > 4 || deadline.didTimeout)) {
+      const row = buildSegmentRow(transcriptSegments[i], i);
+      frag.appendChild(row);
+      segmentRowsCache.push(row);
+      i++;
+      added++;
+    }
+    editor.appendChild(frag);
+    // observera dem efter de är i DOM
+    for (let j = segmentRowsCache.length - added; j < segmentRowsCache.length; j++) {
+      autoGrowObserver.observe(segmentRowsCache[j]);
+    }
+    if (i < total) {
+      if (typeof requestIdleCallback === "function") {
+        requestIdleCallback(renderBatch, { timeout: 100 });
+      } else {
+        setTimeout(() => renderBatch({ timeRemaining: () => 16, didTimeout: false }), 0);
+      }
+    }
+  }
+
+  if (typeof requestIdleCallback === "function") {
+    requestIdleCallback(renderBatch, { timeout: 100 });
+  } else {
+    renderBatch({ timeRemaining: () => 16, didTimeout: false });
+  }
 }
 
 // Switch to segment view
@@ -2049,23 +2096,6 @@ async function processAudioBlob(blob) {
     const elapsedStr = elapsedMin > 0 ? `${elapsedMin}m ${elapsedRemSec}s` : `${elapsedSec}s`;
     loadingText.innerText = `Klar! (${elapsedStr})`;
 
-    // Auto-mask PII if enabled
-    if (autoMaskPii && outputText.value.trim()) {
-      try {
-        const masked = await invoke("mask_pii_regex", { text: outputText.value });
-        outputText.value = masked;
-        // Re-sync segment texts — cachen är redan byggd; inga ytterligare DOM-queries i loopen
-        const rows = segmentRowsCache.length === transcriptSegments.length
-          ? segmentRowsCache
-          : document.querySelectorAll(".segment-row");
-        transcriptSegments.forEach((seg, i) => {
-          if (rows[i]) seg.text = rows[i].querySelector(".segment-input")?.value ?? seg.text;
-        });
-      } catch (maskErr) {
-        console.warn("PII-maskning misslyckades:", maskErr);
-      }
-    }
-
     outputText.value += `\n\n[Transkribering klar: ${elapsedStr}]`;
     outputText.scrollTop = outputText.scrollHeight;
 
@@ -2150,13 +2180,6 @@ async function processAudioFile(filePath) {
     loadingText.innerText = `Klar! (${elMin > 0 ? `${elMin}m ` : ""}${elSec}s)`;
     outputText.value += `\n\n[Transkribering klar]`;
     outputText.scrollTop = outputText.scrollHeight;
-
-    if (autoMaskPii && outputText.value.trim()) {
-      try {
-        const masked = await invoke("mask_pii_regex", { text: outputText.value });
-        outputText.value = masked;
-      } catch (e) { console.warn("PII-maskning misslyckades:", e); }
-    }
 
     if (transcriptSegments.length > 0) {
       renderSegmentEditor();
@@ -2337,20 +2360,6 @@ const gpuToggleEl = document.getElementById("gpu-toggle");
 gpuToggleEl && gpuToggleEl.addEventListener("change", () => {
   useGpu = gpuToggleEl.checked;
   localStorage.setItem("useGpu", useGpu.toString());
-});
-
-// -------------------------------------------------------------
-// Maskera PII — manuell knapp
-// -------------------------------------------------------------
-const btnMaskPii = document.getElementById("btn-mask-pii");
-btnMaskPii && btnMaskPii.addEventListener("click", async () => {
-  const text = outputText.value.trim();
-  if (!text) return;
-  try {
-    outputText.value = await invoke("mask_pii_regex", { text: outputText.value });
-  } catch (err) {
-    console.error("PII-maskning misslyckades:", err);
-  }
 });
 
 // -------------------------------------------------------------

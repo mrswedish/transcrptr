@@ -126,59 +126,58 @@
         <span class="material-symbols-outlined">settings</span>
       </button>
     </header>
-    <div class="bg-white dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/50 rounded-3xl px-4 pt-4 pb-3 mb-4 shadow-sm">
+    <div class="bg-white dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/50 rounded-3xl px-4 py-3 mb-4 shadow-sm">
 
-      <!-- Control row: all buttons inline -->
-      <div class="flex items-center gap-2">
+      <!-- Control row: rec/stop, pausa, idle-hint eller live status, fil -->
+      <div class="flex items-center gap-3">
+
+        <!-- Rec/Stop — cirkulär, röd -->
         <button id="btn-record"
-          class="flex-1 flex items-center justify-center gap-2 py-3 bg-primary hover:bg-teal-500 active:scale-[0.98] transition-all rounded-2xl shadow-md shadow-primary/20">
-          <span class="material-symbols-outlined text-white text-xl">mic</span>
-          <span class="text-white font-semibold text-sm btn-text">Spela in</span>
+          aria-label="Spela in"
+          class="shrink-0 w-12 h-12 flex items-center justify-center bg-red-500 hover:bg-red-600 active:scale-95 transition-all rounded-full shadow-md shadow-red-500/30">
+          <span class="btn-icon block w-4 h-4 rounded-full bg-white"></span>
         </button>
 
+        <!-- Pause — cirkulär, dolt vid idle -->
         <button id="btn-pause"
-          class="hidden flex items-center justify-center gap-1.5 py-3 px-4 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 active:scale-[0.98] transition-all rounded-2xl">
-          <span class="material-symbols-outlined text-slate-600 dark:text-slate-200 text-base leading-none">pause</span>
-          <span class="text-slate-700 dark:text-slate-200 font-medium text-sm btn-pause-text">Pausa</span>
+          aria-label="Pausa"
+          class="hidden shrink-0 w-12 h-12 flex items-center justify-center bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 active:scale-95 transition-all rounded-full">
+          <span class="material-symbols-outlined text-slate-600 dark:text-slate-200 text-xl">pause</span>
         </button>
 
+        <!-- Idle hint — synlig när inspelning inte pågår -->
+        <span id="idle-hint" class="text-sm text-slate-400 dark:text-slate-500 flex-1">Redo att spela in</span>
+
+        <!-- Inspelningsstatus — dolt vid idle, fyller raden vid inspelning -->
+        <div id="recording-status" class="hidden flex items-center gap-2.5 flex-1 min-w-0">
+          <div id="eq-bar" class="flex items-end gap-[3px] h-5 shrink-0">
+            <div class="eq-col w-[5px] bg-primary" style="height:25%"></div>
+            <div class="eq-col w-[5px] bg-primary" style="height:45%"></div>
+            <div class="eq-col w-[5px] bg-primary" style="height:75%"></div>
+            <div class="eq-col w-[5px] bg-primary" style="height:100%"></div>
+            <div class="eq-col w-[5px] bg-primary" style="height:75%"></div>
+            <div class="eq-col w-[5px] bg-primary" style="height:45%"></div>
+            <div class="eq-col w-[5px] bg-primary" style="height:25%"></div>
+          </div>
+          <span id="recording-status-text" class="text-sm font-medium text-slate-600 dark:text-slate-300">Spelar in</span>
+          <span id="loopback-indicator" class="hidden lb-dot w-2.5 h-2.5 rounded-full bg-red-500 shrink-0"></span>
+          <div class="flex-1"></div>
+          <span class="font-mono text-xs text-slate-400 dark:text-slate-500 tabular-nums" id="recording-timer">00:00:00</span>
+          <span class="text-slate-300 dark:text-slate-600 text-xs select-none">·</span>
+          <span class="font-mono text-xs text-slate-400 dark:text-slate-500" id="recording-size">0 MB</span>
+          <span id="segment-badge" class="hidden px-1.5 py-0.5 bg-primary/20 text-primary text-[10px] font-bold rounded-full ml-1"></span>
+          <span id="disk-forecast" class="hidden"></span>
+        </div>
+
+        <!-- Fil — alltid synlig -->
         <button id="btn-file"
           title="Välj ljud- eller videofil"
-          class="flex items-center justify-center py-3 px-4 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 active:scale-[0.98] transition-all rounded-2xl">
+          class="shrink-0 w-12 h-12 flex items-center justify-center bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 active:scale-95 transition-all rounded-full">
           <span class="material-symbols-outlined text-slate-600 dark:text-slate-300 text-xl">folder_open</span>
         </button>
       </div>
 
       <input type="file" id="file-input" accept="audio/*,video/mp4,video/webm,video/quicktime,video/x-matroska" class="hidden" />
-
-      <!-- Recording status row — hidden when not recording -->
-      <div id="recording-indicator" class="hidden mt-3 flex items-center gap-2.5">
-
-        <!-- EQ-bar audio level visualiser (mic) -->
-        <div id="eq-bar" class="flex items-end gap-[3px] h-5 shrink-0">
-          <div class="eq-col w-[5px] bg-primary" style="height:25%"></div>
-          <div class="eq-col w-[5px] bg-primary" style="height:45%"></div>
-          <div class="eq-col w-[5px] bg-primary" style="height:75%"></div>
-          <div class="eq-col w-[5px] bg-primary" style="height:100%"></div>
-          <div class="eq-col w-[5px] bg-primary" style="height:75%"></div>
-          <div class="eq-col w-[5px] bg-primary" style="height:45%"></div>
-          <div class="eq-col w-[5px] bg-primary" style="height:25%"></div>
-        </div>
-
-        <span id="recording-status-text" class="text-sm font-medium text-slate-600 dark:text-slate-300">Spelar in</span>
-        <!-- Pulsing red dot — visible when system audio loopback is active -->
-        <span id="loopback-indicator" class="hidden lb-dot w-2.5 h-2.5 rounded-full bg-red-500 shrink-0"></span>
-
-        <div class="flex-1"></div>
-
-        <!-- Inline metrics: timer · size · segment -->
-        <span class="font-mono text-xs text-slate-400 dark:text-slate-500 tabular-nums" id="recording-timer">00:00:00</span>
-        <span class="text-slate-300 dark:text-slate-600 text-xs select-none">·</span>
-        <span class="font-mono text-xs text-slate-400 dark:text-slate-500" id="recording-size">0 MB</span>
-        <span id="segment-badge" class="hidden px-1.5 py-0.5 bg-primary/20 text-primary text-[10px] font-bold rounded-full ml-1"></span>
-        <!-- Disk forecast kept as hidden element for JS compat -->
-        <span id="disk-forecast" class="hidden"></span>
-      </div>
     </div>
     <section class="flex flex-col flex-1 overflow-hidden">
       <div class="flex items-center justify-between mb-4 px-1">
@@ -204,12 +203,6 @@
             class="flex items-center gap-1.5 text-sm font-medium text-slate-500 dark:text-slate-400 hover:text-primary transition-colors">
             <span class="material-symbols-outlined text-lg">content_copy</span>
             <span>Kopiera</span>
-          </button>
-          <button id="btn-mask-pii"
-            title="Maskera personnummer, telefon och e-post (GDPR)"
-            class="flex items-center gap-1.5 text-sm font-medium text-slate-500 dark:text-slate-400 hover:text-primary transition-colors">
-            <span class="material-symbols-outlined text-lg">shield</span>
-            <span>Maskera</span>
           </button>
           <button id="btn-segment-toggle"
             title="Växla segmentvy / råtext"
@@ -418,18 +411,6 @@
           </div>
           <input type="range" id="confidence-threshold-slider" min="10" max="99" value="60" step="1"
             class="w-full accent-primary cursor-pointer">
-        </div>
-
-        <!-- Auto-maskering GDPR -->
-        <div class="flex items-center justify-between gap-3 p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl">
-          <div>
-            <p class="text-sm font-medium text-slate-700 dark:text-slate-300">Automatisk GDPR-maskning</p>
-            <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5">Maskerar personnummer, telefonnummer och e-post efter transkribering. Bästa ansträngning — inte garanterad.</p>
-          </div>
-          <label class="relative inline-flex items-center cursor-pointer shrink-0">
-            <input type="checkbox" id="auto-mask-toggle" class="sr-only peer">
-            <div class="w-11 h-6 bg-slate-300 dark:bg-slate-600 peer-checked:bg-primary rounded-full transition-colors after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-5"></div>
-          </label>
         </div>
 
         <!-- Nedladdade modeller — välj aktiv eller ta bort -->
