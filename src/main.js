@@ -1121,7 +1121,18 @@ function hidePostRecordingActions() {
 async function saveRecordedAudio() {
   try {
     if (wasapiRecordingReady) {
-      // Rust har recorded_samples klart — spara direkt utan JS-kodning eller IPC-transfer
+      // recorded_samples i Rust har bara loopback — mic går via JS MediaRecorder i WASAPI-läget.
+      // Vänta in JS-mixen som har båda spår, konvertera till WAV och spara via save_audio_data.
+      if (wasapiDecodePromise) {
+        const mixed = await wasapiDecodePromise;
+        if (mixed && mixed.length > 0) {
+          const wavBlob  = float32ToPCM16WavBlob(mixed, 16000);
+          const wavBytes = Array.from(new Uint8Array(await wavBlob.arrayBuffer()));
+          await invoke("save_audio_data", { audioData: wavBytes });
+          return;
+        }
+      }
+      // Fallback om mix saknas (t.ex. ingen mic-stream): använd Rusts loopback-only
       await invoke("save_audio_file");
       return;
     }

@@ -37,32 +37,93 @@ pub fn resample_to_16k(input: &[f32], src_rate: u32) -> Vec<f32> {
 }
 
 /// 2:a-ordningens RBJ Butterworth-lowpass (Q = 1/√2). Stateless per anrop —
-/// kort transient i början av varje paket (~5 samples) men acceptabelt för Whisper.
+/// kort transient i början av varje paket (~5 samples) men acceptabelt för Whisper
+/// när paket är stora (file import). Använd StatefulResampler för strömmar med
+/// många små paket (WASAPI loopback) där transients staplas till hörbart sprak.
 fn butterworth_lowpass(input: &[f32], src_rate: u32, cutoff_hz: f32) -> Vec<f32> {
-    use std::f32::consts::PI;
-    let fs = src_rate as f32;
-    let fc = cutoff_hz.min(fs * 0.45); // säkerhetsmarginal under Nyquist
-    let w0 = 2.0 * PI * fc / fs;
-    let cos_w0 = w0.cos();
-    let sin_w0 = w0.sin();
-    // Q = 1/√2 för Butterworth → α = sin(ω0) / (2·Q) = sin(ω0) · √2/2
-    let alpha  = sin_w0 * std::f32::consts::FRAC_1_SQRT_2;
-    let a0     = 1.0 + alpha;
-    let b0     = ((1.0 - cos_w0) / 2.0) / a0;
-    let b1     = (1.0 - cos_w0)         / a0;
-    let b2     = ((1.0 - cos_w0) / 2.0) / a0;
-    let a1     = (-2.0 * cos_w0)        / a0;
-    let a2     = (1.0 - alpha)          / a0;
+    let mut filt = BiquadLowpass::new(src_rate, cutoff_hz);
+    filt.process(input)
+}
 
-    let mut out = Vec::with_capacity(input.len());
-    let (mut x1, mut x2, mut y1, mut y2) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
-    for &x in input {
-        let y = b0 * x + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
-        x2 = x1; x1 = x;
-        y2 = y1; y1 = y;
-        out.push(y);
+/// Stateful 2:a-ordningens biquad-lowpass. Bevarar filter-state (x1, x2, y1, y2)
+/// mellan anrop så transienter inte uppstår vid paketgränser.
+pub struct BiquadLowpass {
+    b0: f32, b1: f32, b2: f32, a1: f32, a2: f32,
+    x1: f32, x2: f32, y1: f32, y2: f32,
+}
+
+impl BiquadLowpass {
+    pub fn new(src_rate: u32, cutoff_hz: f32) -> Self {
+        use std::f32::consts::PI;
+        let fs = src_rate as f32;
+        let fc = cutoff_hz.min(fs * 0.45);
+        let w0 = 2.0 * PI * fc / fs;
+        let cos_w0 = w0.cos();
+        let sin_w0 = w0.sin();
+        // Q = 1/√2 → α = sin(ω0) · √2/2
+        let alpha  = sin_w0 * std::f32::consts::FRAC_1_SQRT_2;
+        let a0     = 1.0 + alpha;
+        Self {
+            b0: ((1.0 - cos_w0) / 2.0) / a0,
+            b1: (1.0 - cos_w0)         / a0,
+            b2: ((1.0 - cos_w0) / 2.0) / a0,
+            a1: (-2.0 * cos_w0)        / a0,
+            a2: (1.0 - alpha)          / a0,
+            x1: 0.0, x2: 0.0, y1: 0.0, y2: 0.0,
+        }
     }
-    out
+
+    pub fn process(&mut self, input: &[f32]) -> Vec<f32> {
+        let mut out = Vec::with_capacity(input.len());
+        for &x in input {
+            let y = self.b0 * x + self.b1 * self.x1 + self.b2 * self.x2
+                  - self.a1 * self.y1 - self.a2 * self.y2;
+            self.x2 = self.x1; self.x1 = x;
+            self.y2 = self.y1; self.y1 = y;
+            out.push(y);
+        }
+        out
+    }
+}
+
+/// Stateful resampler till 16 kHz: anti-alias lowpass (state bevaras mellan
+/// anrop) följt av linjär interpolation. Skapa en instans per kontinuerlig
+/// stream (mic, loopback console, loopback comms) och anropa process() per paket.
+pub struct StatefulResampler {
+    lowpass:  Option<BiquadLowpass>,
+    src_rate: u32,
+}
+
+impl StatefulResampler {
+    pub fn new(src_rate: u32) -> Self {
+        let lowpass = if src_rate > 16000 {
+            Some(BiquadLowpass::new(src_rate, 7000.0))
+        } else {
+            None
+        };
+        Self { lowpass, src_rate }
+    }
+
+    pub fn process(&mut self, input: &[f32]) -> Vec<f32> {
+        if input.is_empty() || self.src_rate == 16000 {
+            return input.to_vec();
+        }
+        let filtered: Vec<f32> = match self.lowpass.as_mut() {
+            Some(lp) => lp.process(input),
+            None     => input.to_vec(),
+        };
+        let ratio = self.src_rate as f64 / 16000.0;
+        let out_len = (filtered.len() as f64 / ratio).ceil() as usize;
+        let mut output = Vec::with_capacity(out_len);
+        for i in 0..out_len {
+            let src_idx = i as f64 * ratio;
+            let lo = src_idx.floor() as usize;
+            let hi = (lo + 1).min(filtered.len().saturating_sub(1));
+            let frac = (src_idx - src_idx.floor()) as f32;
+            output.push(filtered[lo] * (1.0 - frac) + filtered[hi] * frac);
+        }
+        output
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -144,12 +205,13 @@ impl AudioRecorder {
             eprintln!("[audio] Mic: {mic_channels}ch @ {mic_rate} Hz");
 
             let mic_buf = Arc::clone(&self.mic_samples);
+            let mut mic_resampler = StatefulResampler::new(mic_rate);
             let mic_stream = mic_device
                 .build_input_stream(
                     &mic_config.into(),
                     move |data: &[f32], _: &cpal::InputCallbackInfo| {
                         let mono = to_mono(data, mic_channels);
-                        let resampled = resample_to_16k(&mono, mic_rate);
+                        let resampled = mic_resampler.process(&mono);
                         mic_buf.lock().unwrap().extend_from_slice(&resampled);
                     },
                     |err| eprintln!("[audio] Mic error: {err}"),
@@ -207,12 +269,15 @@ impl AudioRecorder {
                         eprintln!("[audio] Loopback eConsole: {lb_channels}ch @ {lb_rate} Hz");
                         let _ = tx.send((true, needs_comms));
 
+                        // Stateful resampler — bevarar filter-state mellan paket
+                        // för att undvika klick/sprak vid paketgränser.
+                        let mut lb_resampler = StatefulResampler::new(lb_rate);
                         while !stop_console_clone.load(Ordering::SeqCst) {
                             if !lb.wait_for_buffer(200) { continue; }
                             let samples = lb.read_samples();
                             if samples.is_empty() { continue; }
                             let mono      = to_mono(&samples, lb_channels);
-                            let resampled = resample_to_16k(&mono, lb_rate);
+                            let resampled = lb_resampler.process(&mono);
                             if let Ok(mut buf) = lb_console_buf.lock() {
                                 buf.extend_from_slice(&resampled);
                             } else { break; }
@@ -254,12 +319,13 @@ impl AudioRecorder {
                                     let lb_channels = lb.get_channels();
                                     eprintln!("[audio] Loopback eCommunications: {lb_channels}ch @ {lb_rate} Hz");
 
+                                    let mut lb_resampler = StatefulResampler::new(lb_rate);
                                     while !stop_comms_clone.load(Ordering::SeqCst) {
                                         if !lb.wait_for_buffer(200) { continue; }
                                         let samples = lb.read_samples();
                                         if samples.is_empty() { continue; }
                                         let mono      = to_mono(&samples, lb_channels);
-                                        let resampled = resample_to_16k(&mono, lb_rate);
+                                        let resampled = lb_resampler.process(&mono);
                                         if let Ok(mut buf) = lb_comms_buf.lock() {
                                             buf.extend_from_slice(&resampled);
                                         } else { break; }
