@@ -915,6 +915,8 @@ async function startRecording() {
     pendingRecording = null;
     hidePostRecordingActions();
   }
+  // Rensa eventuell player från en föregående session
+  teardownPlayer();
   wasapiRecordingReady = false;
   wasapiDecodePromise  = null;
   try {
@@ -1354,7 +1356,7 @@ async function processSegments(segments) {
     transcriptSegments = [];
     showRawView();
 
-    currentPlaybackBlob = null;
+    teardownPlayer();
     transcribeBlob._float32Chunks = [];
 
     isCancelling = false;
@@ -1872,6 +1874,26 @@ function setupPlayer(blob) {
   if (dur) dur.textContent = "0:00";
 }
 
+// Tear down audio player. Anropas vid ny session (filimport eller inspelning)
+// så att en föregående sessions player inte hänger kvar.
+function teardownPlayer() {
+  if (audioPlayer) {
+    try { audioPlayer.pause(); } catch (_) {}
+    audioPlayer.removeAttribute("src");
+    audioPlayer.load();
+  }
+  if (currentPlaybackUrl) { URL.revokeObjectURL(currentPlaybackUrl); currentPlaybackUrl = null; }
+  currentPlaybackBlob = null;
+  const playerBar = document.getElementById("player-bar");
+  if (playerBar) playerBar.classList.add("hidden");
+  const fill = document.getElementById("player-fill");
+  if (fill) fill.style.width = "0%";
+  const playerTime = document.getElementById("player-time");
+  if (playerTime) playerTime.textContent = "0:00";
+  const dur = document.getElementById("player-duration");
+  if (dur) dur.textContent = "0:00";
+}
+
 // Seek audio player to a specific ms position
 function seekPlayer(ms) {
   if (!audioPlayer) return;
@@ -2010,6 +2032,7 @@ async function processAudioBlob(blob) {
 
     outputText.value = "";
     transcriptSegments = [];
+    teardownPlayer();
     showRawView();
 
     const float32Data = await decodeFileToFloat32(blob);
@@ -2141,7 +2164,7 @@ async function processAudioFile(filePath) {
 
     outputText.value = "";
     transcriptSegments = [];
-    currentPlaybackBlob = null;
+    teardownPlayer();
     showRawView();
 
     const initialPrompt = personalVocabulary.length > 0 ? personalVocabulary.join(", ") : null;
