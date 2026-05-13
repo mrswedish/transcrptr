@@ -179,10 +179,8 @@ jobs:
           echo "--- Cargo.toml efter patch ---"
           grep -A2 'target_os = "windows"' src-tauri/Cargo.toml
 
-      - name: Build Tauri App (CUDA)
-        uses: tauri-apps/tauri-action@v0
+      - name: Build CUDA binary (cargo build, no release upload)
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CMAKE_GENERATOR: Ninja
           CARGO_TARGET_DIR: D:\t
           RUSTFLAGS: -C target-feature=+crt-static
@@ -190,9 +188,10 @@ jobs:
           CXXFLAGS: /MT
           CMAKE_POLICY_DEFAULT_CMP0091: NEW
           CMAKE_MSVC_RUNTIME_LIBRARY: MultiThreaded
-        with:
-          includeRelease: false
-          includeDebug: false
+        shell: pwsh
+        run: |
+          cd src-tauri
+          cargo build --release --target x86_64-pc-windows-msvc
 
       - name: Extract Project Version
         run: |
