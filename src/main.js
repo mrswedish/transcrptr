@@ -127,8 +127,9 @@ let wasapiEnabled = false;
 let useGpu = true;
 let isCancelling = false;
 let pendingRecording = null; // { type:'float32', data:Float32Array } | { type:'segments', segments:[] }
-let wasapiRecordingReady = false; // Rust har recorded_samples — save_audio_file kan anropas direkt
+let wasapiRecordingReady = false; // Rust har recording.wav på disk — save_audio_file kan anropas direkt
 let wasapiDecodePromise  = null;  // Promise<Float32Array> för JS-mix, behövs vid transkribering
+let recordingDir         = "";    // Mapp där sessions sparas; tom = default från Rust
 let audioContext = null;
 let analyzer = null;
 let micStream = null;
@@ -313,13 +314,34 @@ async function setupEventListeners() {
       loadingText.innerText = `Transkriberar... ${overallProgress}%`;
     }
   });
+
+  // Bläddra-knapp för inspelningsmapp
+  const btnBrowseDir = document.getElementById("btn-browse-recording-dir");
+  if (btnBrowseDir) {
+    btnBrowseDir.addEventListener("click", async () => {
+      try {
+        const selected = await window.__TAURI__.dialog.open({
+          directory: true,
+          multiple: false,
+          defaultPath: recordingDir || undefined,
+          title: "Välj mapp för inspelningar",
+        });
+        if (typeof selected === "string" && selected) {
+          recordingDir = selected;
+          localStorage.setItem("recordingDir", selected);
+          const dirInput = document.getElementById("recording-dir-path");
+          if (dirInput) dirInput.value = selected;
+        }
+      } catch (e) {
+        console.warn("Mapp-val avbröts:", e);
+      }
+    });
+  }
 }
 
 // Initialize Application
 async function initialize() {
   // Visa app-version i inställningar-panelen.
-  // Hämtas via Rust-kommando (env!("CARGO_PKG_VERSION")) istället för window.__TAURI__.app,
-  // eftersom den senare har visat sig krascha appen på vissa WebView2-versioner.
   try {
     const version = await invoke("get_app_version");
     const versionLabel = document.getElementById("app-version");
@@ -327,6 +349,21 @@ async function initialize() {
   } catch (e) {
     console.warn("Kunde inte hämta version:", e);
   }
+
+  // Initiera inspelningsmapp: localStorage → fallback till Rusts default.
+  try {
+    const saved = localStorage.getItem("recordingDir");
+    if (saved && saved.trim()) {
+      recordingDir = saved.trim();
+    } else {
+      recordingDir = await invoke("get_default_recording_dir");
+    }
+    const dirInput = document.getElementById("recording-dir-path");
+    if (dirInput) dirInput.value = recordingDir;
+  } catch (e) {
+    console.warn("Kunde inte hämta inspelningsmapp:", e);
+  }
+
   initPlayer();
   loadSettings();
   await loadMicrophones();
@@ -966,8 +1003,11 @@ async function startRecording() {
       mediaRecorder = createRecorder();
       mediaRecorder.start(1000);
 
-      // Start loopback-only capture in backend (no mic there)
-      const result = await invoke("start_backend_recording", { loopbackOnly: true });
+      // Start loopback-only capture in backend (no mic there) — streamas till disk i sessionsmappen
+      const result = await invoke("start_backend_recording", {
+        loopbackOnly: true,
+        recordingDir: recordingDir || null,
+      });
 
       isRecording = true;
       isPaused = false;

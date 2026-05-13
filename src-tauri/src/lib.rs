@@ -318,14 +318,14 @@ async fn delete_model(app_handle: AppHandle, size: String, quantized: bool, revi
 #[tauri::command]
 async fn save_audio_file(app_handle: AppHandle, state: tauri::State<'_, AppState>) -> Result<(), String> {
     use tauri_plugin_dialog::FilePath;
-    use hound::{WavWriter, WavSpec, SampleFormat};
 
-    // Get current recorded samples
-    let samples: Vec<f32> = state.inner().audio_recorder.lock().unwrap()
-        .recorded_samples.lock().unwrap().clone();
+    // Streaming-flödet: hämta sökvägen till sessionsmappens recording.wav
+    let src = state.inner().audio_recorder.lock().unwrap()
+        .recording_path.lock().unwrap().clone()
+        .ok_or_else(|| "Ingen inspelning att spara".to_string())?;
 
-    if samples.is_empty() {
-        return Err("Ingen inspelning att spara".to_string());
+    if !src.exists() {
+        return Err("Inspelningsfilen saknas på disk".to_string());
     }
 
     let file_path = app_handle.dialog()
@@ -337,27 +337,26 @@ async fn save_audio_file(app_handle: AppHandle, state: tauri::State<'_, AppState
 
     match file_path {
         Some(path) => {
-            let path_str = match path {
+            let dest = match path {
                 FilePath::Path(p) => p,
                 _ => return Err("Ogiltigt filformat".to_string()),
             };
-            let spec = WavSpec {
-                channels: 1,
-                sample_rate: 16000,
-                bits_per_sample: 16,
-                sample_format: SampleFormat::Int,
-            };
-            let mut writer = WavWriter::create(&path_str, spec)
-                .map_err(|e| format!("Kunde inte skapa WAV-fil: {e}"))?;
-            for &s in &samples {
-                let pcm = (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
-                writer.write_sample(pcm).map_err(|e| format!("Skrivfel: {e}"))?;
-            }
-            writer.finalize().map_err(|e| format!("Fel vid finalisering: {e}"))?;
+            std::fs::copy(&src, &dest)
+                .map_err(|e| format!("Kunde inte spara filen: {e}"))?;
             Ok(())
         },
         None => Err("cancelled".to_string()),
     }
+}
+
+#[tauri::command]
+async fn get_default_recording_dir(app_handle: AppHandle) -> Result<String, String> {
+    let base = app_handle.path().app_local_data_dir()
+        .map_err(|e| format!("Kunde inte hämta app_local_data_dir: {e}"))?;
+    let sessions = base.join("sessions");
+    std::fs::create_dir_all(&sessions)
+        .map_err(|e| format!("Kunde inte skapa standardmapp: {e}"))?;
+    Ok(sessions.to_string_lossy().into_owned())
 }
 
 fn get_dir_size(path: &PathBuf) -> u64 {
@@ -885,16 +884,33 @@ struct RecordingStartResult {
 }
 
 #[tauri::command]
-async fn start_backend_recording(state: tauri::State<'_, AppState>, loopback_only: bool) -> Result<RecordingStartResult, String> {
+async fn start_backend_recording(
+    app_handle: AppHandle,
+    state: tauri::State<'_, AppState>,
+    loopback_only: bool,
+    recording_dir: Option<String>,
+) -> Result<RecordingStartResult, String> {
+    // Default = <app_local_data_dir>/sessions/ om JS inte skickar med en valt mapp
+    let base_dir: PathBuf = match recording_dir {
+        Some(p) if !p.is_empty() => PathBuf::from(p),
+        _ => {
+            let base = app_handle.path().app_local_data_dir()
+                .map_err(|e| format!("Kunde inte hämta app_local_data_dir: {e}"))?;
+            base.join("sessions")
+        }
+    };
+    std::fs::create_dir_all(&base_dir)
+        .map_err(|e| format!("Kunde inte skapa inspelningsmapp {}: {e}", base_dir.display()))?;
+
     let mut recorder = state.inner().audio_recorder.lock().unwrap();
-    recorder.start_recording(loopback_only)?;
+    recorder.start_recording(loopback_only, &base_dir)?;
     Ok(RecordingStartResult { loopback_active: recorder.loopback_active })
 }
 
 #[tauri::command]
 async fn stop_backend_recording(state: tauri::State<'_, AppState>) -> Result<Vec<u8>, String> {
     let mut recorder = state.inner().audio_recorder.lock().unwrap();
-    Ok(recorder.stop_recording())
+    recorder.stop_recording()
 }
 
 #[tauri::command]
@@ -980,6 +996,7 @@ pub fn run() {
             transcribe_file,
             cancel_transcription,
             get_app_version,
+            get_default_recording_dir,
             save_text_file,
             save_audio_file,
             save_audio_data,

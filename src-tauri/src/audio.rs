@@ -1,5 +1,8 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::Stream;
+use std::fs::File;
+use std::io::BufWriter;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 // SendStream: wraps cpal::Stream to satisfy Send+Sync for Tauri managed state.
@@ -9,15 +12,11 @@ unsafe impl Sync for SendStream {}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Resampler: 2:a-ordningens Butterworth-lowpass + linjär interpolation till 16 kHz.
-// Lowpass:en (cutoff 7 kHz) dämpar frekvenser nära Nyquist (8 kHz vid 16k mål)
-// så vi undviker aliasing-artefakter när 44.1k/48k-källor skalas ned. Whisper är
-// tränad på band-begränsat ljud — bättre transkribering på iPhone/Mac mic.
 // ─────────────────────────────────────────────────────────────────────────────
 pub fn resample_to_16k(input: &[f32], src_rate: u32) -> Vec<f32> {
     if src_rate == 16000 || input.is_empty() {
         return input.to_vec();
     }
-    // Endast nedsampling kan introducera aliasing — uppsampling hoppar över filtret.
     let filtered: Vec<f32> = if src_rate > 16000 {
         butterworth_lowpass(input, src_rate, 7000.0)
     } else {
@@ -36,17 +35,12 @@ pub fn resample_to_16k(input: &[f32], src_rate: u32) -> Vec<f32> {
     output
 }
 
-/// 2:a-ordningens RBJ Butterworth-lowpass (Q = 1/√2). Stateless per anrop —
-/// kort transient i början av varje paket (~5 samples) men acceptabelt för Whisper
-/// när paket är stora (file import). Använd StatefulResampler för strömmar med
-/// många små paket (WASAPI loopback) där transients staplas till hörbart sprak.
 fn butterworth_lowpass(input: &[f32], src_rate: u32, cutoff_hz: f32) -> Vec<f32> {
     let mut filt = BiquadLowpass::new(src_rate, cutoff_hz);
     filt.process(input)
 }
 
-/// Stateful 2:a-ordningens biquad-lowpass. Bevarar filter-state (x1, x2, y1, y2)
-/// mellan anrop så transienter inte uppstår vid paketgränser.
+/// Stateful 2:a-ordningens biquad-lowpass. Bevarar filter-state mellan anrop.
 pub struct BiquadLowpass {
     b0: f32, b1: f32, b2: f32, a1: f32, a2: f32,
     x1: f32, x2: f32, y1: f32, y2: f32,
@@ -60,7 +54,6 @@ impl BiquadLowpass {
         let w0 = 2.0 * PI * fc / fs;
         let cos_w0 = w0.cos();
         let sin_w0 = w0.sin();
-        // Q = 1/√2 → α = sin(ω0) · √2/2
         let alpha  = sin_w0 * std::f32::consts::FRAC_1_SQRT_2;
         let a0     = 1.0 + alpha;
         Self {
@@ -86,9 +79,7 @@ impl BiquadLowpass {
     }
 }
 
-/// Stateful resampler till 16 kHz: anti-alias lowpass (state bevaras mellan
-/// anrop) följt av linjär interpolation. Skapa en instans per kontinuerlig
-/// stream (mic, loopback console, loopback comms) och anropa process() per paket.
+/// Stateful resampler till 16 kHz. Skapa en instans per kontinuerlig stream.
 pub struct StatefulResampler {
     lowpass:  Option<BiquadLowpass>,
     src_rate: u32,
@@ -140,26 +131,57 @@ pub fn to_mono(data: &[f32], channels: u16) -> Vec<f32> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// AudioRecorder: captures mic and loopback into SEPARATE buffers,
-// then mixes them at stop_recording() time to avoid runtime race conditions.
+// WAV-spec som används i hela inspelningsledet
+// ─────────────────────────────────────────────────────────────────────────────
+fn wav_spec_16k_mono_i16() -> hound::WavSpec {
+    hound::WavSpec {
+        channels: 1,
+        sample_rate: 16000,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    }
+}
+
+type DiskWriter = hound::WavWriter<BufWriter<File>>;
+
+fn make_writer(path: &Path) -> Result<DiskWriter, String> {
+    let file = File::create(path).map_err(|e| format!("Kunde inte skapa fil {}: {e}", path.display()))?;
+    hound::WavWriter::new(BufWriter::new(file), wav_spec_16k_mono_i16())
+        .map_err(|e| format!("WAV-init: {e}"))
+}
+
+#[cfg(target_os = "windows")]
+fn write_samples(writer: &mut DiskWriter, samples: &[f32]) {
+    for &s in samples {
+        let pcm = (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
+        let _ = writer.write_sample(pcm);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AudioRecorder: streaming-to-disk för loopback (Windows), mic kvar i RAM på Mac.
+// Vid stop_recording mixas alla källor till en recording.wav i sessionsmappen.
 // ─────────────────────────────────────────────────────────────────────────────
 pub struct AudioRecorder {
     mic_stream: Option<SendStream>,
-    /// Whether loopback actually started successfully on last recording
     pub loopback_active: bool,
-    /// Final mixed buffer (used after stop)
-    pub recorded_samples: Arc<Mutex<Vec<f32>>>,
-    /// Separate mic buffer (accumulated during recording)
+
+    /// Filsökväg till slutgiltig recording.wav efter stop_recording
+    pub recording_path: Arc<Mutex<Option<PathBuf>>>,
+    /// Aktiv session-mapp under pågående inspelning
+    session_dir: Arc<Mutex<Option<PathBuf>>>,
+
+    /// Mic kvar i RAM (Mac/cpal-flödet — oförändrat från tidigare)
     mic_samples: Arc<Mutex<Vec<f32>>>,
-    /// Loopback buffer for eConsole (default render device)
-    loopback_samples: Arc<Mutex<Vec<f32>>>,
-    /// Loopback buffer for eCommunications (if different device)
+
+    /// WAV-writers för loopback streamas direkt till disk under inspelning (Windows)
     #[cfg(target_os = "windows")]
-    loopback_comms_samples: Arc<Mutex<Vec<f32>>>,
-    /// Stop signal for the eConsole loopback thread (Windows only)
+    lb_writer: Arc<Mutex<Option<DiskWriter>>>,
+    #[cfg(target_os = "windows")]
+    comms_writer: Arc<Mutex<Option<DiskWriter>>>,
+
     #[cfg(target_os = "windows")]
     loopback_stop: Option<Arc<std::sync::atomic::AtomicBool>>,
-    /// Stop signal for the eCommunications loopback thread (Windows only)
     #[cfg(target_os = "windows")]
     loopback_comms_stop: Option<Arc<std::sync::atomic::AtomicBool>>,
 }
@@ -169,11 +191,13 @@ impl AudioRecorder {
         Self {
             mic_stream: None,
             loopback_active: false,
-            recorded_samples: Arc::new(Mutex::new(Vec::new())),
+            recording_path: Arc::new(Mutex::new(None)),
+            session_dir: Arc::new(Mutex::new(None)),
             mic_samples: Arc::new(Mutex::new(Vec::new())),
-            loopback_samples: Arc::new(Mutex::new(Vec::new())),
             #[cfg(target_os = "windows")]
-            loopback_comms_samples: Arc::new(Mutex::new(Vec::new())),
+            lb_writer: Arc::new(Mutex::new(None)),
+            #[cfg(target_os = "windows")]
+            comms_writer: Arc::new(Mutex::new(None)),
             #[cfg(target_os = "windows")]
             loopback_stop: None,
             #[cfg(target_os = "windows")]
@@ -182,13 +206,29 @@ impl AudioRecorder {
     }
 
     /// `loopback_only`: when true, skip the mic stream — the browser handles mic capture.
-    pub fn start_recording(&mut self, loopback_only: bool) -> Result<(), String> {
-        let host = cpal::default_host();
+    /// `base_dir`: rotmapp där en ny `recording-<timestamp>/`-undermapp skapas för sessionen.
+    pub fn start_recording(&mut self, loopback_only: bool, base_dir: &Path) -> Result<(), String> {
+        // Skapa session-mapp
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| format!("Tid-fel: {e}"))?
+            .as_secs();
+        let session = base_dir.join(format!("recording-{}", timestamp));
+        std::fs::create_dir_all(&session)
+            .map_err(|e| format!("Kunde inte skapa inspelningsmapp {}: {e}", session.display()))?;
+        eprintln!("[audio] Session-mapp: {}", session.display());
+        *self.session_dir.lock().unwrap() = Some(session.clone());
+        *self.recording_path.lock().unwrap() = None;
 
-        // Clear all buffers
-        self.recorded_samples.lock().unwrap().clear();
+        // Nollställ mic-buffert + loopback-writers
         self.mic_samples.lock().unwrap().clear();
-        self.loopback_samples.lock().unwrap().clear();
+        #[cfg(target_os = "windows")]
+        {
+            *self.lb_writer.lock().unwrap() = None;
+            *self.comms_writer.lock().unwrap() = None;
+        }
+
+        let host = cpal::default_host();
 
         // ── 1. Microphone stream (skipped in loopback_only mode) ──────────────
         if !loopback_only {
@@ -223,8 +263,7 @@ impl AudioRecorder {
             self.mic_stream = Some(SendStream(mic_stream));
         }
 
-        // ── 2. WASAPI Endpoint Loopback (eConsole + optional eCommunications) ──
-        // Each device runs on its own dedicated std::thread with MTA COM.
+        // ── 2. WASAPI Endpoint Loopback (Windows) — streama till disk ──────────
         #[cfg(target_os = "windows")]
         {
             use std::sync::atomic::{AtomicBool, Ordering};
@@ -232,14 +271,17 @@ impl AudioRecorder {
             use std::time::Duration;
             use windows::Win32::Media::Audio::{eConsole, eCommunications};
 
-            self.loopback_comms_samples.lock().unwrap().clear();
+            // Skapa lb_console.wav writer i förväg så tråden bara behöver skriva
+            let lb_path = session.join("lb_console.wav");
+            let comms_path = session.join("lb_comms.wav");
+            *self.lb_writer.lock().unwrap() = Some(make_writer(&lb_path)?);
+            *self.comms_writer.lock().unwrap() = Some(make_writer(&comms_path)?);
 
-            let lb_console_buf = Arc::clone(&self.loopback_samples);
-            let lb_comms_buf   = Arc::clone(&self.loopback_comms_samples);
+            let lb_writer_arc    = Arc::clone(&self.lb_writer);
+            let comms_writer_arc = Arc::clone(&self.comms_writer);
 
             let stop_console = Arc::new(AtomicBool::new(false));
             let stop_console_clone = Arc::clone(&stop_console);
-            // (loopback_ok, needs_separate_comms_device)
             let (tx, rx) = mpsc::channel::<(bool, bool)>();
 
             // ── Thread 1: eConsole ───────────────────────────────────────────
@@ -269,8 +311,6 @@ impl AudioRecorder {
                         eprintln!("[audio] Loopback eConsole: {lb_channels}ch @ {lb_rate} Hz");
                         let _ = tx.send((true, needs_comms));
 
-                        // Stateful resampler — bevarar filter-state mellan paket
-                        // för att undvika klick/sprak vid paketgränser.
                         let mut lb_resampler = StatefulResampler::new(lb_rate);
                         while !stop_console_clone.load(Ordering::SeqCst) {
                             if !lb.wait_for_buffer(200) { continue; }
@@ -278,9 +318,11 @@ impl AudioRecorder {
                             if samples.is_empty() { continue; }
                             let mono      = to_mono(&samples, lb_channels);
                             let resampled = lb_resampler.process(&mono);
-                            if let Ok(mut buf) = lb_console_buf.lock() {
-                                buf.extend_from_slice(&resampled);
-                            } else { break; }
+                            if let Ok(mut writer_opt) = lb_writer_arc.lock() {
+                                if let Some(writer) = writer_opt.as_mut() {
+                                    write_samples(writer, &resampled);
+                                }
+                            }
                         }
                         eprintln!("[audio] Loopback eConsole thread exited");
                     }
@@ -292,7 +334,6 @@ impl AudioRecorder {
                     self.loopback_active = true;
                     self.loopback_stop   = Some(stop_console);
 
-                    // ── Thread 2: eCommunications (only if different device) ──
                     if needs_comms {
                         let stop_comms       = Arc::new(AtomicBool::new(false));
                         let stop_comms_clone = Arc::clone(&stop_comms);
@@ -326,9 +367,11 @@ impl AudioRecorder {
                                         if samples.is_empty() { continue; }
                                         let mono      = to_mono(&samples, lb_channels);
                                         let resampled = lb_resampler.process(&mono);
-                                        if let Ok(mut buf) = lb_comms_buf.lock() {
-                                            buf.extend_from_slice(&resampled);
-                                        } else { break; }
+                                        if let Ok(mut writer_opt) = comms_writer_arc.lock() {
+                                            if let Some(writer) = writer_opt.as_mut() {
+                                                write_samples(writer, &resampled);
+                                            }
+                                        }
                                     }
                                     eprintln!("[audio] Loopback eCommunications thread exited");
                                 }
@@ -337,11 +380,23 @@ impl AudioRecorder {
 
                         self.loopback_comms_stop = Some(stop_comms);
                         eprintln!("[audio] Capturing from two separate audio endpoints");
+                    } else {
+                        // Vi behöver inte comms-writer — stäng den så filen är tom
+                        if let Some(w) = self.comms_writer.lock().unwrap().take() {
+                            let _ = w.finalize();
+                        }
                     }
                 }
                 _ => {
                     eprintln!("[audio] Loopback unavailable");
                     self.loopback_active = false;
+                    // Stäng writers vi öppnade i förväg
+                    if let Some(w) = self.lb_writer.lock().unwrap().take() {
+                        let _ = w.finalize();
+                    }
+                    if let Some(w) = self.comms_writer.lock().unwrap().take() {
+                        let _ = w.finalize();
+                    }
                 }
             }
         }
@@ -349,9 +404,13 @@ impl AudioRecorder {
         Ok(())
     }
 
-    pub fn stop_recording(&mut self) -> Vec<u8> {
-        // Stop streams by dropping them
+    /// Returnerar slutgiltig recording.wav som bytes (för bakåt-kompabilitet med JS-flödet).
+    /// Filen finns också kvar på disk i sessionsmappen — recording_path pekar dit.
+    pub fn stop_recording(&mut self) -> Result<Vec<u8>, String> {
+        // 1. Stoppa cpal mic-stream
         self.mic_stream = None;
+
+        // 2. Signalera + vänta in loopback-trådar (Windows)
         #[cfg(target_os = "windows")]
         {
             if let Some(stop) = self.loopback_stop.take() {
@@ -360,60 +419,104 @@ impl AudioRecorder {
             if let Some(stop) = self.loopback_comms_stop.take() {
                 stop.store(true, std::sync::atomic::Ordering::SeqCst);
             }
-            // Give loopback threads ~250 ms to flush their last buffers
             std::thread::sleep(std::time::Duration::from_millis(250));
-        }
 
-        let mic = self.mic_samples.lock().unwrap();
-        let lb  = self.loopback_samples.lock().unwrap();
-        #[cfg(target_os = "windows")]
-        let comms = self.loopback_comms_samples.lock().unwrap();
-        #[cfg(not(target_os = "windows"))]
-        let comms: Vec<f32> = Vec::new();
-
-        // 3-way mix: mic + eConsole + eCommunications, padded to the longest.
-        // Skala summan med antal aktiva källor så att två "fulla" källor inte hårdklipper.
-        let active = (!mic.is_empty()) as u32 + (!lb.is_empty()) as u32 + (!comms.is_empty()) as u32;
-        let scale  = if active > 0 { 1.0 / active as f32 } else { 1.0 };
-        let len    = mic.len().max(lb.len()).max(comms.len());
-        let mut mixed: Vec<f32> = Vec::with_capacity(len);
-        for i in 0..len {
-            let m = if i < mic.len()   { mic[i]   } else { 0.0 };
-            let l = if i < lb.len()    { lb[i]    } else { 0.0 };
-            let c = if i < comms.len() { comms[i] } else { 0.0 };
-            mixed.push(((m + l + c) * scale).clamp(-1.0, 1.0));
-        }
-
-        eprintln!(
-            "[audio] Stopped. mic={}s console={}s comms={}s mixed={}s",
-            mic.len() as f32 / 16000.0,
-            lb.len() as f32 / 16000.0,
-            comms.len() as f32 / 16000.0,
-            mixed.len() as f32 / 16000.0
-        );
-
-        // Store in recorded_samples so save_audio_file can access it
-        *self.recorded_samples.lock().unwrap() = mixed.clone();
-
-        // Convert to 16-bit PCM WAV for the frontend.
-        // 16-bit is half the size of 32-bit float with no transcription quality loss
-        // (Whisper uses 16-bit internally). Smaller payload = less IPC pressure on Windows.
-        let mut cursor = std::io::Cursor::new(Vec::new());
-        let spec = hound::WavSpec {
-            channels: 1,
-            sample_rate: 16000,
-            bits_per_sample: 16,
-            sample_format: hound::SampleFormat::Int,
-        };
-
-        if let Ok(mut writer) = hound::WavWriter::new(&mut cursor, spec) {
-            for &s in &mixed {
-                let pcm = (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
-                let _ = writer.write_sample(pcm);
+            // 3. Finalize writers så WAV-headerna får korrekt sample count
+            if let Some(writer) = self.lb_writer.lock().unwrap().take() {
+                writer.finalize().map_err(|e| format!("LB finalize: {e}"))?;
             }
-            let _ = writer.finalize();
+            if let Some(writer) = self.comms_writer.lock().unwrap().take() {
+                writer.finalize().map_err(|e| format!("Comms finalize: {e}"))?;
+            }
         }
 
-        cursor.into_inner()
+        // 4. Hämta session-mapp
+        let session = self.session_dir.lock().unwrap()
+            .clone()
+            .ok_or_else(|| "Ingen aktiv inspelningssession".to_string())?;
+        let recording_path = session.join("recording.wav");
+
+        // 5. Mixa allt till recording.wav
+        let mic = self.mic_samples.lock().unwrap().clone();
+        #[cfg(target_os = "windows")]
+        {
+            let lb_path    = session.join("lb_console.wav");
+            let comms_path = session.join("lb_comms.wav");
+            mix_to_wav_streaming(&mic, Some(&lb_path), Some(&comms_path), &recording_path)?;
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            mix_to_wav_streaming(&mic, None, None, &recording_path)?;
+        }
+
+        eprintln!("[audio] Stopped → {}", recording_path.display());
+        *self.recording_path.lock().unwrap() = Some(recording_path.clone());
+
+        // Läs tillbaka recording.wav som bytes för JS-flödet (oförändrat kontrakt).
+        // Filen finns kvar på disk — krasch-skydd + recording_path pekar dit.
+        std::fs::read(&recording_path)
+            .map_err(|e| format!("Kunde inte läsa recording.wav: {e}"))
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Streamad mix av mic + två loopback-filer till en utfil.
+// Läser samples från WAV-filer en åt gången via hound::WavReader,
+// summerar med mic-buffer (in-memory), skalar och skriver till utfil.
+// Peak memory: ~64 KB (BufWriter + några samples). Hanterar timmar utan OOM.
+// ─────────────────────────────────────────────────────────────────────────────
+fn mix_to_wav_streaming(
+    mic: &[f32],
+    lb_path: Option<&Path>,
+    comms_path: Option<&Path>,
+    out_path: &Path,
+) -> Result<(), String> {
+    let lb_reader = lb_path
+        .filter(|p| p.exists())
+        .and_then(|p| hound::WavReader::open(p).ok());
+    let comms_reader = comms_path
+        .filter(|p| p.exists())
+        .and_then(|p| hound::WavReader::open(p).ok());
+
+    let lb_len     = lb_reader.as_ref().map(|r| r.duration() as usize).unwrap_or(0);
+    let comms_len  = comms_reader.as_ref().map(|r| r.duration() as usize).unwrap_or(0);
+    let mic_len    = mic.len();
+    let total_len  = mic_len.max(lb_len).max(comms_len);
+
+    let active = (mic_len > 0) as u32 + (lb_len > 0) as u32 + (comms_len > 0) as u32;
+    let scale  = if active > 0 { 1.0 / active as f32 } else { 1.0 };
+
+    let mut writer = make_writer(out_path)?;
+
+    let mut lb_iter    = lb_reader.map(|r| r.into_samples::<i16>());
+    let mut comms_iter = comms_reader.map(|r| r.into_samples::<i16>());
+
+    let i16_max_f = i16::MAX as f32;
+    for i in 0..total_len {
+        let lb_sample = lb_iter.as_mut()
+            .and_then(|it| it.next().and_then(|s| s.ok()))
+            .map(|s| s as f32 / i16_max_f)
+            .unwrap_or(0.0);
+        let comms_sample = comms_iter.as_mut()
+            .and_then(|it| it.next().and_then(|s| s.ok()))
+            .map(|s| s as f32 / i16_max_f)
+            .unwrap_or(0.0);
+        let mic_sample = if i < mic_len { mic[i] } else { 0.0 };
+
+        let mixed = ((mic_sample + lb_sample + comms_sample) * scale).clamp(-1.0, 1.0);
+        let pcm = (mixed * i16_max_f) as i16;
+        writer.write_sample(pcm).map_err(|e| format!("Skrivfel: {e}"))?;
+    }
+
+    writer.finalize().map_err(|e| format!("Mix finalize: {e}"))?;
+
+    eprintln!(
+        "[audio] Mix klar — mic={:.1}s lb={:.1}s comms={:.1}s total={:.1}s",
+        mic_len as f32 / 16000.0,
+        lb_len as f32 / 16000.0,
+        comms_len as f32 / 16000.0,
+        total_len as f32 / 16000.0,
+    );
+
+    Ok(())
 }

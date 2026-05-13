@@ -369,6 +369,21 @@
           </label>
         </div>
 
+        <!-- Mapp för inspelningar -->
+        <div class="flex flex-col gap-2 p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl">
+          <p class="text-sm font-medium text-slate-700 dark:text-slate-300">Mapp för inspelningar</p>
+          <p class="text-xs text-slate-400 dark:text-slate-500">Här sparas inspelningar direkt till disk under inspelningen — skyddar mot dataförlust vid krasch.</p>
+          <div class="flex gap-2 items-center mt-1">
+            <input type="text" id="recording-dir-path" readonly
+              class="flex-1 px-3 py-2 text-xs font-mono bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-700 dark:text-slate-300 truncate"
+              placeholder="Standardmapp..." />
+            <button id="btn-browse-recording-dir"
+              class="px-4 py-2 text-sm font-medium bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 rounded-lg transition-colors">
+              Bläddra
+            </button>
+          </div>
+        </div>
+
         <div class="flex flex-col gap-2">
           <label for="transcription-language" class="text-sm font-medium text-slate-700 dark:text-slate-300">Språk för
             transkribering</label>
