@@ -350,6 +350,39 @@ async fn save_audio_file(app_handle: AppHandle, state: tauri::State<'_, AppState
 }
 
 #[tauri::command]
+async fn recover_session(
+    state: tauri::State<'_, AppState>,
+    session_dir: String,
+) -> Result<String, String> {
+    let dir = PathBuf::from(&session_dir);
+    if !dir.is_dir() {
+        return Err("Vald mapp existerar inte".to_string());
+    }
+    let lb    = dir.join("lb_console.wav");
+    let comms = dir.join("lb_comms.wav");
+    let has_lb    = lb.exists() && std::fs::metadata(&lb).map(|m| m.len() > 44).unwrap_or(false);
+    let has_comms = comms.exists() && std::fs::metadata(&comms).map(|m| m.len() > 44).unwrap_or(false);
+    if !has_lb && !has_comms {
+        return Err("Inga loopback-filer hittades i den valda mappen".to_string());
+    }
+    if has_lb    { audio::repair_wav_header(&lb)?; }
+    if has_comms { audio::repair_wav_header(&comms)?; }
+    let recording = dir.join("recording.wav");
+    audio::mix_session_to_wav(
+        if has_lb    { Some(&lb) }    else { None },
+        if has_comms { Some(&comms) } else { None },
+        &recording,
+    )?;
+    // Sätt recording_path så save_audio_file kan användas direkt
+    if let Ok(rec) = state.inner().audio_recorder.lock() {
+        if let Ok(mut path) = rec.recording_path.lock() {
+            *path = Some(recording.clone());
+        }
+    }
+    Ok(recording.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
 async fn get_default_recording_dir(app_handle: AppHandle) -> Result<String, String> {
     let base = app_handle.path().app_local_data_dir()
         .map_err(|e| format!("Kunde inte hämta app_local_data_dir: {e}"))?;
@@ -997,6 +1030,7 @@ pub fn run() {
             cancel_transcription,
             get_app_version,
             get_default_recording_dir,
+            recover_session,
             save_text_file,
             save_audio_file,
             save_audio_data,

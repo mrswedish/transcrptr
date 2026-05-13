@@ -337,6 +337,43 @@ async function setupEventListeners() {
       }
     });
   }
+
+  // Återställ oavslutad inspelning
+  const btnRecover = document.getElementById("btn-recover-session");
+  if (btnRecover) {
+    btnRecover.addEventListener("click", async () => {
+      let selected;
+      try {
+        selected = await window.__TAURI__.dialog.open({
+          directory: true,
+          multiple: false,
+          defaultPath: recordingDir || undefined,
+          title: "Välj sessionsmapp (inspelning-...)",
+        });
+      } catch (e) {
+        console.warn("Mapp-val avbröts:", e);
+        return;
+      }
+      if (typeof selected !== "string" || !selected) return;
+      try {
+        loadingText.innerText = "Återställer inspelning...";
+        loadingOverlay.classList.remove("hidden");
+        const recordedPath = await invoke("recover_session", { sessionDir: selected });
+        loadingOverlay.classList.add("hidden");
+        // Stäng settings-modalen så användaren ser huvud-UI:t
+        document.getElementById("settings-modal")?.classList.add("hidden");
+        // Lämna över till befintligt post-recording-flöde
+        wasapiRecordingReady = true;
+        pendingRecording     = { type: "wav-file", filePath: recordedPath };
+        lastRecordedSegments = [{ startTime: new Date() }];
+        showPostRecordingActions();
+      } catch (err) {
+        loadingOverlay.classList.add("hidden");
+        const msg = typeof err === "string" ? err : err.message || String(err);
+        await message(`Återställning misslyckades: ${msg}`, { title: "Fel", kind: "error" });
+      }
+    });
+  }
 }
 
 // Initialize Application
@@ -1227,6 +1264,12 @@ async function startPendingTranscription() {
 
   btnRedo.classList.remove("hidden"); btnRedo.style.display = "inline-flex";
   if (btnSaveAudio) { btnSaveAudio.classList.remove("hidden"); btnSaveAudio.style.display = "inline-flex"; }
+
+  // Återställd inspelning: behandla som en filimport av recording.wav
+  if (rec.type === "wav-file" && rec.filePath) {
+    await processAudioFile(rec.filePath);
+    return;
+  }
 
   if (rec.type === "float32") {
     disableControls();

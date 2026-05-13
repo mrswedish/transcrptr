@@ -208,12 +208,9 @@ impl AudioRecorder {
     /// `loopback_only`: when true, skip the mic stream — the browser handles mic capture.
     /// `base_dir`: rotmapp där en ny `recording-<timestamp>/`-undermapp skapas för sessionen.
     pub fn start_recording(&mut self, loopback_only: bool, base_dir: &Path) -> Result<(), String> {
-        // Skapa session-mapp
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|e| format!("Tid-fel: {e}"))?
-            .as_secs();
-        let session = base_dir.join(format!("recording-{}", timestamp));
+        // Skapa session-mapp med läsbart datum/tid (lokal tid)
+        let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
+        let session = base_dir.join(format!("inspelning-{}", stamp));
         std::fs::create_dir_all(&session)
             .map_err(|e| format!("Kunde inte skapa inspelningsmapp {}: {e}", session.display()))?;
         eprintln!("[audio] Session-mapp: {}", session.display());
@@ -519,4 +516,43 @@ fn mix_to_wav_streaming(
     );
 
     Ok(())
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Reparera WAV-headern på en fil som inte hann finalize:as (t.ex. vid krasch).
+// Skriver om sample count + data chunk size baserat på filstorleken.
+// Idempotent — säker att köra även på fullständiga filer.
+// ─────────────────────────────────────────────────────────────────────────────
+pub fn repair_wav_header(path: &Path) -> Result<(), String> {
+    use std::io::{Seek, SeekFrom, Write};
+    let file_size = std::fs::metadata(path)
+        .map_err(|e| format!("Kunde inte läsa filstorlek: {e}"))?
+        .len();
+    if file_size <= 44 {
+        return Err("WAV-filen är för liten (mindre än header)".to_string());
+    }
+    let data_size = (file_size - 44) as u32;
+    let mut f = std::fs::OpenOptions::new().write(true).open(path)
+        .map_err(|e| format!("Kunde inte öppna fil för reparation: {e}"))?;
+    // bytes 4..8: total file size − 8
+    f.seek(SeekFrom::Start(4))
+        .map_err(|e| format!("Seek-fel: {e}"))?;
+    f.write_all(&((file_size as u32).saturating_sub(8)).to_le_bytes())
+        .map_err(|e| format!("Skrivfel: {e}"))?;
+    // bytes 40..44: data chunk size
+    f.seek(SeekFrom::Start(40))
+        .map_err(|e| format!("Seek-fel: {e}"))?;
+    f.write_all(&data_size.to_le_bytes())
+        .map_err(|e| format!("Skrivfel: {e}"))?;
+    Ok(())
+}
+
+// Streamad mix från extern session-mapp (för återställning). Likadan som
+// mix_to_wav_streaming men exponerad som publik fasad för recover_session.
+pub fn mix_session_to_wav(
+    lb_path: Option<&Path>,
+    comms_path: Option<&Path>,
+    out_path: &Path,
+) -> Result<(), String> {
+    mix_to_wav_streaming(&[], lb_path, comms_path, out_path)
 }

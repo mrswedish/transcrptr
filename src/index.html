@@ -384,6 +384,16 @@
           </div>
         </div>
 
+        <!-- Återställ oavslutad inspelning -->
+        <div class="flex flex-col gap-2 p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl">
+          <p class="text-sm font-medium text-slate-700 dark:text-slate-300">Återställ oavslutad inspelning</p>
+          <p class="text-xs text-slate-400 dark:text-slate-500">Peka ut en sessionsmapp (inspelning-...) som inte avslutades korrekt. Loopback-filerna mixas till en spelbar WAV som du kan spara eller transkribera.</p>
+          <button id="btn-recover-session"
+            class="self-end px-4 py-2 text-sm font-medium bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 rounded-lg transition-colors">
+            Välj sessionsmapp
+          </button>
+        </div>
+
         <div class="flex flex-col gap-2">
           <label for="transcription-language" class="text-sm font-medium text-slate-700 dark:text-slate-300">Språk för
             transkribering</label>

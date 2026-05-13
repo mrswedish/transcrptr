@@ -1,6 +1,6 @@
 [package]
 name = "tauri-app"
-version = "1.3.0"
+version = "1.3.1"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -33,6 +33,7 @@ symphonia = { version = "0.5", default-features = false, features = [
     "mp3", "aac", "isomp4", "wav", "ogg", "vorbis", "flac", "pcm", "adpcm"
 ] }
 num_cpus = "1.16"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 whisper-rs = { version = "0.15.1", features = ["metal"] }
