@@ -164,7 +164,8 @@ jobs:
         with:
           cuda: '12.4.0'
           method: 'network'
-          sub-packages: '["nvcc", "cudart"]'
+          # Behövs av whisper.cpp:s ggml-cuda-backend: nvcc, cudart, cublas (för matmul),
+          # cublasLt och cuda. Lämnar sub-packages tomt = hela toolkit (säkrast).
 
       - name: Install Ninja
         run: choco install ninja
