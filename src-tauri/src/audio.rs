@@ -515,6 +515,15 @@ fn mix_to_wav_streaming(
         total_len as f32 / 16000.0,
     );
 
+    // Rensa loopback-råfiler — recording.wav är nu komplett och innehåller samma data.
+    // Rensning sker FÖRST efter lyckad finalize så data inte går förlorad vid mix-fel.
+    if let Some(p) = lb_path {
+        if p.exists() { let _ = std::fs::remove_file(p); }
+    }
+    if let Some(p) = comms_path {
+        if p.exists() { let _ = std::fs::remove_file(p); }
+    }
+
     Ok(())
 }
 

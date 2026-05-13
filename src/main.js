@@ -130,6 +130,7 @@ let pendingRecording = null; // { type:'float32', data:Float32Array } | { type:'
 let wasapiRecordingReady = false; // Rust har recording.wav på disk — save_audio_file kan anropas direkt
 let wasapiDecodePromise  = null;  // Promise<Float32Array> för JS-mix, behövs vid transkribering
 let recordingDir         = "";    // Mapp där sessions sparas; tom = default från Rust
+let threadCount          = 4;     // Antal CPU-trådar för whisper.cpp (1-16); cap för att undvika krasch på multi-core
 let audioContext = null;
 let analyzer = null;
 let micStream = null;
@@ -338,6 +339,31 @@ async function setupEventListeners() {
     });
   }
 
+  // CPU-trådar-slider
+  const threadSlider = document.getElementById("thread-count-slider");
+  const threadValue  = document.getElementById("thread-count-value");
+  if (threadSlider) {
+    threadSlider.addEventListener("input", () => {
+      threadCount = parseInt(threadSlider.value, 10);
+      if (threadValue) threadValue.textContent = String(threadCount);
+      localStorage.setItem("threadCount", String(threadCount));
+    });
+  }
+
+  // Öppna loggfil för diagnostik
+  const btnShowLog = document.getElementById("btn-show-log");
+  if (btnShowLog) {
+    btnShowLog.addEventListener("click", async () => {
+      try {
+        const logPath = await invoke("get_log_path");
+        await window.__TAURI__.opener.openPath(logPath);
+      } catch (e) {
+        const msg = typeof e === "string" ? e : e.message || String(e);
+        await message(`Kunde inte öppna loggfilen: ${msg}`, { title: "Fel", kind: "error" });
+      }
+    });
+  }
+
   // Återställ oavslutad inspelning
   const btnRecover = document.getElementById("btn-recover-session");
   if (btnRecover) {
@@ -401,6 +427,20 @@ async function initialize() {
     console.warn("Kunde inte hämta inspelningsmapp:", e);
   }
 
+  // Initiera threadCount från localStorage
+  try {
+    const savedThreads = parseInt(localStorage.getItem("threadCount") || "4", 10);
+    if (!Number.isNaN(savedThreads) && savedThreads >= 1 && savedThreads <= 16) {
+      threadCount = savedThreads;
+    }
+    const slider = document.getElementById("thread-count-slider");
+    const valueEl = document.getElementById("thread-count-value");
+    if (slider) slider.value = String(threadCount);
+    if (valueEl) valueEl.textContent = String(threadCount);
+  } catch (e) {
+    console.warn("Kunde inte hämta threadCount:", e);
+  }
+
   initPlayer();
   loadSettings();
   await loadMicrophones();
@@ -408,10 +448,19 @@ async function initialize() {
   setupV11Handlers();
   updateFooter();
   refreshModelList();
-  // Visa systemljud-toggle bara på Windows (Application Loopback API)
+  // Visa systemljud-toggle + GPU-inställning bara på Windows (Application Loopback API)
   if (navigator.userAgent.includes('Windows')) {
-    document.getElementById('loopback-section')?.classList.remove('hidden');
+    const wasapiQuick = document.getElementById('wasapi-quick');
+    if (wasapiQuick) {
+      wasapiQuick.classList.remove('hidden');
+      wasapiQuick.classList.add('flex');
+    }
     document.getElementById('gpu-section')?.classList.remove('hidden');
+    const stereoHelp = document.getElementById('btn-stereo-mix-help');
+    if (stereoHelp) {
+      stereoHelp.classList.remove('hidden');
+      stereoHelp.classList.add('flex');
+    }
   }
   await ensureModelReady();
 }
@@ -1604,7 +1653,8 @@ async function transcribeBlob(blob, label, blobOffsetMs = 0) {
         language: transcriptionLanguage,
         initialPrompt,
         contextPrefix,
-        useGpu
+        useGpu,
+        threadCount
       });
       if (chunkSegs && chunkSegs.length > 0) {
         const adjusted = chunkSegs.map(s => ({
@@ -1737,7 +1787,8 @@ async function transcribeFloat32(rawFloat32Data) {
         language: transcriptionLanguage,
         initialPrompt,
         contextPrefix,
-        useGpu
+        useGpu,
+        threadCount
       });
       if (chunkSegs && chunkSegs.length > 0) {
         const adjusted = chunkSegs.map(s => ({
@@ -2302,7 +2353,8 @@ async function processAudioFile(filePath) {
       revision:     modelRevision,
       language:     transcriptionLanguage,
       initialPrompt,
-      useGpu
+      useGpu,
+      threadCount
     });
 
     if (segs && segs.length > 0) {

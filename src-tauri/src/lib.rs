@@ -203,6 +203,72 @@ fn get_model_path(app_handle: &AppHandle, size: &str, quantized: bool, revision:
     Ok(models_dir.join(filename))
 }
 
+// ── Fil-loggning ─────────────────────────────────────────────────────────────
+// Diagnostisk logg till app_local_data_dir/transcrptr.log. Behövs eftersom
+// Windows-bundlat .exe inte har synlig stderr — vi kan inte felsöka utan en fil.
+static LOG_PATH: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+fn init_logging(app_handle: &AppHandle) {
+    if let Ok(dir) = app_handle.path().app_local_data_dir() {
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("transcrptr.log");
+        let _ = LOG_PATH.set(path);
+    }
+}
+
+fn log_line(msg: &str) {
+    eprintln!("[transcrptr] {msg}");
+    if let Some(path) = LOG_PATH.get() {
+        let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+            let _ = writeln!(f, "[{now}] {msg}");
+        }
+    }
+}
+
+// Cap n_threads till ett säkert värde. Default = 4 (whisper.cpp:s original-default).
+// På Intel-laptops med 20+ logiska kärnor kan whisper.cpp kraschra; vi cap:ar vid 16.
+fn whisper_thread_count(user_pref: Option<u32>) -> i32 {
+    let detected = num_cpus::get() as u32;
+    let chosen = user_pref
+        .unwrap_or(4)
+        .clamp(1, detected.min(16));
+    log_line(&format!(
+        "thread_count: requested={user_pref:?}, detected_cpus={detected}, chosen={chosen}"
+    ));
+    chosen as i32
+}
+
+#[tauri::command]
+fn get_log_path(app_handle: AppHandle) -> Result<String, String> {
+    let dir = app_handle.path().app_local_data_dir()
+        .map_err(|e| format!("Kunde inte hämta app_local_data_dir: {e}"))?;
+    Ok(dir.join("transcrptr.log").to_string_lossy().into_owned())
+}
+
+// Försök ladda WhisperContext med begärt GPU-läge. Om GPU-init misslyckas
+// (vanligt på multi-GPU/NPU-Windows pga Vulkan-konflikt), faller vi tillbaka
+// till CPU automatiskt så användaren slipper krasch.
+fn load_whisper_with_fallback(model_path: &PathBuf, use_gpu_requested: bool) -> Result<WhisperContext, String> {
+    log_line(&format!("WhisperContext init: use_gpu={use_gpu_requested}, model={}", model_path.display()));
+    let mut params = WhisperContextParameters::default();
+    params.use_gpu = use_gpu_requested;
+    match WhisperContext::new_with_params(&model_path.to_string_lossy(), params) {
+        Ok(ctx) => {
+            log_line(&format!("WhisperContext OK (gpu={use_gpu_requested})"));
+            Ok(ctx)
+        }
+        Err(e) if use_gpu_requested => {
+            log_line(&format!("GPU-init misslyckades ({e}) — faller tillbaka till CPU"));
+            let mut cpu = WhisperContextParameters::default();
+            cpu.use_gpu = false;
+            WhisperContext::new_with_params(&model_path.to_string_lossy(), cpu)
+                .map_err(|e| format!("Kunde inte ladda modell (CPU-fallback): {e}"))
+        }
+        Err(e) => Err(format!("Kunde inte ladda modell: {e}")),
+    }
+}
+
 #[tauri::command]
 fn check_model_exists(app_handle: AppHandle, size: String, quantized: bool, revision: String) -> Result<bool, String> {
     let model_path = get_model_path(&app_handle, &size, quantized, &revision)?;
@@ -434,7 +500,7 @@ async fn get_disk_info(app_handle: AppHandle) -> Result<DiskInfo, String> {
 }
 
 #[tauri::command]
-async fn transcribe_audio(app_handle: AppHandle, state: tauri::State<'_, AppState>, audio_bytes: Vec<u8>, size: String, quantized: bool, revision: String, language: String, initial_prompt: Option<String>, context_prefix: Option<String>, use_gpu: Option<bool>) -> Result<String, String> {
+async fn transcribe_audio(app_handle: AppHandle, state: tauri::State<'_, AppState>, audio_bytes: Vec<u8>, size: String, quantized: bool, revision: String, language: String, initial_prompt: Option<String>, context_prefix: Option<String>, use_gpu: Option<bool>, thread_count: Option<u32>) -> Result<String, String> {
     state.inner().cancel_flag.store(false, Ordering::Relaxed);
     let model_path = get_model_path(&app_handle, &size, quantized, &revision)?;
     if !model_path.exists() {
@@ -450,20 +516,15 @@ async fn transcribe_audio(app_handle: AppHandle, state: tauri::State<'_, AppStat
         // Wrap everything in catch_unwind to prevent silent crashes (segfaults in whisper.cpp)
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let num_samples = audio_len / std::mem::size_of::<i16>();
-            eprintln!("[transcrptr] Transcribing {} bytes ({} samples, {:.1}s of audio, lang={})",
-                audio_len, num_samples, num_samples as f64 / 16000.0, language);
+            log_line(&format!("transcribe_audio: {} bytes ({} samples, {:.1}s), lang={}",
+                audio_len, num_samples, num_samples as f64 / 16000.0, language));
 
-            let mut ctx_params = WhisperContextParameters::default();
-            ctx_params.use_gpu = use_gpu.unwrap_or(true);
-            let ctx = WhisperContext::new_with_params(
-                &model_path.to_string_lossy(),
-                ctx_params
-            ).map_err(|e| format!("Failed to load model: {}", e))?;
-            
+            let ctx = load_whisper_with_fallback(&model_path, use_gpu.unwrap_or(true))?;
+
             let mut transcriber_state = ctx.create_state().map_err(|e| format!("Failed to create state: {}", e))?;
 
             let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
-            params.set_n_threads(num_cpus::get() as i32);
+            params.set_n_threads(whisper_thread_count(thread_count));
 
             // Build initial prompt: language hint + optional context from previous chunk + optional user vocabulary
             let lang_hint = match language.as_str() {
@@ -602,7 +663,7 @@ async fn transcribe_audio(app_handle: AppHandle, state: tauri::State<'_, AppStat
 }
 
 #[tauri::command]
-async fn transcribe_audio_segments(app_handle: AppHandle, state: tauri::State<'_, AppState>, audio_bytes: Vec<u8>, size: String, quantized: bool, revision: String, language: String, initial_prompt: Option<String>, context_prefix: Option<String>, use_gpu: Option<bool>) -> Result<Vec<TranscriptSegment>, String> {
+async fn transcribe_audio_segments(app_handle: AppHandle, state: tauri::State<'_, AppState>, audio_bytes: Vec<u8>, size: String, quantized: bool, revision: String, language: String, initial_prompt: Option<String>, context_prefix: Option<String>, use_gpu: Option<bool>, thread_count: Option<u32>) -> Result<Vec<TranscriptSegment>, String> {
     state.inner().cancel_flag.store(false, Ordering::Relaxed);
     let model_path = get_model_path(&app_handle, &size, quantized, &revision)?;
     if !model_path.exists() {
@@ -617,16 +678,11 @@ async fn transcribe_audio_segments(app_handle: AppHandle, state: tauri::State<'_
             let num_samples = audio_len / std::mem::size_of::<i16>();
             eprintln!("[transcrptr] transcribe_audio_segments {} samples, lang={}", num_samples, language);
 
-            let mut ctx_params = WhisperContextParameters::default();
-            ctx_params.use_gpu = use_gpu.unwrap_or(true);
-            let ctx = WhisperContext::new_with_params(
-                &model_path.to_string_lossy(),
-                ctx_params
-            ).map_err(|e| format!("Failed to load model: {}", e))?;
+            let ctx = load_whisper_with_fallback(&model_path, use_gpu.unwrap_or(true))?;
 
             let mut transcriber_state = ctx.create_state().map_err(|e| format!("Failed to create state: {}", e))?;
             let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
-            params.set_n_threads(num_cpus::get() as i32);
+            params.set_n_threads(whisper_thread_count(thread_count));
 
             let lang_hint = match language.as_str() {
                 "sv" => { params.set_language(Some("sv")); "Följande är en transkribering på svenska." }
@@ -743,6 +799,7 @@ async fn transcribe_file(
     language: String,
     initial_prompt: Option<String>,
     use_gpu: Option<bool>,
+    thread_count: Option<u32>,
 ) -> Result<Vec<TranscriptSegment>, String> {
     state.inner().cancel_flag.store(false, Ordering::Relaxed);
     let model_path = get_model_path(&app_handle, &size, quantized, &revision)?;
@@ -768,11 +825,8 @@ async fn transcribe_file(
 
         // Ladda modellen EN gång — återanvänds över alla chunks.
         // För en 2h-fil sparar detta ~23 onödiga modell-laddningar (varje ~1.5 GB från disk + GPU-init).
-        let mut ctx_params = WhisperContextParameters::default();
-        ctx_params.use_gpu = use_gpu_val;
-        let ctx = WhisperContext::new_with_params(&model_path.to_string_lossy(), ctx_params)
-            .map_err(|e| format!("Kunde inte ladda modell: {e}"))?;
-        let n_threads = num_cpus::get() as i32;
+        let ctx = load_whisper_with_fallback(&model_path, use_gpu_val)?;
+        let n_threads = whisper_thread_count(thread_count);
 
         while let Some(chunk_samples) = dec.next_chunk(CHUNK_SAMPLES)? {
             if cancel_flag.load(Ordering::Relaxed) { break; }
@@ -853,12 +907,14 @@ async fn transcribe_file(
                         }
                     });
 
+                    log_line(&format!("calling wstate.full chunk {}/{}: {} samples", chunk_idx + 1, total_chunks, chunk_samples.len()));
                     let res = wstate.full(params, &chunk_samples);
                     poller.abort();
                     if let Err(e) = res {
-                        eprintln!("[transcrptr] wstate.full failed for chunk {}: {e:?}", chunk_idx + 1);
+                        log_line(&format!("wstate.full FAIL chunk {}: {e:?}", chunk_idx + 1));
                         return Err(format!("Transkribering misslyckades: {e:?}"));
                     }
+                    log_line(&format!("wstate.full OK chunk {}", chunk_idx + 1));
 
                     let n = wstate.full_n_segments();
                     let mut out = Vec::new();
@@ -1016,6 +1072,12 @@ pub fn run() {
         })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            init_logging(&app.handle());
+            log_line(&format!("=== app start v{} ===", env!("CARGO_PKG_VERSION")));
+            log_line(&format!("num_cpus::get() = {}", num_cpus::get()));
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             check_model_exists,
             download_model,
@@ -1034,7 +1096,8 @@ pub fn run() {
             save_text_file,
             save_audio_file,
             save_audio_data,
-            pick_audio_file
+            pick_audio_file,
+            get_log_path
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
