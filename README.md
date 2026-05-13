@@ -112,7 +112,14 @@ Stereo Mix är en virtuell Windows-enhet som fångar allt systemljud och mixar d
 
 ## 📥 Ladda ner och installera (Windows)
 
-Gå till [Releases](https://github.com/mrswedish/transcrptr/releases) för senaste versionen och ladda ner `Transkribera-portable.exe`.
+Gå till [Releases](https://github.com/mrswedish/transcrptr/releases) för senaste versionen.
+
+### Vilken version ska jag välja?
+
+| Variant | Fil | Välj om… |
+|---------|-----|----------|
+| **Standard (Vulkan)** | `Transkribera-portable.exe` | Du har AMD-, Intel- eller NVIDIA-grafik och en enkel GPU-konfiguration. Fungerar för de flesta. |
+| **CUDA (NVIDIA)** | `Transkribera-portable-cuda.exe` | Du har en NVIDIA GeForce/RTX/Quadro **och** flera grafikkort eller en NPU (t.ex. Intel Arc + RTX, eller laptop med Intel AI Boost). Eller om standardversionen kraschar vid transkribering. Kräver NVIDIA-drivrutiner med CUDA-runtime (oftast medföljande). |
 
 ### Windows SmartScreen och säkerhet
 

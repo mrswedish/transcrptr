@@ -82,7 +82,7 @@ jobs:
             "$targetPath/x86_64-pc-windows-msvc/release/tauri-app.exe",
             "$targetPath/x86_64-pc-windows-msvc/release/Transkribera.exe"
           )
-          
+
           $found = $false
           foreach ($p in $exePaths) {
             if (Test-Path $p) {
@@ -91,7 +91,7 @@ jobs:
               break
             }
           }
-          
+
           if (-not $found) {
             Get-ChildItem -Path src-tauri/target -Filter "*.exe" -Recurse | Select-Object FullName
             Write-Error "Could not find the executable."
@@ -107,7 +107,7 @@ jobs:
             "$targetPath/release/bundle/nsis",
             "$targetPath/x86_64-pc-windows-msvc/release/bundle/nsis"
           )
-          
+
           $found = $false
           foreach ($dir in $searchPaths) {
             if (Test-Path $dir) {
@@ -120,7 +120,7 @@ jobs:
               }
             }
           }
-          
+
           if (-not $found) {
             Write-Warning "NSIS installer not found, only portable exe will be uploaded."
           }
@@ -133,3 +133,103 @@ jobs:
             Transkribera-portable.exe
             Transkribera_x64-setup.exe
           make_latest: true
+
+  build-cuda:
+    name: Windows CUDA build
+    needs: release
+    permissions:
+      contents: write
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Enable Long Paths
+        run: |
+          git config --system core.longpaths true
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name "LongPathsEnabled" -Value 1 -Force
+
+      - name: Node.js setup
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Install CUDA Toolkit
+        uses: Jimver/cuda-toolkit@v0.2.16
+        with:
+          cuda: '12.4.0'
+          method: 'network'
+          sub-packages: '["nvcc", "cudart"]'
+
+      - name: Install Ninja
+        run: choco install ninja
+
+      - name: Install frontend dependencies
+        run: npm install
+
+      - name: Patch Cargo.toml for CUDA
+        shell: bash
+        run: |
+          sed -i 's/features = \["vulkan"\]/features = ["cuda"]/' src-tauri/Cargo.toml
+          echo "--- Cargo.toml efter patch ---"
+          grep -A2 'target_os = "windows"' src-tauri/Cargo.toml
+
+      - name: Build Tauri App (CUDA)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CMAKE_GENERATOR: Ninja
+          CARGO_TARGET_DIR: D:\t
+          RUSTFLAGS: -C target-feature=+crt-static
+          CFLAGS: /MT
+          CXXFLAGS: /MT
+          CMAKE_POLICY_DEFAULT_CMP0091: NEW
+          CMAKE_MSVC_RUNTIME_LIBRARY: MultiThreaded
+        with:
+          includeRelease: false
+          includeDebug: false
+
+      - name: Extract Project Version
+        run: |
+          $VERSION = (Get-Content src-tauri/tauri.conf.json | ConvertFrom-Json).version
+          echo "APP_VERSION=$VERSION" >> $env:GITHUB_ENV
+
+      - name: Copy Portable CUDA Executable
+        env:
+          CARGO_TARGET_DIR: D:\t
+        run: |
+          $targetPath = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { "src-tauri/target" }
+          $exePaths = @(
+            "$targetPath/release/tauri-app.exe",
+            "$targetPath/release/Transkribera.exe",
+            "$targetPath/x86_64-pc-windows-msvc/release/tauri-app.exe",
+            "$targetPath/x86_64-pc-windows-msvc/release/Transkribera.exe"
+          )
+
+          $found = $false
+          foreach ($p in $exePaths) {
+            if (Test-Path $p) {
+              Copy-Item -Path $p -Destination "Transkribera-portable-cuda.exe"
+              $found = $true
+              break
+            }
+          }
+
+          if (-not $found) {
+            Get-ChildItem -Path src-tauri/target -Filter "*.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object FullName
+            Get-ChildItem -Path D:\t -Filter "*.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object FullName
+            Write-Error "Could not find the CUDA executable."
+          }
+
+      - name: Upload CUDA Binary to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: transcrptr-v${{ env.APP_VERSION }}
+          files: |
+            Transkribera-portable-cuda.exe
+          make_latest: false
