@@ -526,7 +526,11 @@ async fn transcribe_audio(app_handle: AppHandle, state: tauri::State<'_, AppStat
 
             let ctx = load_whisper_with_fallback(&model_path, use_gpu.unwrap_or(true))?;
 
-            let mut transcriber_state = ctx.create_state().map_err(|e| format!("Failed to create state: {}", e))?;
+            log_line("transcribe_audio: anropar ctx.create_state...");
+            let mut transcriber_state = match ctx.create_state() {
+                Ok(s) => { log_line("transcribe_audio: create_state OK"); s }
+                Err(e) => { log_line(&format!("transcribe_audio: create_state FAIL: {e}")); return Err(format!("Failed to create state: {}", e)); }
+            };
 
             let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
             params.set_n_threads(whisper_thread_count(thread_count));
@@ -621,8 +625,10 @@ async fn transcribe_audio(app_handle: AppHandle, state: tauri::State<'_, AppStat
                 .collect();
 
             // Run the main transcription
+            log_line(&format!("transcribe_audio: anropar transcriber_state.full med {} samples", samples.len()));
             let res = transcriber_state.full(params, &samples);
-            
+            log_line(&format!("transcribe_audio: transcriber_state.full returnerade: {:?}", res.as_ref().map(|_| "Ok").map_err(|e| format!("{e:?}"))));
+
             // Abort poller just in case
             poller_handle.abort();
 
@@ -685,7 +691,11 @@ async fn transcribe_audio_segments(app_handle: AppHandle, state: tauri::State<'_
 
             let ctx = load_whisper_with_fallback(&model_path, use_gpu.unwrap_or(true))?;
 
-            let mut transcriber_state = ctx.create_state().map_err(|e| format!("Failed to create state: {}", e))?;
+            log_line("transcribe_audio_segments: anropar ctx.create_state...");
+            let mut transcriber_state = match ctx.create_state() {
+                Ok(s) => { log_line("transcribe_audio_segments: create_state OK"); s }
+                Err(e) => { log_line(&format!("transcribe_audio_segments: create_state FAIL: {e}")); return Err(format!("Failed to create state: {}", e)); }
+            };
             let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
             params.set_n_threads(whisper_thread_count(thread_count));
 
@@ -741,7 +751,9 @@ async fn transcribe_audio_segments(app_handle: AppHandle, state: tauri::State<'_
                 .map(|b| i16::from_le_bytes([b[0], b[1]]) as f32 / 32768.0)
                 .collect();
 
+            log_line(&format!("transcribe_audio_segments: anropar transcriber_state.full med {} samples", samples.len()));
             let res = transcriber_state.full(params, &samples);
+            log_line(&format!("transcribe_audio_segments: full returnerade: {:?}", res.as_ref().map(|_| "Ok").map_err(|e| format!("{e:?}"))));
             poller_handle.abort();
 
             if let Err(e) = res {
@@ -873,8 +885,11 @@ async fn transcribe_file(
 
             let segs: Result<Vec<TranscriptSegment>, String> = {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    let mut wstate = ctx.create_state()
-                        .map_err(|e| format!("Kunde inte skapa state: {e}"))?;
+                    log_line(&format!("transcribe_file chunk {}: anropar ctx.create_state...", chunk_idx + 1));
+                    let mut wstate = match ctx.create_state() {
+                        Ok(s) => { log_line(&format!("transcribe_file chunk {}: create_state OK", chunk_idx + 1)); s }
+                        Err(e) => { log_line(&format!("transcribe_file chunk {}: create_state FAIL: {e}", chunk_idx + 1)); return Err(format!("Kunde inte skapa state: {e}")); }
+                    };
                     let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
                     params.set_n_threads(n_threads);
 

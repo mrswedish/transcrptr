@@ -112,14 +112,18 @@ Stereo Mix är en virtuell Windows-enhet som fångar allt systemljud och mixar d
 
 ## 📥 Ladda ner och installera (Windows)
 
-Gå till [Releases](https://github.com/mrswedish/transcrptr/releases) för senaste versionen.
+Gå till [Releases](https://github.com/mrswedish/transcrptr/releases) för senaste versionen och ladda ner `Transkribera-portable.exe`.
 
-### Vilken version ska jag välja?
+### Om transkriberingen kraschar
 
-| Variant | Fil | Välj om… |
-|---------|-----|----------|
-| **Standard (Vulkan)** | `Transkribera-portable.exe` | Du har AMD-, Intel- eller NVIDIA-grafik och en enkel GPU-konfiguration. Fungerar för de flesta. |
-| **CUDA (NVIDIA)** | `Transkribera-portable-cuda.exe` | Du har en NVIDIA GeForce/RTX/Quadro **och** flera grafikkort eller en NPU (t.ex. Intel Arc + RTX, eller laptop med Intel AI Boost). Eller om standardversionen kraschar vid transkribering. Kräver NVIDIA-drivrutiner med CUDA-runtime (oftast medföljande). |
+På datorer med **flera grafikkort eller en NPU** (t.ex. laptop med Intel Arc + NVIDIA, eller Intel AI Boost) kan Vulkan välja "fel" grafikkort och appen kraschar tyst när transkriberingen startar. Workaround:
+
+1. Öppna **Inställningar** (kugghjulet)
+2. Sänk **CPU-trådar för transkribering** till **4**
+3. Stäng av växeln **GPU-acceleration**
+4. Försök transkribera igen — det är långsammare men ska INTE krascha
+
+Om problemet kvarstår: öppna **Inställningar → Öppna loggfil** och skicka loggens innehåll för diagnostik.
 
 ### Windows SmartScreen och säkerhet
 
