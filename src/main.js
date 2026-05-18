@@ -177,6 +177,42 @@ function loadSettings() {
 
   const wasapiToggle = document.getElementById("wasapi-toggle");
   if (wasapiToggle) wasapiToggle.checked = wasapiEnabled;
+
+  // Visuell sync av systemljud-växeln (huvud-UI) — bg/text/badge skiftar mellan AV och PÅ
+  const wasapiQuickEl  = document.getElementById("wasapi-quick");
+  const wasapiStatusEl = document.getElementById("wasapi-status");
+  const syncWasapiVisual = () => {
+    const on = !!(wasapiToggle && wasapiToggle.checked);
+    if (!wasapiQuickEl) return;
+    if (on) {
+      wasapiQuickEl.classList.add("bg-primary", "border-primary", "shadow-md", "shadow-primary/20");
+      wasapiQuickEl.classList.remove("bg-slate-50", "dark:bg-slate-900", "border-slate-200", "dark:border-slate-700");
+      wasapiQuickEl.querySelectorAll(".wasapi-icon, .wasapi-label").forEach(s => {
+        s.classList.add("text-white");
+        s.classList.remove("text-slate-400", "text-slate-500", "dark:text-slate-400");
+      });
+      if (wasapiStatusEl) {
+        wasapiStatusEl.textContent = "PÅ";
+        wasapiStatusEl.classList.add("bg-white/20", "text-white");
+        wasapiStatusEl.classList.remove("bg-slate-200", "dark:bg-slate-700", "text-slate-500", "dark:text-slate-400");
+      }
+    } else {
+      wasapiQuickEl.classList.remove("bg-primary", "border-primary", "shadow-md", "shadow-primary/20");
+      wasapiQuickEl.classList.add("bg-slate-50", "dark:bg-slate-900", "border-slate-200", "dark:border-slate-700");
+      wasapiQuickEl.querySelectorAll(".wasapi-icon, .wasapi-label").forEach(s => {
+        s.classList.remove("text-white");
+        s.classList.add("text-slate-400");
+      });
+      if (wasapiStatusEl) {
+        wasapiStatusEl.textContent = "AV";
+        wasapiStatusEl.classList.remove("bg-white/20", "text-white");
+        wasapiStatusEl.classList.add("bg-slate-200", "dark:bg-slate-700", "text-slate-500", "dark:text-slate-400");
+      }
+    }
+  };
+  if (wasapiToggle) wasapiToggle.addEventListener("change", syncWasapiVisual);
+  syncWasapiVisual();
+
   const gpuToggle = document.getElementById("gpu-toggle");
   if (gpuToggle) gpuToggle.checked = useGpu;
 

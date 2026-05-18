@@ -145,10 +145,11 @@
           class="flex-1 min-w-0 px-3 py-2 text-sm bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-700 dark:text-slate-300 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary truncate">
           <option value="default">Systemets standardmikrofon</option>
         </select>
-        <label id="wasapi-quick" class="hidden items-center gap-2 cursor-pointer px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg shrink-0">
-          <input type="checkbox" id="wasapi-toggle" class="sr-only peer">
-          <span class="material-symbols-outlined text-slate-400 peer-checked:text-primary text-lg">volume_up</span>
-          <span class="text-xs font-medium text-slate-500 dark:text-slate-400 peer-checked:text-primary">Systemljud</span>
+        <label id="wasapi-quick" class="hidden items-center gap-2 cursor-pointer px-3 py-2 rounded-lg shrink-0 transition-colors bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700">
+          <input type="checkbox" id="wasapi-toggle" class="sr-only">
+          <span class="wasapi-icon material-symbols-outlined text-slate-400 text-lg">volume_up</span>
+          <span class="wasapi-label text-xs font-medium text-slate-500 dark:text-slate-400">Systemljud</span>
+          <span id="wasapi-status" class="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-400">AV</span>
         </label>
       </div>
 
