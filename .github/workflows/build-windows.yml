@@ -180,7 +180,7 @@ jobs:
           echo "--- Cargo.toml efter patch ---"
           grep -A2 'target_os = "windows"' src-tauri/Cargo.toml
 
-      - name: Build CUDA binary (cargo build, no release upload)
+      - name: Build CUDA binary (static linking for portable exe)
         env:
           CMAKE_GENERATOR: Ninja
           CARGO_TARGET_DIR: D:\t
@@ -189,6 +189,12 @@ jobs:
           CXXFLAGS: /MT
           CMAKE_POLICY_DEFAULT_CMP0091: NEW
           CMAKE_MSVC_RUNTIME_LIBRARY: MultiThreaded
+          # Tvinga statisk CUDA-runtime så cudart64_12.dll inte krävs separat
+          CMAKE_CUDA_RUNTIME_LIBRARY: Static
+          CUDA_USE_STATIC_CUDA_RUNTIME: "ON"
+          # Signal till whisper.cpp:s cmake att föredra statiska CUDA-libs
+          GGML_STATIC: "ON"
+          GGML_CUDA_USE_STATIC_LIBS: "ON"
         shell: pwsh
         run: |
           cd src-tauri
@@ -224,6 +230,34 @@ jobs:
             Get-ChildItem -Path src-tauri/target -Filter "*.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object FullName
             Get-ChildItem -Path D:\t -Filter "*.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object FullName
             Write-Error "Could not find the CUDA executable."
+          }
+
+      - name: Verify CUDA exe is portable (no dynamic CUDA DLL deps)
+        shell: pwsh
+        run: |
+          $exe = "Transkribera-portable-cuda.exe"
+          if (-not (Test-Path $exe)) { Write-Error "exe saknas"; exit 1 }
+          # Hitta dumpbin via vswhere så vi inte hårdkodar MSVC-versions-sökväg
+          $vswhere = "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsPath  = & $vswhere -latest -property installationPath
+          $dumpbin = Get-ChildItem -Path "$vsPath\VC\Tools\MSVC" -Recurse -Filter "dumpbin.exe" `
+                       -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $dumpbin) {
+            Write-Warning "dumpbin saknas — hoppar över DLL-verifiering"
+          } else {
+            $deps = & $dumpbin.FullName /dependents $exe
+            $forbidden = @("cudart64_12.dll", "cublas64_12.dll", "cublasLt64_12.dll")
+            $failed = $false
+            foreach ($dll in $forbidden) {
+              if ($deps -match $dll) {
+                Write-Error "FEL: $exe har dynamiskt beroende av $dll — statisk länkning misslyckades"
+                $failed = $true
+              }
+            }
+            if ($failed) { exit 1 }
+            Write-Host "OK: .exe är portable utan dynamiska CUDA-DLL-beroenden"
+            $sizeMB = [math]::Round((Get-Item $exe).Length / 1MB, 1)
+            Write-Host "Filstorlek: $sizeMB MB"
           }
 
       - name: Upload CUDA Binary to Release
