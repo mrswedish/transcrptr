@@ -380,7 +380,9 @@ async function setupEventListeners() {
   const threadValue  = document.getElementById("thread-count-value");
   if (threadSlider) {
     threadSlider.addEventListener("input", () => {
-      threadCount = parseInt(threadSlider.value, 10);
+      // Clampa här också om DOM-värdet manipulerats (DevTools eller felaktig HTML)
+      const raw = parseInt(threadSlider.value, 10);
+      threadCount = Number.isFinite(raw) ? Math.max(1, Math.min(16, raw)) : 4;
       if (threadValue) threadValue.textContent = String(threadCount);
       localStorage.setItem("threadCount", String(threadCount));
     });
@@ -424,10 +426,21 @@ async function setupEventListeners() {
         loadingOverlay.classList.add("hidden");
         // Stäng settings-modalen så användaren ser huvud-UI:t
         document.getElementById("settings-modal")?.classList.add("hidden");
+        // Parsa sessionens faktiska starttid ur mappnamnet i stället för "now"
+        const folderName = selected.split(/[/\\]/).pop() || "";
+        let sessionStart = new Date();
+        const newFmt = folderName.match(/^inspelning-(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})$/);
+        const oldFmt = folderName.match(/^recording-(\d+)$/);
+        if (newFmt) {
+          const [, y, m, d, hh, mm, ss] = newFmt;
+          sessionStart = new Date(`${y}-${m}-${d}T${hh}:${mm}:${ss}`);
+        } else if (oldFmt) {
+          sessionStart = new Date(parseInt(oldFmt[1], 10) * 1000);
+        }
         // Lämna över till befintligt post-recording-flöde
         wasapiRecordingReady = true;
         pendingRecording     = { type: "wav-file", filePath: recordedPath };
-        lastRecordedSegments = [{ startTime: new Date() }];
+        lastRecordedSegments = [{ startTime: sessionStart }];
         showPostRecordingActions();
       } catch (err) {
         loadingOverlay.classList.add("hidden");

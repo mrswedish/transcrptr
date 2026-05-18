@@ -216,9 +216,14 @@ fn init_logging(app_handle: &AppHandle) {
     }
 }
 
+// Global lås så parallella trådar (transcribe-poller + main-loop) inte interfererar
+// med varandras writeln!-anrop. Append+writeln är inte atomärt på alla plattformar.
+static LOG_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn log_line(msg: &str) {
     eprintln!("[transcrptr] {msg}");
     if let Some(path) = LOG_PATH.get() {
+        let _guard = LOG_LOCK.lock();
         let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
         if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
             let _ = writeln!(f, "[{now}] {msg}");

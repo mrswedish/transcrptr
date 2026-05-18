@@ -533,16 +533,27 @@ fn mix_to_wav_streaming(
 // Idempotent — säker att köra även på fullständiga filer.
 // ─────────────────────────────────────────────────────────────────────────────
 pub fn repair_wav_header(path: &Path) -> Result<(), String> {
-    use std::io::{Seek, SeekFrom, Write};
+    use std::io::{Read, Seek, SeekFrom, Write};
     let file_size = std::fs::metadata(path)
         .map_err(|e| format!("Kunde inte läsa filstorlek: {e}"))?
         .len();
     if file_size <= 44 {
         return Err("WAV-filen är för liten (mindre än header)".to_string());
     }
-    let data_size = (file_size - 44) as u32;
-    let mut f = std::fs::OpenOptions::new().write(true).open(path)
+    // Skydd mot korruption av icke-WAV-filer: kräv RIFF/WAVE-signatur innan vi skriver.
+    let mut f = std::fs::OpenOptions::new().read(true).write(true).open(path)
         .map_err(|e| format!("Kunde inte öppna fil för reparation: {e}"))?;
+    let mut sig = [0u8; 12];
+    f.read_exact(&mut sig)
+        .map_err(|e| format!("Kunde inte läsa fil-signatur: {e}"))?;
+    if &sig[0..4] != b"RIFF" || &sig[8..12] != b"WAVE" {
+        return Err("Filen är inte en WAV (saknar RIFF/WAVE-signatur)".to_string());
+    }
+    // WAV-formatet stödjer max ~4 GB filer; vägra reparera större filer.
+    if file_size > u32::MAX as u64 {
+        return Err(format!("WAV-filen är för stor (>4 GB, {} bytes)", file_size));
+    }
+    let data_size = (file_size - 44) as u32;
     // bytes 4..8: total file size − 8
     f.seek(SeekFrom::Start(4))
         .map_err(|e| format!("Seek-fel: {e}"))?;
