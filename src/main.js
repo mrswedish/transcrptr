@@ -131,6 +131,7 @@ let wasapiRecordingReady = false; // Rust har recording.wav på disk — save_au
 let wasapiDecodePromise  = null;  // Promise<Float32Array> för JS-mix, behövs vid transkribering
 let recordingDir         = "";    // Mapp där sessions sparas; tom = default från Rust
 let threadCount          = 4;     // Antal CPU-trådar för whisper.cpp (1-16); cap för att undvika krasch på multi-core
+let gpuDeviceIndex       = null;  // GPU-index (0-7) eller null = auto. Multi-GPU-stöd via WhisperContextParameters.gpu_device
 let audioContext = null;
 let analyzer = null;
 let micStream = null;
@@ -488,6 +489,34 @@ async function initialize() {
     if (valueEl) valueEl.textContent = String(threadCount);
   } catch (e) {
     console.warn("Kunde inte hämta threadCount:", e);
+  }
+
+  // Initiera gpuDeviceIndex från localStorage (för multi-GPU-system)
+  try {
+    const savedGpuIdx = localStorage.getItem("gpuDeviceIndex");
+    if (savedGpuIdx !== null && savedGpuIdx !== "") {
+      const n = parseInt(savedGpuIdx, 10);
+      if (Number.isFinite(n) && n >= 0 && n <= 7) gpuDeviceIndex = n;
+    }
+    const gpuIdxInput = document.getElementById("gpu-device-index");
+    if (gpuIdxInput) gpuIdxInput.value = gpuDeviceIndex === null ? "" : String(gpuDeviceIndex);
+    if (gpuIdxInput) {
+      gpuIdxInput.addEventListener("input", () => {
+        const raw = gpuIdxInput.value.trim();
+        if (raw === "") {
+          gpuDeviceIndex = null;
+          localStorage.removeItem("gpuDeviceIndex");
+        } else {
+          const n = parseInt(raw, 10);
+          if (Number.isFinite(n) && n >= 0 && n <= 7) {
+            gpuDeviceIndex = n;
+            localStorage.setItem("gpuDeviceIndex", String(n));
+          }
+        }
+      });
+    }
+  } catch (e) {
+    console.warn("Kunde inte hämta gpuDeviceIndex:", e);
   }
 
   initPlayer();
@@ -1703,7 +1732,8 @@ async function transcribeBlob(blob, label, blobOffsetMs = 0) {
         initialPrompt,
         contextPrefix,
         useGpu,
-        threadCount
+        threadCount,
+        gpuDevice: gpuDeviceIndex
       });
       if (chunkSegs && chunkSegs.length > 0) {
         const adjusted = chunkSegs.map(s => ({
@@ -1837,7 +1867,8 @@ async function transcribeFloat32(rawFloat32Data) {
         initialPrompt,
         contextPrefix,
         useGpu,
-        threadCount
+        threadCount,
+        gpuDevice: gpuDeviceIndex
       });
       if (chunkSegs && chunkSegs.length > 0) {
         const adjusted = chunkSegs.map(s => ({
@@ -2403,7 +2434,8 @@ async function processAudioFile(filePath) {
       language:     transcriptionLanguage,
       initialPrompt,
       useGpu,
-      threadCount
+      threadCount,
+      gpuDevice: gpuDeviceIndex
     });
 
     if (segs && segs.length > 0) {

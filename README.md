@@ -119,9 +119,8 @@ Gå till [Releases](https://github.com/mrswedish/transcrptr/releases) för senas
 På datorer med **flera grafikkort eller en NPU** (t.ex. laptop med Intel Arc + NVIDIA, eller Intel AI Boost) kan Vulkan välja "fel" grafikkort och appen kraschar tyst när transkriberingen startar. Workaround:
 
 1. Öppna **Inställningar** (kugghjulet)
-2. Sänk **CPU-trådar för transkribering** till **4**
-3. Stäng av växeln **GPU-acceleration**
-4. Försök transkribera igen — det är långsammare men ska INTE krascha
+2. Ange ett **GPU-index** under GPU-acceleration: testa `0`, sedan `1`, sedan `2` osv tills transkriberingen fungerar — detta tvingar whisper att bara använda just det grafikkortet
+3. Om inget GPU-index fungerar: sänk **CPU-trådar för transkribering** till **4** och stäng av växeln **GPU-acceleration** — det är långsammare men ska INTE krascha
 
 Om problemet kvarstår: öppna **Inställningar → Öppna loggfil** och skicka loggens innehåll för diagnostik.
 

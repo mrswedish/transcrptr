@@ -254,20 +254,29 @@ fn get_log_path(app_handle: AppHandle) -> Result<String, String> {
 // Försök ladda WhisperContext med begärt GPU-läge. Om GPU-init misslyckas
 // (vanligt på multi-GPU/NPU-Windows pga Vulkan-konflikt), faller vi tillbaka
 // till CPU automatiskt så användaren slipper krasch.
-fn load_whisper_with_fallback(model_path: &PathBuf, use_gpu_requested: bool) -> Result<WhisperContext, String> {
-    log_line(&format!("WhisperContext init: use_gpu={use_gpu_requested}, model={}", model_path.display()));
+fn load_whisper_with_fallback(
+    model_path: &PathBuf,
+    use_gpu_requested: bool,
+    gpu_device: Option<i32>,
+) -> Result<WhisperContext, String> {
+    let chosen_device = gpu_device.unwrap_or(0);
+    log_line(&format!(
+        "WhisperContext init: use_gpu={use_gpu_requested}, gpu_device={chosen_device}, model={}",
+        model_path.display()
+    ));
     let mut params = WhisperContextParameters::default();
     params.use_gpu = use_gpu_requested;
-    match WhisperContext::new_with_params(&model_path.to_string_lossy(), params) {
+    params.gpu_device = chosen_device;
+    match WhisperContext::new_with_params(model_path.as_path(), params) {
         Ok(ctx) => {
-            log_line(&format!("WhisperContext OK (gpu={use_gpu_requested})"));
+            log_line(&format!("WhisperContext OK (gpu={use_gpu_requested}, device={chosen_device})"));
             Ok(ctx)
         }
         Err(e) if use_gpu_requested => {
             log_line(&format!("GPU-init misslyckades ({e}) — faller tillbaka till CPU"));
             let mut cpu = WhisperContextParameters::default();
             cpu.use_gpu = false;
-            WhisperContext::new_with_params(&model_path.to_string_lossy(), cpu)
+            WhisperContext::new_with_params(model_path.as_path(), cpu)
                 .map_err(|e| format!("Kunde inte ladda modell (CPU-fallback): {e}"))
         }
         Err(e) => Err(format!("Kunde inte ladda modell: {e}")),
@@ -505,7 +514,7 @@ async fn get_disk_info(app_handle: AppHandle) -> Result<DiskInfo, String> {
 }
 
 #[tauri::command]
-async fn transcribe_audio(app_handle: AppHandle, state: tauri::State<'_, AppState>, audio_bytes: Vec<u8>, size: String, quantized: bool, revision: String, language: String, initial_prompt: Option<String>, context_prefix: Option<String>, use_gpu: Option<bool>, thread_count: Option<u32>) -> Result<String, String> {
+async fn transcribe_audio(app_handle: AppHandle, state: tauri::State<'_, AppState>, audio_bytes: Vec<u8>, size: String, quantized: bool, revision: String, language: String, initial_prompt: Option<String>, context_prefix: Option<String>, use_gpu: Option<bool>, thread_count: Option<u32>, gpu_device: Option<i32>) -> Result<String, String> {
     state.inner().cancel_flag.store(false, Ordering::Relaxed);
     let model_path = get_model_path(&app_handle, &size, quantized, &revision)?;
     if !model_path.exists() {
@@ -524,7 +533,7 @@ async fn transcribe_audio(app_handle: AppHandle, state: tauri::State<'_, AppStat
             log_line(&format!("transcribe_audio: {} bytes ({} samples, {:.1}s), lang={}",
                 audio_len, num_samples, num_samples as f64 / 16000.0, language));
 
-            let ctx = load_whisper_with_fallback(&model_path, use_gpu.unwrap_or(true))?;
+            let ctx = load_whisper_with_fallback(&model_path, use_gpu.unwrap_or(true), gpu_device)?;
 
             log_line("transcribe_audio: anropar ctx.create_state...");
             let mut transcriber_state = match ctx.create_state() {
@@ -674,7 +683,7 @@ async fn transcribe_audio(app_handle: AppHandle, state: tauri::State<'_, AppStat
 }
 
 #[tauri::command]
-async fn transcribe_audio_segments(app_handle: AppHandle, state: tauri::State<'_, AppState>, audio_bytes: Vec<u8>, size: String, quantized: bool, revision: String, language: String, initial_prompt: Option<String>, context_prefix: Option<String>, use_gpu: Option<bool>, thread_count: Option<u32>) -> Result<Vec<TranscriptSegment>, String> {
+async fn transcribe_audio_segments(app_handle: AppHandle, state: tauri::State<'_, AppState>, audio_bytes: Vec<u8>, size: String, quantized: bool, revision: String, language: String, initial_prompt: Option<String>, context_prefix: Option<String>, use_gpu: Option<bool>, thread_count: Option<u32>, gpu_device: Option<i32>) -> Result<Vec<TranscriptSegment>, String> {
     state.inner().cancel_flag.store(false, Ordering::Relaxed);
     let model_path = get_model_path(&app_handle, &size, quantized, &revision)?;
     if !model_path.exists() {
@@ -689,7 +698,7 @@ async fn transcribe_audio_segments(app_handle: AppHandle, state: tauri::State<'_
             let num_samples = audio_len / std::mem::size_of::<i16>();
             eprintln!("[transcrptr] transcribe_audio_segments {} samples, lang={}", num_samples, language);
 
-            let ctx = load_whisper_with_fallback(&model_path, use_gpu.unwrap_or(true))?;
+            let ctx = load_whisper_with_fallback(&model_path, use_gpu.unwrap_or(true), gpu_device)?;
 
             log_line("transcribe_audio_segments: anropar ctx.create_state...");
             let mut transcriber_state = match ctx.create_state() {
@@ -817,6 +826,7 @@ async fn transcribe_file(
     initial_prompt: Option<String>,
     use_gpu: Option<bool>,
     thread_count: Option<u32>,
+    gpu_device: Option<i32>,
 ) -> Result<Vec<TranscriptSegment>, String> {
     state.inner().cancel_flag.store(false, Ordering::Relaxed);
     let model_path = get_model_path(&app_handle, &size, quantized, &revision)?;
@@ -842,7 +852,7 @@ async fn transcribe_file(
 
         // Ladda modellen EN gång — återanvänds över alla chunks.
         // För en 2h-fil sparar detta ~23 onödiga modell-laddningar (varje ~1.5 GB från disk + GPU-init).
-        let ctx = load_whisper_with_fallback(&model_path, use_gpu_val)?;
+        let ctx = load_whisper_with_fallback(&model_path, use_gpu_val, gpu_device)?;
         let n_threads = whisper_thread_count(thread_count);
 
         while let Some(chunk_samples) = dec.next_chunk(CHUNK_SAMPLES)? {

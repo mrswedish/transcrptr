@@ -367,15 +367,25 @@
         </div>
 
         <!-- GPU-acceleration (Vulkan, Windows only) -->
-        <div id="gpu-section" class="hidden flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl">
-          <div>
-            <p class="text-sm font-medium text-slate-700 dark:text-slate-300">GPU-acceleration</p>
-            <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5">Använder grafikkortet (Vulkan) för snabbare transkribering. Stäng av om du har flera GPUer eller en NPU (t.ex. Intel Arc + NVIDIA), äldre/integrerade grafikkort, eller om transkriberingen kraschar.</p>
+        <div id="gpu-section" class="hidden flex flex-col gap-3 p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl">
+          <div class="flex items-center justify-between">
+            <div>
+              <p class="text-sm font-medium text-slate-700 dark:text-slate-300">GPU-acceleration</p>
+              <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5">Använder grafikkortet (Vulkan) för snabbare transkribering. Stäng av om du har flera GPUer eller en NPU (t.ex. Intel Arc + NVIDIA), äldre/integrerade grafikkort, eller om transkriberingen kraschar.</p>
+            </div>
+            <label class="relative inline-flex items-center cursor-pointer ml-4 flex-shrink-0">
+              <input type="checkbox" id="gpu-toggle" class="sr-only peer" checked>
+              <div class="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+            </label>
           </div>
-          <label class="relative inline-flex items-center cursor-pointer ml-4 flex-shrink-0">
-            <input type="checkbox" id="gpu-toggle" class="sr-only peer" checked>
-            <div class="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
-          </label>
+          <div class="flex items-center gap-3 pt-2 border-t border-slate-200 dark:border-slate-700">
+            <div class="flex-1">
+              <p class="text-xs font-medium text-slate-600 dark:text-slate-400">GPU-index (avancerat)</p>
+              <p class="text-[11px] text-slate-400 dark:text-slate-500">Vid multi-GPU-system: testa 0, 1, 2 osv för att tvinga ett specifikt grafikkort. Lämna tomt för automatiskt val.</p>
+            </div>
+            <input type="number" id="gpu-device-index" min="0" max="7" placeholder="auto"
+              class="w-20 px-2 py-1 text-sm bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-700 dark:text-slate-300 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary">
+          </div>
         </div>
 
         <!-- Systemljud via WASAPI Endpoint Loopback (Windows) -->

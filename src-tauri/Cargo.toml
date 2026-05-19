@@ -1,6 +1,6 @@
 [package]
 name = "tauri-app"
-version = "1.3.10"
+version = "1.3.11"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -36,10 +36,10 @@ num_cpus = "1.16"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-whisper-rs = { version = "0.15.1", features = ["metal"] }
+whisper-rs = { version = "0.16", features = ["metal"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-whisper-rs = { version = "0.15.1", features = ["vulkan"] }
+whisper-rs = { version = "0.16", features = ["vulkan"] }
 windows = { version = "0.58", features = [
     "Win32_Foundation",
     "Win32_Media_Audio",
