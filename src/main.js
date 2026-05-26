@@ -2,6 +2,12 @@ const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 const message = window.__TAURI__.dialog ? window.__TAURI__.dialog.message : window.alert;
 
+/// Skickar en logg-rad till Rust som skriver den till transcrptr.log.
+/// Fire-and-forget — vi väntar inte på resultatet.
+function logToFile(msg) {
+  invoke("log_message", { msg: `[JS] ${msg}` }).catch(() => {});
+}
+
 // UI Elements
 const badge = document.getElementById("status-badge");
 const btnRecord = document.getElementById("btn-record");
@@ -1164,8 +1170,25 @@ async function startRecording() {
         animateEq(average);
       }
 
-      mediaRecorder = createRecorder();
-      mediaRecorder.start(1000);
+      // v1.4.0: Streama mic-PCM direkt till Rust istället för att samla MediaRecorder-blobs.
+      // Eliminerar JS-side mic-blob-buffring (~150 MB för 1.5h) och OOM-krasch vid stop.
+      // ScriptProcessorNode är deprecated men fungerar i alla moderna webviews; PCM via callback.
+      const wasapiSampleRate = audioContext.sampleRate;  // typiskt 48000 eller 44100
+      const wasapiProcessor = audioContext.createScriptProcessor(4096, 1, 1);
+      wasapiProcessor.onaudioprocess = (e) => {
+        if (!isRecording || isPaused) return;
+        const inputBuffer = e.inputBuffer.getChannelData(0);
+        // Klona — inputBuffer kan invalideras efter callback
+        const samples = Array.from(inputBuffer);
+        invoke("append_mic_chunk", { samples, sampleRate: wasapiSampleRate })
+          .catch(err => console.warn("append_mic_chunk:", err));
+      };
+      wasapiSource.connect(wasapiProcessor);
+      // ScriptProcessor måste anslutas till destination för att onaudioprocess ska fyra
+      wasapiProcessor.connect(audioContext.destination);
+      // Spara så vi kan stänga ner vid stop
+      window.__wasapiProcessor = wasapiProcessor;
+      window.__wasapiSource = wasapiSource;
 
       // Start loopback-only capture in backend (no mic there) — streamas till disk i sessionsmappen
       const result = await invoke("start_backend_recording", {
@@ -1393,8 +1416,17 @@ async function startPendingTranscription() {
   if (btnSaveAudio) { btnSaveAudio.classList.remove("hidden"); btnSaveAudio.style.display = "inline-flex"; }
 
   // Återställd inspelning: behandla som en filimport av recording.wav
-  if (rec.type === "wav-file" && rec.filePath) {
-    await processAudioFile(rec.filePath);
+  if (rec.type === "wav-file") {
+    // filePath kan vara null (WASAPI-flödet) — då hämtar vi Rusts recording_path
+    let path = rec.filePath;
+    if (!path) {
+      try { path = await invoke("get_recording_path"); }
+      catch (e) {
+        await message(`Ingen inspelning att transkribera: ${e}`, { title: "Fel", kind: "error" });
+        return;
+      }
+    }
+    await processAudioFile(path);
     return;
   }
 
@@ -1446,13 +1478,14 @@ async function stopSession() {
     document.getElementById("loopback-indicator")?.classList.add("hidden");
     disableControls();
 
-    // Flush the last mic chunk from MediaRecorder
-    if (mediaRecorder && mediaRecorder.state !== "inactive") {
-      await new Promise(resolve => {
-        const origOnstop = mediaRecorder.onstop;
-        mediaRecorder.onstop = () => { origOnstop(); resolve(); };
-        mediaRecorder.stop();
-      });
+    // v1.4.0: Stoppa ScriptProcessorNode istället för MediaRecorder
+    if (window.__wasapiProcessor) {
+      try { window.__wasapiProcessor.disconnect(); } catch (_) {}
+      window.__wasapiProcessor = null;
+    }
+    if (window.__wasapiSource) {
+      try { window.__wasapiSource.disconnect(); } catch (_) {}
+      window.__wasapiSource = null;
     }
 
     if (micStream) micStream.getTracks().forEach(t => t.stop());
@@ -1461,21 +1494,19 @@ async function stopSession() {
       audioContext = null;
     }
 
-    loadingText.innerText = "Hämtar systemljud...";
+    loadingText.innerText = "Avslutar inspelning...";
     loadingOverlay.classList.remove("hidden");
 
     try {
-      const loopbackBytes = await invoke("stop_backend_recording");
-      // recorded_samples är nu fyllt i Rust — save_audio_file kan användas direkt
+      // Rust mixar mic.wav + lb_console.wav + lb_comms.wav till recording.wav
+      // och returnerar dess bytes (kompatibelt kontrakt, men vi använder dem inte längre)
+      await invoke("stop_backend_recording");
       wasapiRecordingReady = true;
 
-      const micBlobs = sessionSegments.map(s => s.blob);
-
-      // Starta avkodning+mix asynkront — behövs bara om användaren väljer Transkribera
-      wasapiDecodePromise = decodeWasapiMix(micBlobs, loopbackBytes);
-
-      // Visa dialog direkt utan att vänta på avkodning
-      pendingRecording = { type: "float32", data: null };
+      // Recording.wav finns nu på disk — peka direkt på den utan JS-mix-decode
+      // (inga 1 GB Float32-allokationer som i v1.3.x).
+      // recording_path är satt i AudioRecorder; vi använder den för både save och transcribe.
+      pendingRecording = { type: "wav-file", filePath: null };  // null = "använd Rusts recording_path"
       lastRecordedSegments = [{ startTime: new Date() }];
       loadingOverlay.classList.add("hidden");
       showPostRecordingActions();
@@ -2426,6 +2457,7 @@ async function processAudioFile(filePath) {
     currentChunkIdx = 0;
     const startTime = performance.now();
 
+    logToFile(`processAudioFile: anropar invoke("transcribe_file") för ${filePath}`);
     const segs = await invoke("transcribe_file", {
       filePath,
       size:         modelSize,
@@ -2437,6 +2469,7 @@ async function processAudioFile(filePath) {
       threadCount,
       gpuDevice: gpuDeviceIndex
     });
+    logToFile(`processAudioFile: transcribe_file returnerade ${segs ? segs.length : 0} segment`);
 
     if (segs && segs.length > 0) {
       transcriptSegments = segs.map(s => ({
@@ -2445,7 +2478,9 @@ async function processAudioFile(filePath) {
         text:    s.text,
         tokens:  s.tokens || []
       }));
+      logToFile(`processAudioFile: mapped till transcriptSegments (${transcriptSegments.length} st)`);
       outputText.value = transcriptSegments.map(s => s.text).join("\n");
+      logToFile(`processAudioFile: outputText.value satt (${outputText.value.length} tecken)`);
     }
 
     if (progressBar) progressBar.style.width = "100%";
@@ -2457,9 +2492,12 @@ async function processAudioFile(filePath) {
     outputText.scrollTop = outputText.scrollHeight;
 
     if (transcriptSegments.length > 0) {
+      logToFile(`processAudioFile: anropar renderSegmentEditor (${transcriptSegments.length} segment)`);
       renderSegmentEditor();
+      logToFile(`processAudioFile: renderSegmentEditor returnerade`);
       const btnSeg = document.getElementById("btn-segment-toggle");
       showSegmentView();
+      logToFile(`processAudioFile: showSegmentView klar`);
       if (btnSeg) { btnSeg.classList.remove("hidden"); btnSeg.style.display = "inline-flex"; }
     }
   } catch (err) {

@@ -251,6 +251,53 @@ fn get_log_path(app_handle: AppHandle) -> Result<String, String> {
     Ok(dir.join("transcrptr.log").to_string_lossy().into_owned())
 }
 
+/// JS skickar ett meddelande som skrivs till transcrptr.log. Används av JS för att
+/// rapportera framgång/fel i UI-flödet (renderSegmentEditor osv.) så vi kan diagnostisera
+/// krasch som händer EFTER att Rust-transkriberingen returnerat.
+#[tauri::command]
+fn log_message(msg: String) {
+    log_line(&msg);
+}
+
+/// Returnerar sökvägen till senaste recording.wav (om någon). Används av JS i WASAPI-flödet
+/// där pendingRecording.filePath är null — då frågar JS Rust om sökvägen efter stop.
+#[tauri::command]
+fn get_recording_path(state: tauri::State<'_, AppState>) -> Result<String, String> {
+    state.inner().audio_recorder.lock()
+        .map_err(|e| format!("Recorder-lås: {e}"))?
+        .recording_path.lock()
+        .map_err(|e| format!("Path-lås: {e}"))?
+        .clone()
+        .map(|p| p.to_string_lossy().into_owned())
+        .ok_or_else(|| "Ingen aktiv inspelning".to_string())
+}
+
+/// JS streamar mic-PCM hit under inspelning (Windows-WASAPI). Eliminerar
+/// JS-side mic-blob-allokation som tidigare gjorde 1 GB Float32-arrays vid stop
+/// av lång inspelning → OOM-krasch på WebView2.
+#[cfg(target_os = "windows")]
+#[tauri::command]
+async fn append_mic_chunk(
+    state: tauri::State<'_, AppState>,
+    samples: Vec<f32>,
+    sample_rate: u32,
+) -> Result<(), String> {
+    let recorder = state.inner().audio_recorder.lock()
+        .map_err(|e| format!("Recorder-lås: {e}"))?;
+    recorder.append_mic_pcm(&samples, sample_rate)
+}
+
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+async fn append_mic_chunk(
+    _state: tauri::State<'_, AppState>,
+    _samples: Vec<f32>,
+    _sample_rate: u32,
+) -> Result<(), String> {
+    // No-op på Mac — mic går via cpal direkt i Rust
+    Ok(())
+}
+
 // Försök ladda WhisperContext med begärt GPU-läge. Om GPU-init misslyckas
 // (vanligt på multi-GPU/NPU-Windows pga Vulkan-konflikt), faller vi tillbaka
 // till CPU automatiskt så användaren slipper krasch.
@@ -440,17 +487,21 @@ async fn recover_session(
     }
     let lb    = dir.join("lb_console.wav");
     let comms = dir.join("lb_comms.wav");
+    let mic_file  = dir.join("mic.wav");
     let has_lb    = lb.exists() && std::fs::metadata(&lb).map(|m| m.len() > 44).unwrap_or(false);
     let has_comms = comms.exists() && std::fs::metadata(&comms).map(|m| m.len() > 44).unwrap_or(false);
-    if !has_lb && !has_comms {
-        return Err("Inga loopback-filer hittades i den valda mappen".to_string());
+    let has_mic   = mic_file.exists() && std::fs::metadata(&mic_file).map(|m| m.len() > 44).unwrap_or(false);
+    if !has_lb && !has_comms && !has_mic {
+        return Err("Inga loopback- eller mic-filer hittades i den valda mappen".to_string());
     }
     if has_lb    { audio::repair_wav_header(&lb)?; }
     if has_comms { audio::repair_wav_header(&comms)?; }
+    if has_mic   { audio::repair_wav_header(&mic_file)?; }
     let recording = dir.join("recording.wav");
     audio::mix_session_to_wav(
-        if has_lb    { Some(&lb) }    else { None },
-        if has_comms { Some(&comms) } else { None },
+        if has_mic   { Some(&mic_file) } else { None },
+        if has_lb    { Some(&lb) }      else { None },
+        if has_comms { Some(&comms) }   else { None },
         &recording,
     )?;
     // Sätt recording_path så save_audio_file kan användas direkt
@@ -1127,7 +1178,10 @@ pub fn run() {
             save_audio_file,
             save_audio_data,
             pick_audio_file,
-            get_log_path
+            get_log_path,
+            log_message,
+            append_mic_chunk,
+            get_recording_path
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -180,6 +180,16 @@ pub struct AudioRecorder {
     #[cfg(target_os = "windows")]
     comms_writer: Arc<Mutex<Option<DiskWriter>>>,
 
+    /// WAV-writer för mic-stream som JS skickar via append_mic_chunk (Windows-WASAPI).
+    /// Skapas lazy vid första chunk (vi vet inte sample rate förrän JS säger till).
+    /// Eliminerar JS-mixens 1 GB Float32-arrays — eliminerar OOM-krasch vid lång inspelning.
+    #[cfg(target_os = "windows")]
+    pub mic_writer: Arc<Mutex<Option<DiskWriter>>>,
+    #[cfg(target_os = "windows")]
+    pub mic_resampler: Arc<Mutex<Option<StatefulResampler>>>,
+    #[cfg(target_os = "windows")]
+    pub mic_path: Arc<Mutex<Option<PathBuf>>>,
+
     #[cfg(target_os = "windows")]
     loopback_stop: Option<Arc<std::sync::atomic::AtomicBool>>,
     #[cfg(target_os = "windows")]
@@ -198,6 +208,12 @@ impl AudioRecorder {
             lb_writer: Arc::new(Mutex::new(None)),
             #[cfg(target_os = "windows")]
             comms_writer: Arc::new(Mutex::new(None)),
+            #[cfg(target_os = "windows")]
+            mic_writer: Arc::new(Mutex::new(None)),
+            #[cfg(target_os = "windows")]
+            mic_resampler: Arc::new(Mutex::new(None)),
+            #[cfg(target_os = "windows")]
+            mic_path: Arc::new(Mutex::new(None)),
             #[cfg(target_os = "windows")]
             loopback_stop: None,
             #[cfg(target_os = "windows")]
@@ -223,6 +239,9 @@ impl AudioRecorder {
         {
             *self.lb_writer.lock().unwrap() = None;
             *self.comms_writer.lock().unwrap() = None;
+            *self.mic_writer.lock().unwrap() = None;
+            *self.mic_resampler.lock().unwrap() = None;
+            *self.mic_path.lock().unwrap() = Some(session.join("mic.wav"));
         }
 
         let host = cpal::default_host();
@@ -425,6 +444,10 @@ impl AudioRecorder {
             if let Some(writer) = self.comms_writer.lock().unwrap().take() {
                 writer.finalize().map_err(|e| format!("Comms finalize: {e}"))?;
             }
+            // Mic-writer (JS streamade chunks via append_mic_chunk) — finalize om någon chunk anlände
+            if let Some(writer) = self.mic_writer.lock().unwrap().take() {
+                writer.finalize().map_err(|e| format!("Mic finalize: {e}"))?;
+            }
         }
 
         // 4. Hämta session-mapp
@@ -439,11 +462,14 @@ impl AudioRecorder {
         {
             let lb_path    = session.join("lb_console.wav");
             let comms_path = session.join("lb_comms.wav");
-            mix_to_wav_streaming(&mic, Some(&lb_path), Some(&comms_path), &recording_path)?;
+            // Mic på Windows ligger på disk (mic.wav) skriven av append_mic_chunk
+            let mic_path = self.mic_path.lock().unwrap().clone();
+            let mic_path_ref = mic_path.as_ref().filter(|p| p.exists()).map(|p| p.as_path());
+            mix_to_wav_streaming(&mic, mic_path_ref, Some(&lb_path), Some(&comms_path), &recording_path)?;
         }
         #[cfg(not(target_os = "windows"))]
         {
-            mix_to_wav_streaming(&mic, None, None, &recording_path)?;
+            mix_to_wav_streaming(&mic, None, None, None, &recording_path)?;
         }
 
         eprintln!("[audio] Stopped → {}", recording_path.display());
@@ -463,11 +489,16 @@ impl AudioRecorder {
 // Peak memory: ~64 KB (BufWriter + några samples). Hanterar timmar utan OOM.
 // ─────────────────────────────────────────────────────────────────────────────
 fn mix_to_wav_streaming(
-    mic: &[f32],
+    mic_in_memory: &[f32],
+    mic_path: Option<&Path>,
     lb_path: Option<&Path>,
     comms_path: Option<&Path>,
     out_path: &Path,
 ) -> Result<(), String> {
+    // Mic kan komma från in-memory (Mac/cpal) ELLER från disk (Windows-WASAPI via append_mic_chunk)
+    let mic_reader = mic_path
+        .filter(|p| p.exists())
+        .and_then(|p| hound::WavReader::open(p).ok());
     let lb_reader = lb_path
         .filter(|p| p.exists())
         .and_then(|p| hound::WavReader::open(p).ok());
@@ -475,21 +506,31 @@ fn mix_to_wav_streaming(
         .filter(|p| p.exists())
         .and_then(|p| hound::WavReader::open(p).ok());
 
-    let lb_len     = lb_reader.as_ref().map(|r| r.duration() as usize).unwrap_or(0);
-    let comms_len  = comms_reader.as_ref().map(|r| r.duration() as usize).unwrap_or(0);
-    let mic_len    = mic.len();
-    let total_len  = mic_len.max(lb_len).max(comms_len);
+    let mic_disk_len = mic_reader.as_ref().map(|r| r.duration() as usize).unwrap_or(0);
+    let mic_mem_len  = mic_in_memory.len();
+    let lb_len       = lb_reader.as_ref().map(|r| r.duration() as usize).unwrap_or(0);
+    let comms_len    = comms_reader.as_ref().map(|r| r.duration() as usize).unwrap_or(0);
+    let mic_len      = mic_disk_len.max(mic_mem_len);
+    let total_len    = mic_len.max(lb_len).max(comms_len);
 
     let active = (mic_len > 0) as u32 + (lb_len > 0) as u32 + (comms_len > 0) as u32;
     let scale  = if active > 0 { 1.0 / active as f32 } else { 1.0 };
 
     let mut writer = make_writer(out_path)?;
 
+    let mut mic_iter   = mic_reader.map(|r| r.into_samples::<i16>());
     let mut lb_iter    = lb_reader.map(|r| r.into_samples::<i16>());
     let mut comms_iter = comms_reader.map(|r| r.into_samples::<i16>());
 
     let i16_max_f = i16::MAX as f32;
     for i in 0..total_len {
+        let mic_sample = if let Some(it) = mic_iter.as_mut() {
+            it.next().and_then(|s| s.ok()).map(|s| s as f32 / i16_max_f).unwrap_or(0.0)
+        } else if i < mic_mem_len {
+            mic_in_memory[i]
+        } else {
+            0.0
+        };
         let lb_sample = lb_iter.as_mut()
             .and_then(|it| it.next().and_then(|s| s.ok()))
             .map(|s| s as f32 / i16_max_f)
@@ -498,7 +539,6 @@ fn mix_to_wav_streaming(
             .and_then(|it| it.next().and_then(|s| s.ok()))
             .map(|s| s as f32 / i16_max_f)
             .unwrap_or(0.0);
-        let mic_sample = if i < mic_len { mic[i] } else { 0.0 };
 
         let mixed = ((mic_sample + lb_sample + comms_sample) * scale).clamp(-1.0, 1.0);
         let pcm = (mixed * i16_max_f) as i16;
@@ -515,8 +555,10 @@ fn mix_to_wav_streaming(
         total_len as f32 / 16000.0,
     );
 
-    // Rensa loopback-råfiler — recording.wav är nu komplett och innehåller samma data.
-    // Rensning sker FÖRST efter lyckad finalize så data inte går förlorad vid mix-fel.
+    // Rensa råfiler — recording.wav är nu komplett.
+    if let Some(p) = mic_path {
+        if p.exists() { let _ = std::fs::remove_file(p); }
+    }
     if let Some(p) = lb_path {
         if p.exists() { let _ = std::fs::remove_file(p); }
     }
@@ -567,12 +609,49 @@ pub fn repair_wav_header(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Skrivs av JS via Tauri-kommandot `append_mic_chunk`. Resamplar inkommande PCM
+/// (Float32 vid `src_rate`) till 16 kHz och appendar till mic.wav i sessionsmappen.
+/// Lazy-skapar mic-fil och resampler vid första anrop.
+#[cfg(target_os = "windows")]
+impl AudioRecorder {
+    pub fn append_mic_pcm(&self, samples: &[f32], src_rate: u32) -> Result<(), String> {
+        if samples.is_empty() { return Ok(()); }
+        // Skapa resampler om saknas (eller om sample rate ändrats — sällsynt)
+        {
+            let mut rs_guard = self.mic_resampler.lock().map_err(|e| format!("Resampler lock: {e}"))?;
+            if rs_guard.is_none() {
+                *rs_guard = Some(StatefulResampler::new(src_rate));
+            }
+        }
+        // Skapa writer om saknas
+        {
+            let mut w_guard = self.mic_writer.lock().map_err(|e| format!("Writer lock: {e}"))?;
+            if w_guard.is_none() {
+                let path = self.mic_path.lock().unwrap().clone()
+                    .ok_or_else(|| "Mic-fil inte konfigurerad (start_recording ej anropad?)".to_string())?;
+                *w_guard = Some(make_writer(&path)?);
+            }
+        }
+        // Resampla + skriv
+        let resampled = {
+            let mut rs_guard = self.mic_resampler.lock().map_err(|e| format!("Resampler lock: {e}"))?;
+            rs_guard.as_mut().unwrap().process(samples)
+        };
+        let mut w_guard = self.mic_writer.lock().map_err(|e| format!("Writer lock: {e}"))?;
+        if let Some(w) = w_guard.as_mut() {
+            write_samples(w, &resampled);
+        }
+        Ok(())
+    }
+}
+
 // Streamad mix från extern session-mapp (för återställning). Likadan som
 // mix_to_wav_streaming men exponerad som publik fasad för recover_session.
 pub fn mix_session_to_wav(
+    mic_path: Option<&Path>,
     lb_path: Option<&Path>,
     comms_path: Option<&Path>,
     out_path: &Path,
 ) -> Result<(), String> {
-    mix_to_wav_streaming(&[], lb_path, comms_path, out_path)
+    mix_to_wav_streaming(&[], mic_path, lb_path, comms_path, out_path)
 }
