@@ -754,13 +754,6 @@ function startRecordingMetrics() {
     if (recordingSize) {
       recordingSize.innerText = (estimatedRecordingSize / (1024 * 1024)).toFixed(1) + " MB";
     }
-
-    // Warn at 25 minutes
-    if (sec === 25 * 60) {
-      if (typeof message === "function") {
-        message("Du har spelat in i 25 minuter. Kom ihåg att avsluta inspelningen i tid — längre inspelningar kräver mer minne och kan ta längre tid att transkribera.", { title: "Lång inspelning", kind: "warning" });
-      }
-    }
   }, 1000);
 }
 
