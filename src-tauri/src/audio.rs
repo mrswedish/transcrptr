@@ -166,10 +166,16 @@ pub struct AudioRecorder {
     mic_stream: Option<SendStream>,
     pub loopback_active: bool,
 
-    /// Filsökväg till slutgiltig recording.wav efter stop_recording
+    /// Filsökväg till slutgiltig recording.wav efter stop_recording (kan peka på
+    /// kopia i user_save_dir om sådan satts vid start)
     pub recording_path: Arc<Mutex<Option<PathBuf>>>,
-    /// Aktiv session-mapp under pågående inspelning
+    /// Aktiv session-mapp under pågående inspelning (alltid lokal SSD)
     session_dir: Arc<Mutex<Option<PathBuf>>>,
+    /// User-vald destination dit färdig recording.wav kopieras vid stop. None = behåll
+    /// lokalt. Streaming-writes går ALDRIG hit för att skydda mot nätverksdisk-hänger.
+    user_save_dir: Arc<Mutex<Option<PathBuf>>>,
+    /// Tidsstämpel för sessionen (används för namngivning vid kopiering)
+    session_stamp: Arc<Mutex<Option<String>>>,
 
     /// Mic kvar i RAM (Mac/cpal-flödet — oförändrat från tidigare)
     mic_samples: Arc<Mutex<Vec<f32>>>,
@@ -203,6 +209,8 @@ impl AudioRecorder {
             loopback_active: false,
             recording_path: Arc::new(Mutex::new(None)),
             session_dir: Arc::new(Mutex::new(None)),
+            user_save_dir: Arc::new(Mutex::new(None)),
+            session_stamp: Arc::new(Mutex::new(None)),
             mic_samples: Arc::new(Mutex::new(Vec::new())),
             #[cfg(target_os = "windows")]
             lb_writer: Arc::new(Mutex::new(None)),
@@ -222,15 +230,28 @@ impl AudioRecorder {
     }
 
     /// `loopback_only`: when true, skip the mic stream — the browser handles mic capture.
-    /// `base_dir`: rotmapp där en ny `recording-<timestamp>/`-undermapp skapas för sessionen.
-    pub fn start_recording(&mut self, loopback_only: bool, base_dir: &Path) -> Result<(), String> {
+    /// `base_dir`: LOKAL rotmapp där en ny `inspelning-<timestamp>/`-undermapp skapas för
+    ///             streaming. Måste vara på lokal disk (inte UNC/nätverk).
+    /// `user_save_dir`: optional destination dit färdig recording.wav kopieras vid stop.
+    ///                  None = behåll i lokal sessionsmapp.
+    pub fn start_recording(
+        &mut self,
+        loopback_only: bool,
+        base_dir: &Path,
+        user_save_dir: Option<PathBuf>,
+    ) -> Result<(), String> {
         // Skapa session-mapp med läsbart datum/tid (lokal tid)
         let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
         let session = base_dir.join(format!("inspelning-{}", stamp));
         std::fs::create_dir_all(&session)
             .map_err(|e| format!("Kunde inte skapa inspelningsmapp {}: {e}", session.display()))?;
-        eprintln!("[audio] Session-mapp: {}", session.display());
+        eprintln!("[audio] Session-mapp (lokal): {}", session.display());
+        if let Some(dest) = &user_save_dir {
+            eprintln!("[audio] User-vald destination: {}", dest.display());
+        }
         *self.session_dir.lock().unwrap() = Some(session.clone());
+        *self.session_stamp.lock().unwrap() = Some(stamp);
+        *self.user_save_dir.lock().unwrap() = user_save_dir;
         *self.recording_path.lock().unwrap() = None;
 
         // Nollställ mic-buffert + loopback-writers
@@ -473,10 +494,49 @@ impl AudioRecorder {
             mix_to_wav_streaming(&mic, None, None, None, &recording_path)?;
         }
 
-        eprintln!("[audio] Stopped → {}", recording_path.display());
-        *self.recording_path.lock().unwrap() = Some(recording_path.clone());
+        eprintln!("[audio] Mix klar → {}", recording_path.display());
+
+        // 6. Om användaren valt en annan destination (t.ex. nätverksdisk), kopiera dit nu.
+        //    Streaming skedde mot lokal SSD — nätverksdisken får bara EN copy-operation
+        //    på en komplett fil, inte ~12 writes/sek mid-recording.
+        let final_path = {
+            let user_dir_guard = self.user_save_dir.lock().unwrap();
+            let stamp_guard    = self.session_stamp.lock().unwrap();
+            match (user_dir_guard.clone(), stamp_guard.clone()) {
+                (Some(dest_dir), Some(stamp)) => {
+                    match copy_recording_to_user_dir(&recording_path, &dest_dir, &stamp) {
+                        Ok(dest_file) => {
+                            eprintln!("[audio] Kopierat till user-vald destination: {}", dest_file.display());
+                            dest_file
+                        }
+                        Err(e) => {
+                            // Kopiering misslyckades (nätverket nere?) — behåll lokal fil och
+                            // logga felet. Användaren kan rädda inspelningen med recover_session.
+                            eprintln!("[audio] VARNING: kunde inte kopiera till {}: {e}", dest_dir.display());
+                            eprintln!("[audio] Inspelningen ligger kvar lokalt: {}", recording_path.display());
+                            recording_path.clone()
+                        }
+                    }
+                }
+                _ => recording_path.clone(),
+            }
+        };
+
+        *self.recording_path.lock().unwrap() = Some(final_path);
         Ok(())
     }
+}
+
+/// Kopierar färdig recording.wav till user-vald destination med tidsstämplat namn.
+/// Skapar mappen om den saknas. Misslyckas tyst om nätverksdisken är otillgänglig —
+/// callern faller då tillbaka till lokal sökväg.
+fn copy_recording_to_user_dir(src: &Path, dest_dir: &Path, stamp: &str) -> Result<PathBuf, String> {
+    std::fs::create_dir_all(dest_dir)
+        .map_err(|e| format!("Kunde inte skapa destinationsmapp {}: {e}", dest_dir.display()))?;
+    let dest_file = dest_dir.join(format!("inspelning-{}.wav", stamp));
+    std::fs::copy(src, &dest_file)
+        .map_err(|e| format!("Kopiering till {} misslyckades: {e}", dest_file.display()))?;
+    Ok(dest_file)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

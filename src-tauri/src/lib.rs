@@ -1060,20 +1060,29 @@ async fn start_backend_recording(
     loopback_only: bool,
     recording_dir: Option<String>,
 ) -> Result<RecordingStartResult, String> {
-    // Default = <app_local_data_dir>/sessions/ om JS inte skickar med en valt mapp
-    let base_dir: PathBuf = match recording_dir {
-        Some(p) if !p.is_empty() => PathBuf::from(p),
-        _ => {
-            let base = app_handle.path().app_local_data_dir()
-                .map_err(|e| format!("Kunde inte hämta app_local_data_dir: {e}"))?;
-            base.join("sessions")
-        }
+    // v1.4.3: streaming-writes går ALLTID till lokal SSD (app_local_data_dir/sessions/)
+    // för att skydda mot nätverksdisk-hänger som kan tappa hela sessionsmappen mid-recording.
+    // Användarens valda recording_dir blir DESTINATION dit recording.wav kopieras vid stop.
+    let local_base: PathBuf = {
+        let base = app_handle.path().app_local_data_dir()
+            .map_err(|e| format!("Kunde inte hämta app_local_data_dir: {e}"))?;
+        base.join("sessions")
     };
-    std::fs::create_dir_all(&base_dir)
-        .map_err(|e| format!("Kunde inte skapa inspelningsmapp {}: {e}", base_dir.display()))?;
+    std::fs::create_dir_all(&local_base)
+        .map_err(|e| format!("Kunde inte skapa lokal inspelningsmapp {}: {e}", local_base.display()))?;
+
+    // Tolka recording_dir som user_save_dir. Om tomt eller samma som lokal default
+    // hoppar vi över kopieringssteget vid stop.
+    let user_save_dir: Option<PathBuf> = match recording_dir {
+        Some(p) if !p.is_empty() => {
+            let path = PathBuf::from(&p);
+            if path == local_base { None } else { Some(path) }
+        }
+        _ => None,
+    };
 
     let mut recorder = state.inner().audio_recorder.lock().unwrap();
-    recorder.start_recording(loopback_only, &base_dir)?;
+    recorder.start_recording(loopback_only, &local_base, user_save_dir)?;
     Ok(RecordingStartResult { loopback_active: recorder.loopback_active })
 }
 

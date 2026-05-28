@@ -124,6 +124,10 @@ På datorer med **flera grafikkort eller en NPU** (t.ex. laptop med Intel Arc + 
 
 Om problemet kvarstår: öppna **Inställningar → Öppna loggfil** och skicka loggens innehåll för diagnostik.
 
+### Mapp för inspelningar
+
+Sökvägen i **Inställningar → Mapp för inspelningar** används som **destination** dit den färdiga `recording.wav` kopieras när du stoppar inspelningen. Själva strömmen skrivs ALLTID till lokal disk under inspelningens gång (`%LOCALAPPDATA%\com.patriksvensk.transcrptr\sessions\`), även om du valt en nätverksdisk som destination. Detta skyddar mot att tappa hela mötet om nätverket hänger eller kopplas bort mid-recording. Vid stop kopieras `recording.wav` till din valda mapp i ett svep.
+
 ### Windows SmartScreen och säkerhet
 
 Eftersom appen inte är köpt med ett kommersiellt kodsigneringscertifikat kan Windows varna vid första körningen. Så här hanterar du det:
