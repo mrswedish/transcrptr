@@ -1078,7 +1078,7 @@ async fn start_backend_recording(
 }
 
 #[tauri::command]
-async fn stop_backend_recording(state: tauri::State<'_, AppState>) -> Result<Vec<u8>, String> {
+async fn stop_backend_recording(state: tauri::State<'_, AppState>) -> Result<(), String> {
     let mut recorder = state.inner().audio_recorder.lock().unwrap();
     recorder.stop_recording()
 }

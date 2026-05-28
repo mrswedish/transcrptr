@@ -420,9 +420,10 @@ impl AudioRecorder {
         Ok(())
     }
 
-    /// Returnerar slutgiltig recording.wav som bytes (för bakåt-kompabilitet med JS-flödet).
-    /// Filen finns också kvar på disk i sessionsmappen — recording_path pekar dit.
-    pub fn stop_recording(&mut self) -> Result<Vec<u8>, String> {
+    /// Stoppar inspelningen, finalize:ar writers och mixar till recording.wav i sessionsmappen.
+    /// JS hämtar sökvägen via get_recording_path-kommandot (inga IPC-bytes — tidigare 172 MB Vec<u8>
+    /// vid 1.5h-inspelning orsakade "invalid array length" i Tauri IPC-serialiseringen).
+    pub fn stop_recording(&mut self) -> Result<(), String> {
         // 1. Stoppa cpal mic-stream
         self.mic_stream = None;
 
@@ -474,11 +475,7 @@ impl AudioRecorder {
 
         eprintln!("[audio] Stopped → {}", recording_path.display());
         *self.recording_path.lock().unwrap() = Some(recording_path.clone());
-
-        // Läs tillbaka recording.wav som bytes för JS-flödet (oförändrat kontrakt).
-        // Filen finns kvar på disk — krasch-skydd + recording_path pekar dit.
-        std::fs::read(&recording_path)
-            .map_err(|e| format!("Kunde inte läsa recording.wav: {e}"))
+        Ok(())
     }
 }
 
