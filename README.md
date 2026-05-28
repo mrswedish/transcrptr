@@ -2,7 +2,7 @@
 
 Transkribera är en lokal, integritetsfokuserad skrivbordsapp som omvandlar tal till text — helt utan molntjänster. Allt sker på din egen dator; ditt ljud och din röstdata lämnar aldrig din maskin.
 
-![Transkribera Screenshot](public/screenshot-mac.png)
+![Transkribera Screenshot](public/screenshot.png)
 
 ## 🇸🇪 Fokus på svenska
 
