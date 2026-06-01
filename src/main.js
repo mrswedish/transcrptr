@@ -8,6 +8,17 @@ function logToFile(msg) {
   invoke("log_message", { msg: `[JS] ${msg}` }).catch(() => {});
 }
 
+// v1.4.5: Globala error handlers — fångar tysta JS-exceptions (t.ex. en throw i en
+// async-callback som ingen await:ar) och skickar dem till transcrptr.log. Utan detta
+// "försvinner" fel som händer utanför våra try/catch och vi vet inte vad som hände.
+window.addEventListener("error", (e) => {
+  logToFile(`window.error: ${e.message} @ ${e.filename}:${e.lineno}:${e.colno}`);
+});
+window.addEventListener("unhandledrejection", (e) => {
+  const reason = e.reason && (e.reason.stack || e.reason.message || String(e.reason));
+  logToFile(`unhandledrejection: ${reason}`);
+});
+
 // UI Elements
 const badge = document.getElementById("status-badge");
 const btnRecord = document.getElementById("btn-record");
@@ -217,7 +228,19 @@ function loadSettings() {
       }
     }
   };
-  if (wasapiToggle) wasapiToggle.addEventListener("change", syncWasapiVisual);
+  if (wasapiToggle) {
+    wasapiToggle.addEventListener("change", () => {
+      // v1.4.5: persistera DIREKT vid klick på huvud-UI:s Systemljud-knapp.
+      // Tidigare uppdaterades wasapiEnabled BARA via Spara inställningar — så klick
+      // på huvud-UI-toggle gav visuell PÅ men variabel = false → startRecording gick
+      // else-grenen (browser MediaRecorder) utan att anropa start_backend_recording
+      // → inga tempfiler på disk.
+      wasapiEnabled = wasapiToggle.checked;
+      localStorage.setItem("wasapiEnabled", wasapiEnabled.toString());
+      logToFile(`wasapi-toggle change: wasapiEnabled=${wasapiEnabled}`);
+      syncWasapiVisual();
+    });
+  }
   syncWasapiVisual();
 
   const gpuToggle = document.getElementById("gpu-toggle");
@@ -1120,6 +1143,7 @@ function getRecordedPartsLabel() {
 }
 
 async function startRecording() {
+  logToFile(`startRecording: wasapiEnabled=${wasapiEnabled}, selectedMicId=${selectedMicId}, recordingDir=${recordingDir || "<default>"}`);
   // Discard any pending post-recording choice if user starts a new recording
   if (pendingRecording) {
     pendingRecording = null;
@@ -1132,6 +1156,7 @@ async function startRecording() {
   try {
     let recordingStatusMsg = "Spelar in...";
     if (wasapiEnabled) {
+      logToFile("startRecording: WASAPI-gren (Rust backend + browser mic)");
       // Hybrid mode: browser records mic (reliable), Rust backend records loopback only.
       // Both are decoded and mixed in JS at stop time.
       let resolvedMicId = selectedMicId;
@@ -1140,12 +1165,15 @@ async function startRecording() {
         ? { audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }
         : { audio: { deviceId: { exact: resolvedMicId }, echoCancellation: true, noiseSuppression: true, autoGainControl: true } };
 
+      logToFile("startRecording: anropar getUserMedia");
       micStream = await navigator.mediaDevices.getUserMedia(audioConstraints);
+      logToFile("startRecording: getUserMedia OK");
 
       sessionSegments = [];
       currentSegmentChunks = [];
 
       audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      logToFile(`startRecording: AudioContext skapad (sampleRate=${audioContext.sampleRate})`);
       analyzer = audioContext.createAnalyser();
       const wasapiSource = audioContext.createMediaStreamSource(micStream);
       wasapiSource.connect(analyzer);
@@ -1184,10 +1212,12 @@ async function startRecording() {
       window.__wasapiSource = wasapiSource;
 
       // Start loopback-only capture in backend (no mic there) — streamas till disk i sessionsmappen
+      logToFile(`startRecording: anropar invoke("start_backend_recording") med recordingDir=${recordingDir || "<null>"}`);
       const result = await invoke("start_backend_recording", {
         loopbackOnly: true,
         recordingDir: recordingDir || null,
       });
+      logToFile(`startRecording: start_backend_recording returnerade loopback_active=${result.loopback_active}`);
 
       isRecording = true;
       isPaused = false;
@@ -1203,6 +1233,7 @@ async function startRecording() {
         else loopbackIndicator.classList.add("hidden");
       }
     } else {
+      logToFile("startRecording: MediaRecorder-gren (browser-only, INGA tempfiler skapas i Rust)");
       // For "default", use the actual firstMicDeviceId if we found one,
       // because Tauri/WebView2 on Windows doesn't reliably handle implicit default
       let resolvedMicId = selectedMicId;
@@ -1263,7 +1294,9 @@ async function startRecording() {
     btnRecord.disabled = false;
     if (btnPause && !wasapiEnabled) btnPause.disabled = false;
   } catch (err) {
+    const errMsg = err && (err.stack || err.message || String(err));
     console.error("startRecording error:", err);
+    logToFile(`startRecording: CATCH ${errMsg}`);
     // Clean up on error
     if (micStream) {
       micStream.getTracks().forEach(track => track.stop());
