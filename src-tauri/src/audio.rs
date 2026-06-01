@@ -445,12 +445,14 @@ impl AudioRecorder {
     /// JS hämtar sökvägen via get_recording_path-kommandot (inga IPC-bytes — tidigare 172 MB Vec<u8>
     /// vid 1.5h-inspelning orsakade "invalid array length" i Tauri IPC-serialiseringen).
     pub fn stop_recording(&mut self) -> Result<(), String> {
+        crate::log_line("stop_recording: fas 1 — stoppa mic_stream");
         // 1. Stoppa cpal mic-stream
         self.mic_stream = None;
 
         // 2. Signalera + vänta in loopback-trådar (Windows)
         #[cfg(target_os = "windows")]
         {
+            crate::log_line("stop_recording: fas 2 — signalera loopback-tr\u{00e5}dar att stoppa");
             if let Some(stop) = self.loopback_stop.take() {
                 stop.store(true, std::sync::atomic::Ordering::SeqCst);
             }
@@ -460,13 +462,16 @@ impl AudioRecorder {
             std::thread::sleep(std::time::Duration::from_millis(250));
 
             // 3. Finalize writers så WAV-headerna får korrekt sample count
+            crate::log_line("stop_recording: fas 3 — finalize lb_writer");
             if let Some(writer) = self.lb_writer.lock().unwrap().take() {
                 writer.finalize().map_err(|e| format!("LB finalize: {e}"))?;
             }
+            crate::log_line("stop_recording: fas 3 — finalize comms_writer");
             if let Some(writer) = self.comms_writer.lock().unwrap().take() {
                 writer.finalize().map_err(|e| format!("Comms finalize: {e}"))?;
             }
             // Mic-writer (JS streamade chunks via append_mic_chunk) — finalize om någon chunk anlände
+            crate::log_line("stop_recording: fas 3 — finalize mic_writer");
             if let Some(writer) = self.mic_writer.lock().unwrap().take() {
                 writer.finalize().map_err(|e| format!("Mic finalize: {e}"))?;
             }
@@ -477,9 +482,11 @@ impl AudioRecorder {
             .clone()
             .ok_or_else(|| "Ingen aktiv inspelningssession".to_string())?;
         let recording_path = session.join("recording.wav");
+        crate::log_line(&format!("stop_recording: fas 4 — session={}, target={}", session.display(), recording_path.display()));
 
         // 5. Mixa allt till recording.wav
         let mic = self.mic_samples.lock().unwrap().clone();
+        crate::log_line(&format!("stop_recording: fas 5 — mix till recording.wav (mic_in_memory={} samples)", mic.len()));
         #[cfg(target_os = "windows")]
         {
             let lb_path    = session.join("lb_console.wav");
@@ -493,6 +500,7 @@ impl AudioRecorder {
         {
             mix_to_wav_streaming(&mic, None, None, None, &recording_path)?;
         }
+        crate::log_line("stop_recording: fas 5 — mix klar");
 
         eprintln!("[audio] Mix klar → {}", recording_path.display());
 
@@ -504,24 +512,26 @@ impl AudioRecorder {
             let stamp_guard    = self.session_stamp.lock().unwrap();
             match (user_dir_guard.clone(), stamp_guard.clone()) {
                 (Some(dest_dir), Some(stamp)) => {
+                    crate::log_line(&format!("stop_recording: fas 6 — kopiera till user_save_dir={}", dest_dir.display()));
                     match copy_recording_to_user_dir(&recording_path, &dest_dir, &stamp) {
                         Ok(dest_file) => {
-                            eprintln!("[audio] Kopierat till user-vald destination: {}", dest_file.display());
+                            crate::log_line(&format!("stop_recording: fas 6 — kopiering OK: {}", dest_file.display()));
                             dest_file
                         }
                         Err(e) => {
-                            // Kopiering misslyckades (nätverket nere?) — behåll lokal fil och
-                            // logga felet. Användaren kan rädda inspelningen med recover_session.
-                            eprintln!("[audio] VARNING: kunde inte kopiera till {}: {e}", dest_dir.display());
-                            eprintln!("[audio] Inspelningen ligger kvar lokalt: {}", recording_path.display());
+                            crate::log_line(&format!("stop_recording: fas 6 — kopiering MISSLYCKADES: {e}. Beh\u{00e5}ller lokal: {}", recording_path.display()));
                             recording_path.clone()
                         }
                     }
                 }
-                _ => recording_path.clone(),
+                _ => {
+                    crate::log_line("stop_recording: fas 6 — ingen user_save_dir, beh\u{00e5}ller lokal");
+                    recording_path.clone()
+                }
             }
         };
 
+        crate::log_line(&format!("stop_recording: KLART, final_path={}", final_path.display()));
         *self.recording_path.lock().unwrap() = Some(final_path);
         Ok(())
     }

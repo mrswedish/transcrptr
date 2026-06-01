@@ -220,7 +220,7 @@ fn init_logging(app_handle: &AppHandle) {
 // med varandras writeln!-anrop. Append+writeln är inte atomärt på alla plattformar.
 static LOG_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-fn log_line(msg: &str) {
+pub(crate) fn log_line(msg: &str) {
     eprintln!("[transcrptr] {msg}");
     if let Some(path) = LOG_PATH.get() {
         let _guard = LOG_LOCK.lock();
@@ -513,14 +513,23 @@ async fn recover_session(
     Ok(recording.to_string_lossy().into_owned())
 }
 
+/// Returnerar default-mappen för inspelningar: `Documents/Transkribera/Inspelningar/`.
+/// Synligt för användaren — viktigt på company-låsta datorer som inte tillåter
+/// genvägar till %LOCALAPPDATA% via Explorer-länkar.
+/// Fallback till app_local_data_dir om Documents inte är tillgängligt.
+fn default_recording_dir(app_handle: &AppHandle) -> Result<PathBuf, String> {
+    let docs = app_handle.path().document_dir()
+        .or_else(|_| app_handle.path().app_local_data_dir())
+        .map_err(|e| format!("Kunde inte hämta Documents-mapp: {e}"))?;
+    Ok(docs.join("Transkribera").join("Inspelningar"))
+}
+
 #[tauri::command]
 async fn get_default_recording_dir(app_handle: AppHandle) -> Result<String, String> {
-    let base = app_handle.path().app_local_data_dir()
-        .map_err(|e| format!("Kunde inte hämta app_local_data_dir: {e}"))?;
-    let sessions = base.join("sessions");
-    std::fs::create_dir_all(&sessions)
+    let dir = default_recording_dir(&app_handle)?;
+    std::fs::create_dir_all(&dir)
         .map_err(|e| format!("Kunde inte skapa standardmapp: {e}"))?;
-    Ok(sessions.to_string_lossy().into_owned())
+    Ok(dir.to_string_lossy().into_owned())
 }
 
 fn get_dir_size(path: &PathBuf) -> u64 {
@@ -1060,19 +1069,19 @@ async fn start_backend_recording(
     loopback_only: bool,
     recording_dir: Option<String>,
 ) -> Result<RecordingStartResult, String> {
-    // v1.4.3: streaming-writes går ALLTID till lokal SSD (app_local_data_dir/sessions/)
-    // för att skydda mot nätverksdisk-hänger som kan tappa hela sessionsmappen mid-recording.
-    // Användarens valda recording_dir blir DESTINATION dit recording.wav kopieras vid stop.
-    let local_base: PathBuf = {
-        let base = app_handle.path().app_local_data_dir()
-            .map_err(|e| format!("Kunde inte hämta app_local_data_dir: {e}"))?;
-        base.join("sessions")
-    };
+    log_line(&format!("start_backend_recording: loopback_only={loopback_only}, recording_dir={recording_dir:?}"));
+
+    // v1.4.4: streaming-writes går alltid till lokal SYNLIG mapp under Documents.
+    // Tidigare la vi den i %LOCALAPPDATA% — men företagslåsta datorer kan inte öppna
+    // den via Explorer-länkar i appen, så användaren kunde inte komma åt tempfiler om
+    // något gick fel. Documents-mappen är synlig och åtkomlig.
+    let local_base = default_recording_dir(&app_handle)?;
     std::fs::create_dir_all(&local_base)
         .map_err(|e| format!("Kunde inte skapa lokal inspelningsmapp {}: {e}", local_base.display()))?;
+    log_line(&format!("start_backend_recording: lokal streaming-mapp = {}", local_base.display()));
 
-    // Tolka recording_dir som user_save_dir. Om tomt eller samma som lokal default
-    // hoppar vi över kopieringssteget vid stop.
+    // Tolka recording_dir som destination för slutgiltig recording.wav.
+    // Om tomt eller samma som default = ingen kopiering vid stop (streaming-mappen ÄR destinationen).
     let user_save_dir: Option<PathBuf> = match recording_dir {
         Some(p) if !p.is_empty() => {
             let path = PathBuf::from(&p);
@@ -1080,16 +1089,35 @@ async fn start_backend_recording(
         }
         _ => None,
     };
+    log_line(&format!("start_backend_recording: user_save_dir = {user_save_dir:?}"));
 
     let mut recorder = state.inner().audio_recorder.lock().unwrap();
-    recorder.start_recording(loopback_only, &local_base, user_save_dir)?;
+    let result = recorder.start_recording(loopback_only, &local_base, user_save_dir);
+    match &result {
+        Ok(_) => log_line(&format!("start_backend_recording: OK (loopback_active={})", recorder.loopback_active)),
+        Err(e) => log_line(&format!("start_backend_recording: FAIL {e}")),
+    }
+    result?;
     Ok(RecordingStartResult { loopback_active: recorder.loopback_active })
 }
 
 #[tauri::command]
 async fn stop_backend_recording(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    log_line("stop_backend_recording: anrop fr\u{00e5}n JS");
     let mut recorder = state.inner().audio_recorder.lock().unwrap();
-    recorder.stop_recording()
+    log_line("stop_backend_recording: recorder-l\u{00e5}s taget, anropar stop_recording");
+    let result = recorder.stop_recording();
+    match &result {
+        Ok(_) => {
+            let path = recorder.recording_path.lock().ok()
+                .and_then(|g| g.clone())
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "<saknas>".to_string());
+            log_line(&format!("stop_backend_recording: OK, recording_path = {path}"));
+        }
+        Err(e) => log_line(&format!("stop_backend_recording: FAIL {e}")),
+    }
+    result
 }
 
 #[tauri::command]

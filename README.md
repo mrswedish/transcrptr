@@ -126,7 +126,7 @@ Om problemet kvarstår: öppna **Inställningar → Öppna loggfil** och skicka 
 
 ### Mapp för inspelningar
 
-Sökvägen i **Inställningar → Mapp för inspelningar** används som **destination** dit den färdiga `recording.wav` kopieras när du stoppar inspelningen. Själva strömmen skrivs ALLTID till lokal disk under inspelningens gång (`%LOCALAPPDATA%\com.patriksvensk.transcrptr\sessions\`), även om du valt en nätverksdisk som destination. Detta skyddar mot att tappa hela mötet om nätverket hänger eller kopplas bort mid-recording. Vid stop kopieras `recording.wav` till din valda mapp i ett svep.
+Sökvägen i **Inställningar → Mapp för inspelningar** används som **destination** dit den färdiga `recording.wav` kopieras när du stoppar inspelningen. Själva strömmen skrivs ALLTID till lokal disk under inspelningens gång — som standard till **`Dokument\Transkribera\Inspelningar\`** (synligt i Utforskaren), även om du valt en nätverksdisk som destination. Detta skyddar mot att tappa hela mötet om nätverket hänger eller kopplas bort mid-recording. Vid stop kopieras `recording.wav` till din valda mapp i ett svep.
 
 ### Windows SmartScreen och säkerhet
 
