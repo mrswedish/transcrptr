@@ -229,7 +229,11 @@ impl AudioRecorder {
         }
     }
 
-    /// `loopback_only`: when true, skip the mic stream — the browser handles mic capture.
+    /// `loopback_only`: when true, skip the cpal mic stream — the browser handles mic capture
+    ///                  (Windows-flödet använder ScriptProcessorNode + append_mic_chunk).
+    /// `with_loopback`: when true, starta WASAPI loopback-trådar för att fånga systemljud.
+    ///                  When false: skippa loopback men behåll mic-flödet → tempfiler skapas
+    ///                  ändå, så krasch-skydd fungerar även när användaren inte vill ha datorljud.
     /// `base_dir`: LOKAL rotmapp där en ny `inspelning-<timestamp>/`-undermapp skapas för
     ///             streaming. Måste vara på lokal disk (inte UNC/nätverk).
     /// `user_save_dir`: optional destination dit färdig recording.wav kopieras vid stop.
@@ -237,6 +241,7 @@ impl AudioRecorder {
     pub fn start_recording(
         &mut self,
         loopback_only: bool,
+        with_loopback: bool,
         base_dir: &Path,
         user_save_dir: Option<PathBuf>,
     ) -> Result<(), String> {
@@ -253,6 +258,7 @@ impl AudioRecorder {
         *self.session_stamp.lock().unwrap() = Some(stamp);
         *self.user_save_dir.lock().unwrap() = user_save_dir;
         *self.recording_path.lock().unwrap() = None;
+        self.loopback_active = false;
 
         // Nollställ mic-buffert + loopback-writers
         self.mic_samples.lock().unwrap().clear();
@@ -301,8 +307,10 @@ impl AudioRecorder {
         }
 
         // ── 2. WASAPI Endpoint Loopback (Windows) — streama till disk ──────────
+        // Skippa helt om with_loopback=false: mic-flödet körs ändå via append_mic_chunk,
+        // session-mappen + mic.wav skapas vid första chunk → tempfiler finns för krasch-skydd.
         #[cfg(target_os = "windows")]
-        {
+        if with_loopback {
             use std::sync::atomic::{AtomicBool, Ordering};
             use std::sync::mpsc;
             use std::time::Duration;

@@ -1143,7 +1143,8 @@ function getRecordedPartsLabel() {
 }
 
 async function startRecording() {
-  logToFile(`startRecording: wasapiEnabled=${wasapiEnabled}, selectedMicId=${selectedMicId}, recordingDir=${recordingDir || "<default>"}`);
+  const isWindows = navigator.userAgent.includes('Windows');
+  logToFile(`startRecording: isWindows=${isWindows}, wasapiEnabled=${wasapiEnabled}, selectedMicId=${selectedMicId}, recordingDir=${recordingDir || "<default>"}`);
   // Discard any pending post-recording choice if user starts a new recording
   if (pendingRecording) {
     pendingRecording = null;
@@ -1155,10 +1156,12 @@ async function startRecording() {
   wasapiDecodePromise  = null;
   try {
     let recordingStatusMsg = "Spelar in...";
-    if (wasapiEnabled) {
-      logToFile("startRecording: WASAPI-gren (Rust backend + browser mic)");
-      // Hybrid mode: browser records mic (reliable), Rust backend records loopback only.
-      // Both are decoded and mixed in JS at stop time.
+    // v1.4.6: På Windows använder vi ALLTID Rust-backend för tempfiler/krasch-skydd.
+    // wasapiEnabled styr bara om systemljud (loopback) ska fångas eller inte —
+    // mic-flödet via ScriptProcessorNode + append_mic_chunk är konstant.
+    // På Mac används MediaRecorder (oförändrat — Mac har inte krash-historik).
+    if (isWindows) {
+      logToFile(`startRecording: Windows Rust-backend (with_loopback=${wasapiEnabled})`);
       let resolvedMicId = selectedMicId;
       if (selectedMicId === "default" && firstMicDeviceId) resolvedMicId = firstMicDeviceId;
       const audioConstraints = resolvedMicId === "default"
@@ -1211,10 +1214,11 @@ async function startRecording() {
       window.__wasapiProcessor = wasapiProcessor;
       window.__wasapiSource = wasapiSource;
 
-      // Start loopback-only capture in backend (no mic there) — streamas till disk i sessionsmappen
-      logToFile(`startRecording: anropar invoke("start_backend_recording") med recordingDir=${recordingDir || "<null>"}`);
+      // Start backend recording — Rust skapar session-mapp + mic-writer + ev. loopback-trådar.
+      logToFile(`startRecording: anropar invoke("start_backend_recording") med withLoopback=${wasapiEnabled}, recordingDir=${recordingDir || "<null>"}`);
       const result = await invoke("start_backend_recording", {
         loopbackOnly: true,
+        withLoopback: wasapiEnabled,
         recordingDir: recordingDir || null,
       });
       logToFile(`startRecording: start_backend_recording returnerade loopback_active=${result.loopback_active}`);
@@ -1224,16 +1228,20 @@ async function startRecording() {
       drawVisualizer();
       startRecordingMetrics();
 
-      recordingStatusMsg = result.loopback_active
-        ? "Spelar in (mikrofon + systemljud)"
-        : "Spelar in (mikrofon — systemljud ej tillgängligt)";
+      if (wasapiEnabled) {
+        recordingStatusMsg = result.loopback_active
+          ? "Spelar in (mikrofon + systemljud)"
+          : "Spelar in (mikrofon — systemljud ej tillgängligt)";
+      } else {
+        recordingStatusMsg = "Spelar in (mikrofon)";
+      }
       const loopbackIndicator = document.getElementById("loopback-indicator");
       if (loopbackIndicator) {
         if (result.loopback_active) loopbackIndicator.classList.remove("hidden");
         else loopbackIndicator.classList.add("hidden");
       }
     } else {
-      logToFile("startRecording: MediaRecorder-gren (browser-only, INGA tempfiler skapas i Rust)");
+      logToFile("startRecording: Mac MediaRecorder-gren");
       // For "default", use the actual firstMicDeviceId if we found one,
       // because Tauri/WebView2 on Windows doesn't reliably handle implicit default
       let resolvedMicId = selectedMicId;
@@ -1283,16 +1291,17 @@ async function startRecording() {
     setRecordingUI("recording");
     if (recordingStatusText) recordingStatusText.textContent = recordingStatusMsg;
     if (btnPause) {
-      if (!wasapiEnabled) {
+      if (!isWindows) {
         btnPause.querySelector(".material-symbols-outlined").textContent = "pause";
       } else {
-        btnPause.classList.add("hidden"); // Pause not supported in WASAPI mode
+        // Pause inte supported i Rust-backend-flödet (gäller hela Windows från v1.4.6)
+        btnPause.classList.add("hidden");
       }
     }
     if (segmentBadge) segmentBadge.classList.add("hidden");
     disableControls();
     btnRecord.disabled = false;
-    if (btnPause && !wasapiEnabled) btnPause.disabled = false;
+    if (btnPause && !isWindows) btnPause.disabled = false;
   } catch (err) {
     const errMsg = err && (err.stack || err.message || String(err));
     console.error("startRecording error:", err);
@@ -1494,7 +1503,10 @@ async function startPendingTranscription() {
 }
 
 async function stopSession() {
-  if (wasapiEnabled) {
+  const isWindows = navigator.userAgent.includes('Windows');
+  // v1.4.6: matchar startRecording-grenen. Windows använder alltid Rust-backend,
+  // oavsett om systemljud (wasapiEnabled) är aktiverat eller inte.
+  if (isWindows) {
     isRecording = false;
     isPaused = false;
     stopRecordingMetrics();

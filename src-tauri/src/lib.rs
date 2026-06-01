@@ -1067,9 +1067,10 @@ async fn start_backend_recording(
     app_handle: AppHandle,
     state: tauri::State<'_, AppState>,
     loopback_only: bool,
+    with_loopback: bool,
     recording_dir: Option<String>,
 ) -> Result<RecordingStartResult, String> {
-    log_line(&format!("start_backend_recording: loopback_only={loopback_only}, recording_dir={recording_dir:?}"));
+    log_line(&format!("start_backend_recording: loopback_only={loopback_only}, with_loopback={with_loopback}, recording_dir={recording_dir:?}"));
 
     // v1.4.4: streaming-writes går alltid till lokal SYNLIG mapp under Documents.
     // Tidigare la vi den i %LOCALAPPDATA% — men företagslåsta datorer kan inte öppna
@@ -1092,7 +1093,7 @@ async fn start_backend_recording(
     log_line(&format!("start_backend_recording: user_save_dir = {user_save_dir:?}"));
 
     let mut recorder = state.inner().audio_recorder.lock().unwrap();
-    let result = recorder.start_recording(loopback_only, &local_base, user_save_dir);
+    let result = recorder.start_recording(loopback_only, with_loopback, &local_base, user_save_dir);
     match &result {
         Ok(_) => log_line(&format!("start_backend_recording: OK (loopback_active={})", recorder.loopback_active)),
         Err(e) => log_line(&format!("start_backend_recording: FAIL {e}")),
