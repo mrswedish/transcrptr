@@ -126,7 +126,9 @@ Om problemet kvarstår: öppna **Inställningar → Öppna loggfil** och skicka 
 
 ### Mapp för inspelningar
 
-Sökvägen i **Inställningar → Mapp för inspelningar** används som **destination** dit den färdiga `recording.wav` kopieras när du stoppar inspelningen. Själva strömmen skrivs ALLTID till lokal disk under inspelningens gång — som standard till **`Dokument\Transkribera\Inspelningar\`** (synligt i Utforskaren), även om du valt en nätverksdisk som destination. Detta skyddar mot att tappa hela mötet om nätverket hänger eller kopplas bort mid-recording. Vid stop kopieras `recording.wav` till din valda mapp i ett svep.
+Sökvägen i **Inställningar → Mapp för inspelningar** används både som **streamningsmapp** under inspelning OCH som plats för den färdiga `recording.wav`. Som standard används mappen där `Transkribera-portable.exe` ligger (vanligen din Downloads-mapp), eftersom företagsdatorer ofta GP-redirectar Documents till en nätverksdisk vilket gör nätverksdisk-skrivningar långsamma och riskabla under långa inspelningar.
+
+**Tips:** Välj alltid en lokal mapp (t.ex. `C:\Users\<dittnamn>\Downloads`) — undvik UNC-paths (`\\server\...`) eftersom mid-recording-skrivningar mot nätverksdisk kan hänga och tappa hela inspelningen.
 
 ### Windows SmartScreen och säkerhet
 

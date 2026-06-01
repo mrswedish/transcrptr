@@ -513,15 +513,20 @@ async fn recover_session(
     Ok(recording.to_string_lossy().into_owned())
 }
 
-/// Returnerar default-mappen för inspelningar: `Documents/Transkribera/Inspelningar/`.
-/// Synligt för användaren — viktigt på company-låsta datorer som inte tillåter
-/// genvägar till %LOCALAPPDATA% via Explorer-länkar.
-/// Fallback till app_local_data_dir om Documents inte är tillgängligt.
+/// Default-mapp för inspelningar = mappen där .exe ligger / Transkribera-Inspelningar.
+/// På företagsdatorer är Documents ofta GP-redirected till UNC-nätverksdisk, så
+/// Documents fungerar dåligt. Mappen där .exe körs ifrån är vanligen lokal SSD
+/// (Downloads för portable .exe). Fallback till app_local_data_dir om current_exe
+/// inte fungerar (dev-mode-edge-cases).
 fn default_recording_dir(app_handle: &AppHandle) -> Result<PathBuf, String> {
-    let docs = app_handle.path().document_dir()
-        .or_else(|_| app_handle.path().app_local_data_dir())
-        .map_err(|e| format!("Kunde inte hämta Documents-mapp: {e}"))?;
-    Ok(docs.join("Transkribera").join("Inspelningar"))
+    match std::env::current_exe().ok().and_then(|p| p.parent().map(|p| p.to_path_buf())) {
+        Some(exe_dir) => Ok(exe_dir.join("Transkribera-Inspelningar")),
+        None => {
+            let base = app_handle.path().app_local_data_dir()
+                .map_err(|e| format!("Kunde inte h\u{00e4}mta app_local_data_dir: {e}"))?;
+            Ok(base.join("sessions"))
+        }
+    }
 }
 
 #[tauri::command]
@@ -1072,28 +1077,20 @@ async fn start_backend_recording(
 ) -> Result<RecordingStartResult, String> {
     log_line(&format!("start_backend_recording: loopback_only={loopback_only}, with_loopback={with_loopback}, recording_dir={recording_dir:?}"));
 
-    // v1.4.4: streaming-writes går alltid till lokal SYNLIG mapp under Documents.
-    // Tidigare la vi den i %LOCALAPPDATA% — men företagslåsta datorer kan inte öppna
-    // den via Explorer-länkar i appen, så användaren kunde inte komma åt tempfiler om
-    // något gick fel. Documents-mappen är synlig och åtkomlig.
-    let local_base = default_recording_dir(&app_handle)?;
-    std::fs::create_dir_all(&local_base)
-        .map_err(|e| format!("Kunde inte skapa lokal inspelningsmapp {}: {e}", local_base.display()))?;
-    log_line(&format!("start_backend_recording: lokal streaming-mapp = {}", local_base.display()));
-
-    // Tolka recording_dir som destination för slutgiltig recording.wav.
-    // Om tomt eller samma som default = ingen kopiering vid stop (streaming-mappen ÄR destinationen).
-    let user_save_dir: Option<PathBuf> = match recording_dir {
-        Some(p) if !p.is_empty() => {
-            let path = PathBuf::from(&p);
-            if path == local_base { None } else { Some(path) }
-        }
-        _ => None,
+    // v1.4.7: ANV\u{00c4}NDARENS valda recording_dir är streaming-mapp DIREKT — ingen kopia.
+    // V1.4.3 flödade alltid via lokal "tempfile-mapp" + kopia vid stop, men på GP-redirected
+    // Documents-mappar (UNC-nätverk) blev "lokal"-mappen i själva verket nätverksdisk.
+    // Användaren ansvarar nu själv för att välja en lokal path; default = .exe-mappen.
+    let base_dir = match recording_dir.as_deref() {
+        Some(p) if !p.is_empty() => PathBuf::from(p),
+        _ => default_recording_dir(&app_handle)?,
     };
-    log_line(&format!("start_backend_recording: user_save_dir = {user_save_dir:?}"));
+    std::fs::create_dir_all(&base_dir)
+        .map_err(|e| format!("Kunde inte skapa inspelningsmapp {}: {e}", base_dir.display()))?;
+    log_line(&format!("start_backend_recording: streaming-mapp = {}", base_dir.display()));
 
     let mut recorder = state.inner().audio_recorder.lock().unwrap();
-    let result = recorder.start_recording(loopback_only, with_loopback, &local_base, user_save_dir);
+    let result = recorder.start_recording(loopback_only, with_loopback, &base_dir);
     match &result {
         Ok(_) => log_line(&format!("start_backend_recording: OK (loopback_active={})", recorder.loopback_active)),
         Err(e) => log_line(&format!("start_backend_recording: FAIL {e}")),
