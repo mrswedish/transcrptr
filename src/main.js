@@ -2610,6 +2610,12 @@ async function processAudioBlob(blob) {
 // -------------------------------------------------------------
 async function processAudioFile(filePath) {
   try {
+    // Stäng ev. kvarvarande post-recording-overlay innan ny transkribering visas
+    // (annars ligger den blurrad ovanpå resultatet om man importerar utan att välja
+    // transkribera/spara i dialogen).
+    hidePostRecordingActions();
+    pendingRecording = null;
+
     const fileName = filePath.split(/[/\\]/).pop();
     loadingText.innerText = `Avkodar ${fileName}...`;
     loadingOverlay.classList.remove("hidden");
