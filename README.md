@@ -20,7 +20,6 @@ Transkribera använder [KB-whisper](https://huggingface.co/KBLab/kb-whisper-smal
 - **📂 Importera fil eller mapp:** Transkribera valfri ljudfil — MP3, M4A, AAC, WAV, OGG, FLAC, MP4, WebM, MKV — eller öppna en hel sessionsmapp med streamat material (t.ex. en inspelning som inte avslutades korrekt). Avkodningen sker helt i Rust (Symphonia) utan att belasta JS-heapen — fungerar även för inspelningar på flera timmar.
 - **🎚️ Antialiaserad ljudbehandling:** Lågpassfilter (cutoff 7 kHz) före nedsampling till 16 kHz — minskar aliasing-artefakter från 44.1k/48k-källor (iPhone, Mac mic) för bättre transkribering.
 - **⏹️ Avbryt transkribering:** Avbryt pågående transkribering när som helst med en knapp. Inspelad audio bevaras alltid och kan sparas även efter avbrott.
-- **⏸️ Pausa inspelning:** Pausa och återuppta. Varje del tidsstämplas automatiskt.
 - **🔄 Gör om transkribering:** Byt modell och kör om utan att spela in på nytt.
 - **✏️ Redigera transkribering:** Redigera, sök och ersätt direkt i appen (Ctrl+F).
 - **📝 Personlig ordlista:** Mata in facktermer och medicinsk terminologi som skickas som ledtrådar till transkriberingsmotorn — förbättrar igenkänning av domänspecifika ord.
@@ -79,7 +78,6 @@ Det finns två sätt att spela in både mikrofon och datorns systemljud (Teams, 
 |---|---|---|
 | **Kräver inställning** | Nej | Ja (engångsinställning) |
 | **Windows-version** | Windows 7+ | Alla versioner |
-| **Pausa inspelning** | Ja | Ja |
 | **Välj mikrofon i appen** | Ja | Nej (styrs av Windows) |
 | **Systemljud** | Ja | Ja |
 | **Drivrutinsstöd** | Oberoende av hårdvara | Beror på ljudkortet |
