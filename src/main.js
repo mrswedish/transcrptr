@@ -795,7 +795,7 @@ async function checkDiskBeforeRecording() {
     const info = await invoke("get_disk_info");
     if (info && typeof info.available_space === "number" && info.available_space < LOW_DISK_WARN_BYTES) {
       const mb = (info.available_space / 1048576).toFixed(0);
-      return await showConfirm(`Lågt diskutrymme: endast ${mb} MB ledigt. En lång inspelning kan fylla disken. Vill du fortsätta ändå?`);
+      return await showConfirm(`Lågt diskutrymme: endast ${mb} MB ledigt. En lång inspelning kan fylla disken. Vill du fortsätta ändå?`, "Lågt diskutrymme");
     }
   } catch (_) { /* diskinfo icke-kritisk — tillåt inspelning */ }
   return true;
@@ -1006,7 +1006,7 @@ document.getElementById("btn-delete-recordings")?.addEventListener("click", asyn
       return;
     }
     const mb = (sum.total_bytes / 1048576).toFixed(0);
-    const ok = await showConfirm(`Radera ${sum.count} inspelning${sum.count === 1 ? "" : "ar"} (${mb} MB)? Detta kan inte ångras.`);
+    const ok = await showConfirm(`Radera ${sum.count} inspelning${sum.count === 1 ? "" : "ar"} (${mb} MB)? Detta kan inte ångras.`, "Radera inspelningar");
     if (!ok) return;
     const n = await invoke("delete_all_recordings", { dir: recordingDir });
     await message(`${n} inspelning${n === 1 ? "" : "ar"} raderades.`, { title: "Klart" });
@@ -1074,7 +1074,7 @@ if (btnDownloadModel) {
 btnRedo.addEventListener("click", async () => {
   if (lastRecordedSegments.length === 0) return;
   
-  const confirmed = await showConfirm("Vill du göra om transkriberingen med nuvarande inställningar?");
+  const confirmed = await showConfirm("Vill du göra om transkriberingen med nuvarande inställningar?", "Gör om transkribering");
   if (!confirmed) return;
   
   btnRedo.classList.add("hidden");
@@ -1109,12 +1109,17 @@ btnRecord.addEventListener("click", async () => {
 });
 
 // Show custom HTML confirm dialog, returns a Promise<boolean>
-function showConfirm(msg) {
+// Sätter ALLTID texten — annars ligger ett tidigare anrops meddelande kvar
+// (t.ex. "Radera N inspelningar" visades felaktigt vid ny inspelning).
+const CONFIRM_DEFAULT_MSG = "Du har en transkribering som inte sparats. En ny inspelning kommer att ersätta den.";
+const CONFIRM_DEFAULT_TITLE = "Ny inspelning";
+function showConfirm(msg, title) {
   return new Promise(resolve => {
     if (!confirmModal) { resolve(true); return; }
-    if (msg) {
-      confirmModal.querySelector("p").innerText = msg;
-    }
+    const p = confirmModal.querySelector("p");
+    if (p) p.innerText = msg || CONFIRM_DEFAULT_MSG;
+    const h = document.getElementById("confirm-title");
+    if (h) h.innerText = title || CONFIRM_DEFAULT_TITLE;
     confirmModal.classList.remove("hidden");
     const onOk = () => { cleanup(); resolve(true); };
     const onCancel = () => { cleanup(); resolve(false); };
