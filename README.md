@@ -16,7 +16,8 @@ Transkribera använder [KB-whisper](https://huggingface.co/KBLab/kb-whisper-smal
 - **🔒 Integritet:** Ditt ljud stannar på din dator. Inget skickas till externa servrar. [Integritetspolicy](PRIVACY.md)
 - **⚡ Hårdvaruaccelererad:** Vulkan (Windows) och Metal (Mac) utnyttjar din GPU för snabbare transkribering. Kan stängas av för äldre grafikkort.
 - **🎙️ Mötesinspelning (Windows):** Spela in både mikrofon och datorljud från t.ex. Teams/Zoom — via WASAPI Endpoint Loopback (fungerar från Windows 7) eller Stereo Mix (se guide nedan).
-- **📂 Filimport:** Transkribera valfri ljudfil direkt — MP3, M4A, AAC, WAV, OGG, FLAC, MP4, WebM, MKV. Avkodningen sker helt i Rust (Symphonia) utan att belasta JS-heapen — fungerar även för inspelningar på flera timmar.
+- **💽 Automatisk sparning till disk:** Allt inspelat material streamas direkt till en tidsstämplad sessionsmapp (`inspelning-...`) under inspelningens gång — skyddar mot dataförlust vid krasch eller strömavbrott. Efter stopp visas sökvägen till mappen direkt i appen (klicka för att öppna i Utforskaren).
+- **📂 Importera fil eller mapp:** Transkribera valfri ljudfil — MP3, M4A, AAC, WAV, OGG, FLAC, MP4, WebM, MKV — eller öppna en hel sessionsmapp med streamat material (t.ex. en inspelning som inte avslutades korrekt). Avkodningen sker helt i Rust (Symphonia) utan att belasta JS-heapen — fungerar även för inspelningar på flera timmar.
 - **🎚️ Antialiaserad ljudbehandling:** Lågpassfilter (cutoff 7 kHz) före nedsampling till 16 kHz — minskar aliasing-artefakter från 44.1k/48k-källor (iPhone, Mac mic) för bättre transkribering.
 - **⏹️ Avbryt transkribering:** Avbryt pågående transkribering när som helst med en knapp. Inspelad audio bevaras alltid och kan sparas även efter avbrott.
 - **⏸️ Pausa inspelning:** Pausa och återuppta. Varje del tidsstämplas automatiskt.
@@ -26,8 +27,10 @@ Transkribera använder [KB-whisper](https://huggingface.co/KBLab/kb-whisper-smal
 - **🎬 Segmentredigering:** Visa transkriberingen som tidsstämplade rader — klicka på en tidsstämpel för att hoppa direkt till den punkten i inspelningen. Progressiv rendering håller UI:t responsivt även för flertimmes-transkriberingar.
 - **🔊 Synkad ljudspelare:** Spela upp inspelningen direkt i appen med automatisk markering av det aktiva textsegmentet.
 - **🟡 Konfidensfärgning:** Ord med låg igenkänningssäkerhet markeras med färg i segmentvyn — gul = osäker, röd = mycket osäker. Tröskelvärdet justeras i inställningarna.
-- **💾 Spara:** Exportera text som `.txt` eller ljud som `.wav`.
+- **💾 Spara:** Exportera text som `.txt` eller spara inspelningen som en ny `.wav`-fil (originalet ligger redan kvar i sessionsmappen).
+- **🗑️ Rensa inspelningar:** Radera alla sparade sessionsmappar med ett klick i inställningarna. Visar antal och total storlek först, och rör bara inspelningsmappar — sparade textfiler och exporterade ljudfiler lämnas orörda.
 - **📊 Modellhantering:** Se, ladda ner och ta bort modeller i inställningarna.
+- **💿 Diskhantering:** Inställningarna visar hur mycket plats dina inspelningar tar, och appen varnar om diskutrymmet är lågt innan du startar en lång inspelning.
 
 ## 📦 Välj rätt modell
 
@@ -129,6 +132,8 @@ Om problemet kvarstår: öppna **Inställningar → Öppna loggfil** och skicka 
 Sökvägen i **Inställningar → Mapp för inspelningar** används både som **streamningsmapp** under inspelning OCH som plats för den färdiga `recording.wav`. Som standard används mappen där `Transkribera-portable.exe` ligger (vanligen din Downloads-mapp), eftersom företagsdatorer ofta GP-redirectar Documents till en nätverksdisk vilket gör nätverksdisk-skrivningar långsamma och riskabla under långa inspelningar.
 
 **Tips:** Välj alltid en lokal mapp (t.ex. `C:\Users\<dittnamn>\Downloads`) — undvik UNC-paths (`\\server\...`) eftersom mid-recording-skrivningar mot nätverksdisk kan hänga och tappa hela inspelningen.
+
+**Öppna en gammal eller avbruten inspelning:** Klicka **Välj fil/mapp** i appens överkant och välj **Sessionsmapp**. Peka ut en `inspelning-...`-mapp så mixas materialet ihop till en spelbar inspelning du kan transkribera eller spara om. Det fungerar även för inspelningar som inte avslutades korrekt (t.ex. om appen kraschade).
 
 ### Windows SmartScreen och säkerhet
 
