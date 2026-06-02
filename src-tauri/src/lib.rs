@@ -457,7 +457,7 @@ async fn save_audio_file(app_handle: AppHandle, state: tauri::State<'_, AppState
 
     let file_path = app_handle.dialog()
         .file()
-        .set_title("Spara inspelning")
+        .set_title("Spara som ny ljudfil")
         .set_file_name("inspelning.wav")
         .add_filter("WAV-fil", &["wav"])
         .blocking_save_file();
@@ -513,6 +513,36 @@ async fn recover_session(
     Ok(recording.to_string_lossy().into_owned())
 }
 
+#[derive(Serialize)]
+struct SessionDirInfo {
+    is_session: bool,
+    has_ready_recording: bool,
+    recording_path: String,
+}
+
+/// Lättviktig kontroll om en mapp är en sessionsmapp (innehåller streamat material).
+/// Används av "Välj fil/mapp" i UI:t för att avgöra om mappen ska köras via recover_session.
+#[tauri::command]
+async fn inspect_session_dir(dir: String) -> Result<SessionDirInfo, String> {
+    let p = PathBuf::from(&dir);
+    if !p.is_dir() {
+        return Err("Mappen finns inte".to_string());
+    }
+    let has_part = ["mic.wav", "lb_console.wav", "lb_comms.wav", "recording.wav"]
+        .iter()
+        .any(|f| {
+            let fp = p.join(f);
+            fp.exists() && std::fs::metadata(&fp).map(|m| m.len() > 44).unwrap_or(false)
+        });
+    let rec = p.join("recording.wav");
+    let has_ready = rec.exists() && std::fs::metadata(&rec).map(|m| m.len() > 44).unwrap_or(false);
+    Ok(SessionDirInfo {
+        is_session: has_part,
+        has_ready_recording: has_ready,
+        recording_path: if has_ready { rec.to_string_lossy().into_owned() } else { String::new() },
+    })
+}
+
 /// Default-mapp för inspelningar = mappen där .exe ligger / Transkribera-Inspelningar.
 /// På företagsdatorer är Documents ofta GP-redirected till UNC-nätverksdisk, så
 /// Documents fungerar dåligt. Mappen där .exe körs ifrån är vanligen lokal SSD
@@ -541,7 +571,8 @@ fn get_dir_size(path: &PathBuf) -> u64 {
     let mut size = 0;
     if let Ok(entries) = fs::read_dir(path) {
         for entry in entries.flatten() {
-            let metadata = entry.metadata().unwrap();
+            // F5: undvik panik vid TOCTOU/behörighetsfel — hoppa över filer vi inte kan läsa.
+            let Ok(metadata) = entry.metadata() else { continue; };
             if metadata.is_dir() {
                 size += get_dir_size(&entry.path());
             } else {
@@ -550,6 +581,65 @@ fn get_dir_size(path: &PathBuf) -> u64 {
         }
     }
     size
+}
+
+fn is_session_folder(name: &str) -> bool {
+    name.starts_with("inspelning-") || name.starts_with("recording-")
+}
+
+#[derive(Serialize)]
+struct RecordingsSummary {
+    count: usize,
+    total_bytes: u64,
+}
+
+/// Räknar sessionsmappar (inspelning-* / recording-*) i en mapp och deras totala storlek.
+/// Används av settings (diskanvändning) och som förhandsbesked före radering.
+#[tauri::command]
+async fn count_recordings(dir: String) -> Result<RecordingsSummary, String> {
+    let base = PathBuf::from(&dir);
+    if !base.is_dir() {
+        return Ok(RecordingsSummary { count: 0, total_bytes: 0 });
+    }
+    let mut count = 0;
+    let mut total = 0u64;
+    for entry in fs::read_dir(&base).map_err(|e| e.to_string())?.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                if is_session_folder(name) {
+                    count += 1;
+                    total += get_dir_size(&path);
+                }
+            }
+        }
+    }
+    Ok(RecordingsSummary { count, total_bytes: total })
+}
+
+/// Raderar ALLA sessionsmappar (inspelning-* / recording-*) i den givna mappen.
+/// Säkerhet: rör ENDAST mappar med rätt prefix — aldrig själva mappen eller andra
+/// filer (recordingDir kan peka på t.ex. Downloads). Returnerar antal raderade.
+#[tauri::command]
+async fn delete_all_recordings(dir: String) -> Result<usize, String> {
+    let base = PathBuf::from(&dir);
+    if !base.is_dir() {
+        return Err("Inspelningsmappen finns inte".to_string());
+    }
+    let mut deleted = 0;
+    for entry in fs::read_dir(&base).map_err(|e| e.to_string())?.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                if is_session_folder(name) {
+                    fs::remove_dir_all(&path)
+                        .map_err(|e| format!("Kunde inte radera {}: {e}", path.display()))?;
+                    deleted += 1;
+                }
+            }
+        }
+    }
+    Ok(deleted)
 }
 
 #[tauri::command]
@@ -1124,7 +1214,7 @@ async fn save_audio_data(app_handle: AppHandle, audio_data: Vec<u8>) -> Result<(
 
     let file_path = app_handle.dialog()
         .file()
-        .set_title("Spara inspelning")
+        .set_title("Spara som ny ljudfil")
         .set_file_name("inspelning.wav")
         .add_filter("WAV-fil", &["wav"])
         .blocking_save_file();
@@ -1209,6 +1299,9 @@ pub fn run() {
             get_app_version,
             get_default_recording_dir,
             recover_session,
+            inspect_session_dir,
+            count_recordings,
+            delete_all_recordings,
             save_text_file,
             save_audio_file,
             save_audio_data,

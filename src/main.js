@@ -33,17 +33,27 @@ const recordingIndicator = document.getElementById("recording-status");
 const recordingStatusText = document.getElementById("recording-status-text");
 const idleHint = document.getElementById("idle-hint");
 
+// Pill-knappens klasser för de två lägena (v1.5)
+const REC_PILL_IDLE = "btn-record-pill shrink-0 flex items-center gap-2.5 pl-3 pr-5 h-12 bg-red-500 hover:bg-red-600 active:scale-95 transition-all rounded-full shadow-md shadow-red-500/30 text-white font-semibold text-sm";
+const REC_PILL_ACTIVE = "btn-record-pill shrink-0 flex items-center gap-2.5 pl-3 pr-5 h-12 bg-slate-700 hover:bg-slate-800 dark:bg-slate-600 dark:hover:bg-slate-500 active:scale-95 transition-all rounded-full shadow-md text-white font-semibold text-sm";
+
 // Central UI-state-växling för inspelningskontrollerna
 function setRecordingUI(state) {                // "idle" | "recording" | "paused"
-  const recIcon = btnRecord && btnRecord.querySelector(".btn-icon");
+  const recIcon  = btnRecord && btnRecord.querySelector(".btn-icon");
+  const recLabel = btnRecord && btnRecord.querySelector(".btn-record-label");
   if (state === "idle") {
-    if (recIcon) recIcon.className = "btn-icon block w-4 h-4 rounded-full bg-white";
+    if (recIcon) recIcon.className = "btn-icon block w-4 h-4 rounded-full bg-white shrink-0";
+    if (recLabel) recLabel.textContent = "Spela in";
+    if (btnRecord) btnRecord.className = REC_PILL_IDLE;
     if (idleHint) idleHint.classList.remove("hidden");
     if (recordingIndicator) recordingIndicator.classList.add("hidden");
     if (btnPause) btnPause.classList.add("hidden");
     if (btnRecord) btnRecord.setAttribute("aria-label", "Spela in");
   } else {
-    if (recIcon) recIcon.className = "btn-icon block w-3.5 h-3.5 rounded-sm bg-white";
+    // Mörk/neutral pill med stopp-fyrkant — tydligt att knappen nu STOPPAR
+    if (recIcon) recIcon.className = "btn-icon block w-3.5 h-3.5 rounded-sm bg-white shrink-0";
+    if (recLabel) recLabel.textContent = "Stoppa inspelning";
+    if (btnRecord) btnRecord.className = REC_PILL_ACTIVE;
     if (idleHint) idleHint.classList.add("hidden");
     if (recordingIndicator) recordingIndicator.classList.remove("hidden");
     if (btnPause) btnPause.classList.remove("hidden");
@@ -432,52 +442,42 @@ async function setupEventListeners() {
     });
   }
 
-  // Återställ oavslutad inspelning
-  const btnRecover = document.getElementById("btn-recover-session");
-  if (btnRecover) {
-    btnRecover.addEventListener("click", async () => {
-      let selected;
-      try {
-        selected = await window.__TAURI__.dialog.open({
-          directory: true,
-          multiple: false,
-          defaultPath: recordingDir || undefined,
-          title: "Välj sessionsmapp (inspelning-...)",
-        });
-      } catch (e) {
-        console.warn("Mapp-val avbröts:", e);
-        return;
-      }
-      if (typeof selected !== "string" || !selected) return;
-      try {
-        loadingText.innerText = "Återställer inspelning...";
-        loadingOverlay.classList.remove("hidden");
-        const recordedPath = await invoke("recover_session", { sessionDir: selected });
-        loadingOverlay.classList.add("hidden");
-        // Stäng settings-modalen så användaren ser huvud-UI:t
-        document.getElementById("settings-modal")?.classList.add("hidden");
-        // Parsa sessionens faktiska starttid ur mappnamnet i stället för "now"
-        const folderName = selected.split(/[/\\]/).pop() || "";
-        let sessionStart = new Date();
-        const newFmt = folderName.match(/^inspelning-(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})$/);
-        const oldFmt = folderName.match(/^recording-(\d+)$/);
-        if (newFmt) {
-          const [, y, m, d, hh, mm, ss] = newFmt;
-          sessionStart = new Date(`${y}-${m}-${d}T${hh}:${mm}:${ss}`);
-        } else if (oldFmt) {
-          sessionStart = new Date(parseInt(oldFmt[1], 10) * 1000);
-        }
-        // Lämna över till befintligt post-recording-flöde
-        wasapiRecordingReady = true;
-        pendingRecording     = { type: "wav-file", filePath: recordedPath };
-        lastRecordedSegments = [{ startTime: sessionStart }];
-        showPostRecordingActions();
-      } catch (err) {
-        loadingOverlay.classList.add("hidden");
-        const msg = typeof err === "string" ? err : err.message || String(err);
-        await message(`Återställning misslyckades: ${msg}`, { title: "Fel", kind: "error" });
-      }
-    });
+  // (v1.5: recover-knappen i settings borttagen — importeras nu via "Välj fil/mapp" i headern)
+}
+
+// Parsar sessionens starttid ur mappnamnet (inspelning-YYYYMMDD-HHMMSS / recording-<unix>).
+function sessionStartFromFolderName(folderName) {
+  const newFmt = folderName.match(/^inspelning-(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})$/);
+  const oldFmt = folderName.match(/^recording-(\d+)$/);
+  if (newFmt) {
+    const [, y, m, d, hh, mm, ss] = newFmt;
+    return new Date(`${y}-${m}-${d}T${hh}:${mm}:${ss}`);
+  } else if (oldFmt) {
+    return new Date(parseInt(oldFmt[1], 10) * 1000);
+  }
+  return new Date();
+}
+
+// Importerar en sessionsmapp: mixar (recover_session) och lämnar över till post-recording-flödet.
+async function importSessionFolder(dir) {
+  // Nollställ ev. öppen post-recording-dialog innan vi tar över state (F6)
+  pendingRecording = null;
+  hidePostRecordingActions();
+  try {
+    loadingText.innerText = "Förbereder inspelning...";
+    loadingOverlay.classList.remove("hidden");
+    const recordedPath = await invoke("recover_session", { sessionDir: dir });
+    loadingOverlay.classList.add("hidden");
+    document.getElementById("settings-modal")?.classList.add("hidden");
+    const folderName = dir.split(/[/\\]/).pop() || "";
+    wasapiRecordingReady = true;
+    pendingRecording     = { type: "wav-file", filePath: recordedPath };
+    lastRecordedSegments = [{ startTime: sessionStartFromFolderName(folderName) }];
+    showPostRecordingActions(dir);
+  } catch (err) {
+    loadingOverlay.classList.add("hidden");
+    const msg = typeof err === "string" ? err : err.message || String(err);
+    await message(`Kunde inte läsa inspelningsmappen: ${msg}`, { title: "Fel", kind: "error" });
   }
 }
 
@@ -787,6 +787,20 @@ function stopRecordingMetrics() {
   }
 }
 
+// v1.5: varna om ledigt diskutrymme är lågt innan inspelning. Returnerar true om
+// inspelning kan fortsätta (alltid — vi blockerar inte, bara informerar/bekräftar).
+const LOW_DISK_WARN_BYTES = 500 * 1024 * 1024; // 500 MB
+async function checkDiskBeforeRecording() {
+  try {
+    const info = await invoke("get_disk_info");
+    if (info && typeof info.available_space === "number" && info.available_space < LOW_DISK_WARN_BYTES) {
+      const mb = (info.available_space / 1048576).toFixed(0);
+      return await showConfirm(`Lågt diskutrymme: endast ${mb} MB ledigt. En lång inspelning kan fylla disken. Vill du fortsätta ändå?`);
+    }
+  } catch (_) { /* diskinfo icke-kritisk — tillåt inspelning */ }
+  return true;
+}
+
 // Download + activate a specific model (called by download button)
 async function downloadAndActivate(size, revision, quantized) {
   disableControls();
@@ -964,6 +978,43 @@ syncPickButtons("size", dlSize);
 btnSettings.addEventListener("click", () => {
   loadSettings(); // refresh form
   settingsModal.classList.remove("hidden");
+  refreshRecordingsUsage();
+});
+
+// Visar antal inspelningar + total storlek i settings (Mapp för inspelningar).
+async function refreshRecordingsUsage() {
+  const el = document.getElementById("recordings-usage");
+  if (!el) return;
+  el.textContent = "";
+  try {
+    const sum = await invoke("count_recordings", { dir: recordingDir });
+    if (sum.count > 0) {
+      const mb = (sum.total_bytes / 1048576).toFixed(0);
+      el.textContent = `${sum.count} inspelning${sum.count === 1 ? "" : "ar"} · ${mb} MB`;
+    } else {
+      el.textContent = "Inga sparade inspelningar.";
+    }
+  } catch (_) { /* tyst — diskinfo är icke-kritisk */ }
+}
+
+// Radera alla sessionsmappar i recordingDir efter bekräftelse.
+document.getElementById("btn-delete-recordings")?.addEventListener("click", async () => {
+  try {
+    const sum = await invoke("count_recordings", { dir: recordingDir });
+    if (!sum.count) {
+      await message("Det finns inga inspelningar att radera.", { title: "Inget att radera" });
+      return;
+    }
+    const mb = (sum.total_bytes / 1048576).toFixed(0);
+    const ok = await showConfirm(`Radera ${sum.count} inspelning${sum.count === 1 ? "" : "ar"} (${mb} MB)? Detta kan inte ångras.`);
+    if (!ok) return;
+    const n = await invoke("delete_all_recordings", { dir: recordingDir });
+    await message(`${n} inspelning${n === 1 ? "" : "ar"} raderades.`, { title: "Klart" });
+    refreshRecordingsUsage();
+  } catch (e) {
+    const msg = typeof e === "string" ? e : e.message || String(e);
+    await message(`Kunde inte radera: ${msg}`, { title: "Fel", kind: "error" });
+  }
 });
 
 btnCloseSettings.addEventListener("click", () => {
@@ -1043,11 +1094,14 @@ btnRedo.addEventListener("click", async () => {
 // -------------------------------------------------------------
 btnRecord.addEventListener("click", async () => {
   if (!isRecording && !isPaused) {
-    // If there's existing transcription, warn the user
-    if (outputText.value && outputText.value.trim()) {
+    // F2: varna om det finns en transkribering — kolla BÅDE råtext och segmentvy
+    // (segmentvyns text ligger i transcriptSegments, inte i outputText).
+    if ((outputText.value && outputText.value.trim()) || transcriptSegments.length > 0) {
       const confirmed = await showConfirm();
       if (!confirmed) return;
     }
+    // Varna vid lågt diskutrymme (blockerar inte, bara bekräftar)
+    if (!(await checkDiskBeforeRecording())) return;
     await startRecording();
   } else {
     await stopSession();
@@ -1152,6 +1206,18 @@ async function startRecording() {
   }
   // Rensa eventuell player från en föregående session
   teardownPlayer();
+  // v1.5: rensa transkriberingsfönstret + segment-state vid ny inspelning så
+  // gammal text/segment inte ligger kvar (state-läckage). Varningsrutan har redan
+  // körts i btn-record-handlern innan vi kommer hit.
+  outputText.value = "";
+  transcriptSegments = [];
+  segmentRowsCache = [];
+  const prevEditor = document.getElementById("segment-editor");
+  if (prevEditor) prevEditor.innerHTML = "";
+  showRawView();
+  btnRedo.classList.add("hidden");
+  if (btnSaveAudio) btnSaveAudio.classList.add("hidden");
+  document.getElementById("btn-segment-toggle")?.classList.add("hidden");
   wasapiRecordingReady = false;
   wasapiDecodePromise  = null;
   try {
@@ -1382,8 +1448,25 @@ function resumeSession() {
   }
 }
 
-function showPostRecordingActions() {
+// Strippar filnamnet ur en recording-path → sessionsmappen (.../inspelning-X/recording.wav → .../inspelning-X)
+function sessionDirFromRecordingPath(p) {
+  return p ? p.replace(/[/\\][^/\\]+$/, "") : "";
+}
+
+function showPostRecordingActions(sessionDir) {
   document.getElementById("post-recording-actions")?.classList.remove("hidden");
+  const btn = document.getElementById("post-recording-path");
+  const txt = document.getElementById("post-recording-path-text");
+  if (btn && txt) {
+    if (sessionDir) {
+      txt.textContent = sessionDir;
+      btn.dataset.path = sessionDir;
+      btn.classList.remove("hidden");
+    } else {
+      delete btn.dataset.path;
+      btn.classList.add("hidden");
+    }
+  }
 }
 
 function hidePostRecordingActions() {
@@ -1547,7 +1630,10 @@ async function stopSession() {
       pendingRecording = { type: "wav-file", filePath: null };  // null = "använd Rusts recording_path"
       lastRecordedSegments = [{ startTime: new Date() }];
       loadingOverlay.classList.add("hidden");
-      showPostRecordingActions();
+      // Hämta sessionsmappen så dialogen kan visa + öppna sökvägen
+      let sessionDir = "";
+      try { sessionDir = sessionDirFromRecordingPath(await invoke("get_recording_path")); } catch (_) {}
+      showPostRecordingActions(sessionDir);
     } catch (err) {
       console.error("WASAPI stop error:", err);
       wasapiRecordingReady = false;
@@ -1829,15 +1915,59 @@ async function transcribeBlob(blob, label, blobOffsetMs = 0) {
 // -------------------------------------------------------------
 // File Selection Logic
 // -------------------------------------------------------------
+// Visar import-valmodalen och resolvar med "file" | "folder" | null (avbruten).
+function showImportChoice() {
+  return new Promise(resolve => {
+    const modal  = document.getElementById("import-choice-modal");
+    const fileBtn   = document.getElementById("import-choice-file");
+    const folderBtn = document.getElementById("import-choice-folder");
+    const cancelBtn = document.getElementById("import-choice-cancel");
+    if (!modal || !fileBtn || !folderBtn || !cancelBtn) { resolve(null); return; }
+    modal.classList.remove("hidden");
+    const cleanup = () => {
+      modal.classList.add("hidden");
+      fileBtn.removeEventListener("click", onFile);
+      folderBtn.removeEventListener("click", onFolder);
+      cancelBtn.removeEventListener("click", onCancel);
+    };
+    const onFile   = () => { cleanup(); resolve("file"); };
+    const onFolder = () => { cleanup(); resolve("folder"); };
+    const onCancel = () => { cleanup(); resolve(null); };
+    fileBtn.addEventListener("click", onFile);
+    folderBtn.addEventListener("click", onFolder);
+    cancelBtn.addEventListener("click", onCancel);
+  });
+}
+
 btnFile.addEventListener("click", async () => {
+  const choice = await showImportChoice();
+  if (!choice) return;
   try {
-    const selected = await invoke("pick_audio_file");
-    if (selected) {
-      disableControls();
-      await processAudioFile(selected);
+    if (choice === "file") {
+      const selected = await invoke("pick_audio_file");
+      if (selected) {
+        disableControls();
+        await processAudioFile(selected);
+      }
+      return;
     }
+    // choice === "folder": välj sessionsmapp och importera via recover-flödet
+    const dir = await window.__TAURI__.dialog.open({
+      directory: true,
+      multiple: false,
+      defaultPath: recordingDir || undefined,
+      title: "Välj sessionsmapp (inspelning-...)",
+    });
+    if (typeof dir !== "string" || !dir) return;
+    const info = await invoke("inspect_session_dir", { dir });
+    if (!info.is_session) {
+      await message("Mappen innehåller inget inspelat material (mic.wav / lb_*.wav / recording.wav).",
+        { title: "Ogiltig mapp", kind: "error" });
+      return;
+    }
+    await importSessionFolder(dir);
   } catch (e) {
-    console.error("Filval misslyckades:", e);
+    console.error("Import misslyckades:", e);
   }
 });
 
@@ -2693,6 +2823,11 @@ btnPlayPause && btnPlayPause.addEventListener("click", () => {
 // -------------------------------------------------------------
 // Post-recording action buttons
 document.getElementById("btn-start-transcription")?.addEventListener("click", () => startPendingTranscription());
+// Klick på sökvägen i post-recording-dialogen öppnar sessionsmappen i Utforskaren
+document.getElementById("post-recording-path")?.addEventListener("click", async () => {
+  const p = document.getElementById("post-recording-path")?.dataset.path;
+  if (p) { try { await window.__TAURI__.opener.openPath(p); } catch (_) {} }
+});
 document.getElementById("btn-save-audio-only")?.addEventListener("click", async () => {
   hidePostRecordingActions();
   pendingRecording = null;
