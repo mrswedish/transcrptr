@@ -2336,9 +2336,17 @@ function setupPlayer(blob) {
 // v1.5.3: Sätt upp spelaren från en disk-path via Tauri asset protocol.
 // <audio> streamar filen on-demand från disk — INGEN blob i JS-minnet (undviker
 // OOM-läckan från v1.3.x). Används i Windows-flödet (processAudioFile).
-function setupPlayerFromPath(filePath) {
+async function setupPlayerFromPath(filePath) {
   if (!filePath || !audioPlayer) return;
   teardownPlayer();                 // släpp ev. tidigare källa + fil-handtag
+  // Tillåt EXAKT denna fil i asset-scopen (config-scopen är tom — vi öppnar aldrig
+  // hela filsystemet). Misslyckas detta kan filen inte spelas; logga och avbryt.
+  try {
+    await invoke("allow_asset_path", { path: filePath });
+  } catch (e) {
+    logToFile(`setupPlayerFromPath: allow_asset_path misslyckades: ${e}`);
+    return;
+  }
   const assetUrl = window.__TAURI__.core.convertFileSrc(filePath);
   currentPlaybackUrl = null;        // ingen blob-URL att revoka
   currentPlaybackBlob = null;
@@ -2710,7 +2718,7 @@ async function processAudioFile(filePath) {
       logToFile(`processAudioFile: showSegmentView klar`);
       if (btnSeg) { btnSeg.classList.remove("hidden"); btnSeg.style.display = "inline-flex"; }
       // v1.5.3: aktivera synkad spelare som streamar filen direkt från disk
-      setupPlayerFromPath(filePath);
+      await setupPlayerFromPath(filePath);
     }
   } catch (err) {
     console.error("transcribe_file error:", err);

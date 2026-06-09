@@ -272,6 +272,23 @@ fn get_recording_path(state: tauri::State<'_, AppState>) -> Result<String, Strin
         .ok_or_else(|| "Ingen aktiv inspelning".to_string())
 }
 
+/// Utökar asset-protokollets scope vid runtime till EXAKT en fil, så att <audio>
+/// kan streama just den filen via convertFileSrc. Asset-scopen i tauri.conf.json är tom
+/// (`[]`) — vi tillåter aldrig hela filsystemet. JS anropar detta precis innan spelaren
+/// sätts upp, med den faktiska recording.wav/importfilens path. Bara läsåtkomst, bara
+/// den fil användaren redan valt; ingen annan path blir åtkomlig.
+#[tauri::command]
+fn allow_asset_path(app_handle: AppHandle, path: String) -> Result<(), String> {
+    let p = PathBuf::from(&path);
+    if !p.is_file() {
+        return Err(format!("Filen finns inte: {path}"));
+    }
+    app_handle.asset_protocol_scope()
+        .allow_file(&p)
+        .map_err(|e| format!("Kunde inte tillåta fil för uppspelning: {e}"))?;
+    Ok(())
+}
+
 /// JS streamar mic-PCM hit under inspelning (Windows-WASAPI). Eliminerar
 /// JS-side mic-blob-allokation som tidigare gjorde 1 GB Float32-arrays vid stop
 /// av lång inspelning → OOM-krasch på WebView2.
@@ -1309,7 +1326,8 @@ pub fn run() {
             get_log_path,
             log_message,
             append_mic_chunk,
-            get_recording_path
+            get_recording_path,
+            allow_asset_path
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
