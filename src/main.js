@@ -147,6 +147,7 @@ let segmentViewActive = false;
 let confidenceThreshold = 0.6;      // Words below this prob get highlighted
 let currentPlaybackBlob = null;
 let currentPlaybackUrl = null;
+let currentPlaybackIsAsset = false;  // true = src är en asset-URL (disk-stream), inte blob
 // audioPlayer is resolved after DOM is ready (must be in DOM for WKWebView)
 let audioPlayer = null;
 let selectedMicId = "default";
@@ -1008,6 +1009,10 @@ document.getElementById("btn-delete-recordings")?.addEventListener("click", asyn
     const mb = (sum.total_bytes / 1048576).toFixed(0);
     const ok = await showConfirm(`Radera ${sum.count} inspelning${sum.count === 1 ? "" : "ar"} (${mb} MB)? Detta kan inte ångras.`, "Radera inspelningar");
     if (!ok) return;
+    // Släpp ev. öppet ljud-handtag innan radering — annars kan <audio> som spelar
+    // recording.wav blockera fs::remove_dir_all på Windows.
+    teardownPlayer();
+    logToFile("delete_all_recordings: teardownPlayer körd före radering");
     const n = await invoke("delete_all_recordings", { dir: recordingDir });
     await message(`${n} inspelning${n === 1 ? "" : "ar"} raderades.`, { title: "Klart" });
     refreshRecordingsUsage();
@@ -2328,6 +2333,28 @@ function setupPlayer(blob) {
   if (dur) dur.textContent = "0:00";
 }
 
+// v1.5.3: Sätt upp spelaren från en disk-path via Tauri asset protocol.
+// <audio> streamar filen on-demand från disk — INGEN blob i JS-minnet (undviker
+// OOM-läckan från v1.3.x). Används i Windows-flödet (processAudioFile).
+function setupPlayerFromPath(filePath) {
+  if (!filePath || !audioPlayer) return;
+  teardownPlayer();                 // släpp ev. tidigare källa + fil-handtag
+  const assetUrl = window.__TAURI__.core.convertFileSrc(filePath);
+  currentPlaybackUrl = null;        // ingen blob-URL att revoka
+  currentPlaybackBlob = null;
+  currentPlaybackIsAsset = true;
+  audioPlayer.src = assetUrl;
+  audioPlayer.load();
+  const playerBar = document.getElementById("player-bar");
+  if (playerBar) playerBar.classList.remove("hidden");
+  const fill = document.getElementById("player-fill");
+  if (fill) fill.style.width = "0%";
+  const playerTime = document.getElementById("player-time");
+  if (playerTime) playerTime.textContent = "0:00";
+  const dur = document.getElementById("player-duration");
+  if (dur) dur.textContent = "0:00";
+}
+
 // Tear down audio player. Anropas vid ny session (filimport eller inspelning)
 // så att en föregående sessions player inte hänger kvar.
 function teardownPlayer() {
@@ -2338,6 +2365,7 @@ function teardownPlayer() {
   }
   if (currentPlaybackUrl) { URL.revokeObjectURL(currentPlaybackUrl); currentPlaybackUrl = null; }
   currentPlaybackBlob = null;
+  currentPlaybackIsAsset = false;
   const playerBar = document.getElementById("player-bar");
   if (playerBar) playerBar.classList.add("hidden");
   const fill = document.getElementById("player-fill");
@@ -2406,6 +2434,9 @@ function initPlayer() {
 
   audioPlayer.addEventListener("error", (e) => {
     console.error("[player] Audio error:", e, audioPlayer.error);
+    // Källan kunde inte laddas/spelas (fil saknas, ej spelbart format, scope-block).
+    // Dölj player-bar gracefully — segmentvyn/texten fungerar ändå.
+    document.getElementById("player-bar")?.classList.add("hidden");
   });
 
   const track = document.getElementById("player-track");
@@ -2678,6 +2709,8 @@ async function processAudioFile(filePath) {
       showSegmentView();
       logToFile(`processAudioFile: showSegmentView klar`);
       if (btnSeg) { btnSeg.classList.remove("hidden"); btnSeg.style.display = "inline-flex"; }
+      // v1.5.3: aktivera synkad spelare som streamar filen direkt från disk
+      setupPlayerFromPath(filePath);
     }
   } catch (err) {
     console.error("transcribe_file error:", err);
