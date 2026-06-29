@@ -103,6 +103,116 @@ pub struct AppState {
     pub audio_recorder: Mutex<AudioRecorder>,
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Talaridentifiering (diarization) via native-pyannote-rs (pure Rust/Burn).
+// Bakom feature-flaggan `diarization`. Körs som ett extra steg efter whisper.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Avkodar HELA filen till 16 kHz mono f32 och kör diariserings-pipelinen.
+/// Returnerar talarsegment. Egen StreamingDecoder (whisper-loopens minnesgaranti
+/// rörs inte). Körs i en tråd med stor stack av callern (Burn-grafen är djup).
+/// `min_segment_ms`: segment kortare än detta hoppas över (rensar spök-talare).
+#[cfg(feature = "diarization")]
+fn diarize_file(
+    seg_model: &std::path::Path,
+    emb_model: &std::path::Path,
+    file_path: &str,
+    max_speakers: usize,
+    threshold: f32,
+    min_segment_ms: i64,
+    cancel_flag: &Arc<AtomicBool>,
+) -> Result<Vec<SpeakerSegment>, String> {
+    use pyannote_rs::{EmbeddingExtractor, EmbeddingManager, Segmenter};
+
+    // 1. Full-avkoda filen till 16 kHz mono f32.
+    let mut dec = StreamingDecoder::open(file_path)?;
+    let mut samples = Vec::<f32>::new();
+    const DECODE_CHUNK: usize = 16000 * 300;
+    while let Some(c) = dec.next_chunk(DECODE_CHUNK)? {
+        if cancel_flag.load(Ordering::Relaxed) {
+            return Err("Avbruten".to_string());
+        }
+        samples.extend_from_slice(&c);
+    }
+    if samples.len() < 16000 {
+        log_line("diarize_file: ljud < 1s, hoppar över diarisering");
+        return Ok(Vec::new());
+    }
+    let sample_rate = 16000u32;
+
+    // 2. Konvertera f32 → i16 (cratet jobbar internt på i16).
+    let i16_samples: Vec<i16> = samples
+        .iter()
+        .map(|s| (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16)
+        .collect();
+    drop(samples);
+
+    // 3. Initiera modeller.
+    let segmenter = Segmenter::new(seg_model)
+        .map_err(|e| format!("Segmenter-init: {e:?}"))?;
+    let extractor = EmbeddingExtractor::new(emb_model)
+        .map_err(|e| format!("Embedding-init: {e:?}"))?;
+    let mut speakers = EmbeddingManager::new(max_speakers);
+
+    // 4. Segmentera + embedda + tilldela talare.
+    let mut out = Vec::new();
+    let iter = segmenter
+        .iter_segments(&i16_samples, sample_rate)
+        .map_err(|e| format!("iter_segments: {e:?}"))?;
+    for segment in iter {
+        if cancel_flag.load(Ordering::Relaxed) {
+            return Err("Avbruten".to_string());
+        }
+        let segment = match segment {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        let start_ms = (segment.start * 1000.0) as i64;
+        let end_ms = (segment.end * 1000.0) as i64;
+        // Filtrera bort mycket korta segment — de ger ofta falska "spök-talare".
+        if end_ms - start_ms < min_segment_ms {
+            continue;
+        }
+        let embedding = match extractor.extract(&segment.samples, sample_rate) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        let speaker_id = speakers.upsert(&embedding, threshold).unwrap_or(0) as i32;
+        out.push(SpeakerSegment { start_ms, end_ms, speaker_id });
+    }
+    log_line(&format!("diarize_file: {} talarsegment", out.len()));
+    Ok(out)
+}
+
+/// Tilldelar varje whisper-segment talaren med störst tidsöverlapp i diariseringen.
+/// Fallback: närmaste diariseringssegment (mittpunkt) om inget överlapp finns.
+fn assign_speakers(segments: &mut [TranscriptSegment], diar: &[SpeakerSegment]) {
+    if diar.is_empty() {
+        return;
+    }
+    for seg in segments.iter_mut() {
+        let mut best_overlap: i64 = 0;
+        let mut best_speaker: Option<i32> = None;
+        for d in diar {
+            let lo = seg.start_ms.max(d.start_ms);
+            let hi = seg.end_ms.min(d.end_ms);
+            let overlap = hi - lo;
+            if overlap > best_overlap {
+                best_overlap = overlap;
+                best_speaker = Some(d.speaker_id);
+            }
+        }
+        if best_speaker.is_none() {
+            let mid = (seg.start_ms + seg.end_ms) / 2;
+            best_speaker = diar
+                .iter()
+                .min_by_key(|d| ((d.start_ms + d.end_ms) / 2 - mid).abs())
+                .map(|d| d.speaker_id);
+        }
+        seg.speaker_id = best_speaker;
+    }
+}
+
 #[tauri::command]
 fn cancel_transcription(state: tauri::State<AppState>) {
     state.inner().cancel_flag.store(true, Ordering::Relaxed);
@@ -138,6 +248,16 @@ struct TranscriptSegment {
     end_ms: i64,
     text: String,
     tokens: Vec<TokenInfo>,
+    /// Talar-id (0-baserat) från diarisering. None = diarisering ej körd/misslyckad.
+    speaker_id: Option<i32>,
+}
+
+/// Ett diariserings-segment (talartilldelning för ett tidsintervall).
+#[derive(Clone)]
+struct SpeakerSegment {
+    start_ms: i64,
+    end_ms: i64,
+    speaker_id: i32,
 }
 
 #[derive(Serialize)]
@@ -351,6 +471,68 @@ fn load_whisper_with_fallback(
 fn check_model_exists(app_handle: AppHandle, size: String, quantized: bool, revision: String) -> Result<bool, String> {
     let model_path = get_model_path(&app_handle, &size, quantized, &revision)?;
     Ok(model_path.exists())
+}
+
+// ── Diariserings-modeller (.bpk) ─────────────────────────────────────────────
+// Hämtas vid behov från upstream-forken (samma mönster som whisper-modeller).
+const DIAR_SEG_URL: &str =
+    "https://raw.githubusercontent.com/RustedBytes/pyannote-rs/main/src/nn/segmentation/model.bpk";
+const DIAR_EMB_URL: &str =
+    "https://raw.githubusercontent.com/RustedBytes/pyannote-rs/main/src/nn/speaker_identification/model.bpk";
+
+fn diarization_model_path(app_handle: &AppHandle, kind: &str) -> Result<PathBuf, String> {
+    let filename = match kind {
+        "segmentation" => "segmentation-3.0.bpk",
+        "embedding" => "wespeaker-embedding.bpk",
+        _ => return Err("Okänd diariseringsmodell".to_string()),
+    };
+    let dir = app_handle.path().app_data_dir().map_err(|e| e.to_string())?
+        .join("models").join("diarization");
+    if !dir.exists() {
+        fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    }
+    Ok(dir.join(filename))
+}
+
+#[tauri::command]
+fn check_diarization_models(app_handle: AppHandle) -> Result<bool, String> {
+    Ok(diarization_model_path(&app_handle, "segmentation")?.exists()
+        && diarization_model_path(&app_handle, "embedding")?.exists())
+}
+
+#[tauri::command]
+async fn download_diarization_models(app_handle: AppHandle) -> Result<(), String> {
+    for (kind, url) in [("segmentation", DIAR_SEG_URL), ("embedding", DIAR_EMB_URL)] {
+        let path = diarization_model_path(&app_handle, kind)?;
+        if path.exists() && fs::metadata(&path).map(|m| m.len() > 1024).unwrap_or(false) {
+            continue;
+        }
+        let tmp = path.with_extension("tmp");
+        let res = reqwest::get(url).await.map_err(|e| e.to_string())?;
+        if !res.status().is_success() {
+            return Err(format!("Kunde inte hämta diariseringsmodell: HTTP {}", res.status()));
+        }
+        let total = res.content_length().unwrap_or(0);
+        let mut file = std::fs::File::create(&tmp).map_err(|e| e.to_string())?;
+        let mut stream = res.bytes_stream();
+        let mut downloaded: u64 = 0;
+        let mut last_mb = 0;
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|e| e.to_string())?;
+            file.write_all(&chunk).map_err(|e| e.to_string())?;
+            downloaded += chunk.len() as u64;
+            let mb = downloaded / 1_048_576;
+            if total > 0 && mb > last_mb {
+                last_mb = mb;
+                let progress = (downloaded as f32 / total as f32) * 100.0;
+                let _ = app_handle.emit("download_progress", ProgressPayload { progress, downloaded, total });
+            }
+        }
+        std::fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
+        log_line(&format!("Diariseringsmodell hämtad: {}", path.display()));
+    }
+    let _ = app_handle.emit("download_progress", ProgressPayload { progress: 100.0, downloaded: 1, total: 1 });
+    Ok(())
 }
 
 #[tauri::command]
@@ -966,7 +1148,7 @@ async fn transcribe_audio_segments(app_handle: AppHandle, state: tauri::State<'_
                         }
                     }
                 }
-                out.push(TranscriptSegment { start_ms: t0, end_ms: t1, text: trimmed, tokens });
+                out.push(TranscriptSegment { start_ms: t0, end_ms: t1, text: trimmed, tokens, speaker_id: None });
             }
 
             Ok::<Vec<TranscriptSegment>, String>(out)
@@ -999,6 +1181,8 @@ async fn transcribe_file(
     use_gpu: Option<bool>,
     thread_count: Option<u32>,
     gpu_device: Option<i32>,
+    identify_speakers: Option<bool>,
+    max_speakers: Option<i32>,
 ) -> Result<Vec<TranscriptSegment>, String> {
     state.inner().cancel_flag.store(false, Ordering::Relaxed);
     let model_path = get_model_path(&app_handle, &size, quantized, &revision)?;
@@ -1010,6 +1194,9 @@ async fn transcribe_file(
     let cancel_flag  = Arc::clone(&state.inner().cancel_flag);
     let use_gpu_val  = use_gpu.unwrap_or(true);
     let app_for_task = app_handle.clone();
+    // Klona file_path FÖRE whisper-spawn_blocking (som flyttar in originalet) så
+    // diariseringssteget efteråt har kvar sökvägen.
+    let file_path_for_diar = file_path.clone();
 
     // Kör allt i en enda spawn_blocking — StreamingDecoder öppnas där och
     // hålls levande hela vägen; ett chunk avkodas, transkriberas och kastas
@@ -1137,7 +1324,7 @@ async fn transcribe_file(
                                 }
                             }
                         }
-                        out.push(TranscriptSegment { start_ms: t0, end_ms: t1, text: trimmed, tokens });
+                        out.push(TranscriptSegment { start_ms: t0, end_ms: t1, text: trimmed, tokens, speaker_id: None });
                     }
                     Ok::<Vec<TranscriptSegment>, String>(out)
                 }));
@@ -1166,7 +1353,51 @@ async fn transcribe_file(
     }).await.map_err(|e| format!("Task-fel: {e}"))??;
 
     let _ = app_handle.emit("transcription_progress", TranscriptionProgressPayload { progress: 100 });
+
+    // ── Talaridentifiering (valfritt, extra steg efter transkriberingen) ──────
+    #[allow(unused_mut)]
+    let mut all_segments = all_segments;
+    #[cfg(feature = "diarization")]
+    if identify_speakers.unwrap_or(false) {
+        let _ = app_handle.emit("diarization_phase", DiarizationPhasePayload { active: true });
+        log_line("transcribe_file: startar diarisering");
+
+        let seg_model = diarization_model_path(&app_handle, "segmentation")?;
+        let emb_model = diarization_model_path(&app_handle, "embedding")?;
+        let max = match max_speakers { Some(n) if n >= 1 => n as usize, _ => 8 };
+        let cancel = Arc::clone(&state.inner().cancel_flag);
+        let fp = file_path_for_diar.clone();
+
+        // Egen tråd med STOR stack — Burns beräkningsgraf spränger annars default-stacken.
+        let diar_result = tokio::task::spawn_blocking(move || {
+            std::thread::Builder::new()
+                .stack_size(256 * 1024 * 1024)
+                .spawn(move || diarize_file(&seg_model, &emb_model, &fp, max, 0.5, 500, &cancel))
+                .map_err(|e| format!("Kunde inte starta diariseringstråd: {e}"))?
+                .join()
+                .map_err(|_| "Diariseringstråd panikade".to_string())?
+        }).await.map_err(|e| format!("Diariserings-task: {e}"))?;
+
+        match diar_result {
+            Ok(diar) if !diar.is_empty() => {
+                assign_speakers(&mut all_segments, &diar);
+                log_line(&format!("transcribe_file: talare tilldelade ({} diar-segment)", diar.len()));
+            }
+            Ok(_) => log_line("transcribe_file: diarisering gav inga segment — fortsätter utan talar-id"),
+            Err(e) => log_line(&format!("transcribe_file: diarisering misslyckades: {e} — fortsätter utan talar-id")),
+        }
+        let _ = app_handle.emit("diarization_phase", DiarizationPhasePayload { active: false });
+    }
+    // Konsumera params även utan feature så de inte ger unused-warnings.
+    #[cfg(not(feature = "diarization"))]
+    let _ = (&identify_speakers, &max_speakers, &file_path_for_diar);
+
     Ok(all_segments)
+}
+
+#[derive(Serialize, Clone)]
+struct DiarizationPhasePayload {
+    active: bool,
 }
 
 #[derive(Serialize)]
@@ -1304,6 +1535,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             check_model_exists,
             download_model,
+            check_diarization_models,
+            download_diarization_models,
             get_available_models,
             delete_model,
             get_disk_info,

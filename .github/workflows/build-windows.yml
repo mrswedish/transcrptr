@@ -65,6 +65,8 @@ jobs:
           releaseDraft: false
           prerelease: ${{ contains(github.ref, '-beta') || contains(github.ref, '-alpha') }}
           includeRelease: true
+          # Aktivera talaridentifiering (native-pyannote-rs / Burn) i release-bygget.
+          args: --features diarization
 
       - name: Extract Project Version
         run: |

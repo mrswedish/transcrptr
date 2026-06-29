@@ -160,6 +160,9 @@ let wasapiDecodePromise  = null;  // Promise<Float32Array> för JS-mix, behövs 
 let recordingDir         = "";    // Mapp där sessions sparas; tom = default från Rust
 let threadCount          = 4;     // Antal CPU-trådar för whisper.cpp (1-16); cap för att undvika krasch på multi-core
 let gpuDeviceIndex       = null;  // GPU-index (0-7) eller null = auto. Multi-GPU-stöd via WhisperContextParameters.gpu_device
+let identifySpeakers        = false;  // Talaridentifiering (diarisering) — av som default (tar längre tid)
+let includeSpeakersInExport = true;   // "Talare N: "-prefix i kopierad/sparad text (bara relevant när identifySpeakers)
+let maxSpeakers             = null;   // Max antal talare, null = auto (8)
 let audioContext = null;
 let analyzer = null;
 let micStream = null;
@@ -203,6 +206,20 @@ function loadSettings() {
     try { personalVocabulary = JSON.parse(vocab); } catch { personalVocabulary = []; }
   }
   if (confThresh !== null) confidenceThreshold = parseFloat(confThresh);
+
+  // Diariserings-inställningar (v1.6)
+  const diar = localStorage.getItem("identifySpeakers");
+  if (diar !== null) identifySpeakers = diar === "true";
+  const incSpk = localStorage.getItem("includeSpeakersInExport");
+  if (incSpk !== null) includeSpeakersInExport = incSpk === "true";
+  const maxSpk = localStorage.getItem("maxSpeakers");
+  maxSpeakers = (maxSpk && Number.isFinite(parseInt(maxSpk, 10))) ? parseInt(maxSpk, 10) : null;
+  const diarToggle = document.getElementById("diarization-toggle");
+  if (diarToggle) diarToggle.checked = identifySpeakers;
+  const incToggle = document.getElementById("include-speakers-toggle");
+  if (incToggle) incToggle.checked = includeSpeakersInExport;
+  const maxInput = document.getElementById("max-speakers-input");
+  if (maxInput) maxInput.value = maxSpeakers === null ? "" : String(maxSpeakers);
 
   const wasapiToggle = document.getElementById("wasapi-toggle");
   if (wasapiToggle) wasapiToggle.checked = wasapiEnabled;
@@ -390,6 +407,15 @@ async function setupEventListeners() {
       loadingText.innerText = `Transkriberar del ${currentChunkIdx + 1} av ${totalChunks}... (${overallProgress}%)`;
     } else {
       loadingText.innerText = `Transkriberar... ${overallProgress}%`;
+    }
+  });
+
+  // Diariserings-fas (v1.6) — separat steg efter transkriberingen
+  await listen("diarization_phase", (event) => {
+    const { active } = event.payload;
+    if (active) {
+      if (progressContainer) progressContainer.classList.add("hidden");
+      loadingText.innerText = "Identifierar talare... (detta kan ta en stund)";
     }
   });
 
@@ -2122,8 +2148,33 @@ function formatMs(ms) {
 }
 
 // Rebuild plain text from the segment array (used by copy/save/search)
+// Talar-palett (v1.6) — fast uppsättning distinkta färger, cyklas vid >8 talare.
+const SPEAKER_COLORS = [
+  "#2563eb", "#16a34a", "#d97706", "#dc2626",
+  "#7c3aed", "#0891b2", "#db2777", "#65a30d",
+];
+function speakerColor(id) {
+  const n = SPEAKER_COLORS.length;
+  return SPEAKER_COLORS[(((id ?? 0) % n) + n) % n];
+}
+
 function buildPlainText() {
-  return transcriptSegments.map(s => s.text).join("\n");
+  // Om diarisering körts OCH export-toggle är på: prefixa "Talare N: " per talarbyte.
+  const hasSpeakers = transcriptSegments.some(s => s.speakerId != null);
+  if (!includeSpeakersInExport || !hasSpeakers) {
+    return transcriptSegments.map(s => s.text).join("\n");
+  }
+  let last = null;
+  const lines = [];
+  for (const s of transcriptSegments) {
+    if (s.speakerId != null && s.speakerId !== last) {
+      lines.push(`Talare ${s.speakerId + 1}: ${s.text}`);
+      last = s.speakerId;
+    } else {
+      lines.push(s.text);
+    }
+  }
+  return lines.join("\n");
 }
 
 // Render the segment editor from transcriptSegments
@@ -2186,6 +2237,18 @@ function buildSegmentRow(seg, idx) {
   ts.title = "Klicka för att spela från denna tidpunkt";
   ts.addEventListener("click", () => seekPlayer(seg.startMs));
 
+  // Talar-badge (v1.6) — visas när diarisering körts (speakerId != null).
+  let speakerBadge = null;
+  if (seg.speakerId != null) {
+    speakerBadge = document.createElement("span");
+    speakerBadge.className = "speaker-badge";
+    speakerBadge.textContent = `Talare ${seg.speakerId + 1}`;
+    const c = speakerColor(seg.speakerId);
+    speakerBadge.style.backgroundColor = c + "22";
+    speakerBadge.style.color = c;
+    speakerBadge.style.borderColor = c + "55";
+  }
+
   const confView = buildConfidenceView(seg);
   confView.title = "Klicka för att redigera";
 
@@ -2221,6 +2284,7 @@ function buildSegmentRow(seg, idx) {
   });
 
   row.appendChild(ts);
+  if (speakerBadge) row.appendChild(speakerBadge);
   row.appendChild(confView);
   row.appendChild(ta);
   // autoGrow körs lazy via IntersectionObserver i renderSegmentEditor
@@ -2669,13 +2733,27 @@ async function processAudioFile(filePath) {
     const initialPrompt = personalVocabulary.length > 0 ? personalVocabulary.join(", ") : null;
     isCancelling = false;
     if (btnCancelTranscription) btnCancelTranscription.classList.remove("hidden");
+
+    // Talaridentifiering: säkerställ att modellerna finns (hämtas en gång ~35 MB).
+    if (identifySpeakers) {
+      try {
+        const ready = await invoke("check_diarization_models");
+        if (!ready) {
+          loadingText.innerText = "Hämtar talarmodell (engångsnedladdning ~35 MB)...";
+          await invoke("download_diarization_models");
+        }
+      } catch (e) {
+        logToFile(`processAudioFile: kunde inte hämta talarmodeller: ${e} — fortsätter utan diarisering`);
+      }
+    }
+
     // Rust beräknar overall-progress (0–99%) och emitterar det direkt.
     // Sätt totalChunks=1 så att JS-lyssnaren passerar Rusts värde rakt igenom.
     totalChunks     = 1;
     currentChunkIdx = 0;
     const startTime = performance.now();
 
-    logToFile(`processAudioFile: anropar invoke("transcribe_file") för ${filePath}`);
+    logToFile(`processAudioFile: anropar invoke("transcribe_file") för ${filePath} (diarisering=${identifySpeakers})`);
     const segs = await invoke("transcribe_file", {
       filePath,
       size:         modelSize,
@@ -2685,7 +2763,9 @@ async function processAudioFile(filePath) {
       initialPrompt,
       useGpu,
       threadCount,
-      gpuDevice: gpuDeviceIndex
+      gpuDevice: gpuDeviceIndex,
+      identifySpeakers,
+      maxSpeakers
     });
     logToFile(`processAudioFile: transcribe_file returnerade ${segs ? segs.length : 0} segment`);
 
@@ -2694,7 +2774,8 @@ async function processAudioFile(filePath) {
         startMs: s.start_ms,
         endMs:   s.end_ms,
         text:    s.text,
-        tokens:  s.tokens || []
+        tokens:  s.tokens || [],
+        speakerId: s.speaker_id ?? null
       }));
       logToFile(`processAudioFile: mapped till transcriptSegments (${transcriptSegments.length} st)`);
       outputText.value = transcriptSegments.map(s => s.text).join("\n");
@@ -2898,6 +2979,31 @@ const gpuToggleEl = document.getElementById("gpu-toggle");
 gpuToggleEl && gpuToggleEl.addEventListener("change", () => {
   useGpu = gpuToggleEl.checked;
   localStorage.setItem("useGpu", useGpu.toString());
+});
+
+// Diariserings-växlar (v1.6) — persistera direkt vid ändring
+const diarToggleEl = document.getElementById("diarization-toggle");
+diarToggleEl && diarToggleEl.addEventListener("change", () => {
+  identifySpeakers = diarToggleEl.checked;
+  localStorage.setItem("identifySpeakers", identifySpeakers.toString());
+});
+const incSpkToggleEl = document.getElementById("include-speakers-toggle");
+incSpkToggleEl && incSpkToggleEl.addEventListener("change", () => {
+  includeSpeakersInExport = incSpkToggleEl.checked;
+  localStorage.setItem("includeSpeakersInExport", includeSpeakersInExport.toString());
+  // Uppdatera råtexten direkt om en transkribering visas
+  if (transcriptSegments.length > 0) outputText.value = buildPlainText();
+});
+const maxSpkInputEl = document.getElementById("max-speakers-input");
+maxSpkInputEl && maxSpkInputEl.addEventListener("input", () => {
+  const v = parseInt(maxSpkInputEl.value, 10);
+  if (Number.isFinite(v) && v >= 1 && v <= 20) {
+    maxSpeakers = v;
+    localStorage.setItem("maxSpeakers", String(v));
+  } else {
+    maxSpeakers = null;
+    localStorage.removeItem("maxSpeakers");
+  }
 });
 
 // -------------------------------------------------------------

@@ -103,6 +103,20 @@
       .tok { border-radius: 3px; padding: 0 1px; }
       .tok-low { background-color: rgba(251,191,36,0.35); }
       .tok-very-low { background-color: rgba(239,68,68,0.30); }
+      .speaker-badge {
+        display: inline-flex;
+        align-items: center;
+        flex-shrink: 0;
+        padding: 1px 8px;
+        margin-right: 8px;
+        border-radius: 9999px;
+        border: 1px solid;
+        font-size: 11px;
+        font-weight: 600;
+        white-space: nowrap;
+        align-self: flex-start;
+        margin-top: 3px;
+      }
     </style>
   <script type="module" src="/main.js" defer></script>
 </head>
@@ -371,6 +385,38 @@
           <p class="text-xs text-slate-400 dark:text-slate-500">Sänk till 4 vid krasch på Intel-laptops med P/E-cores eller många trådar. Höj för snabbare transkribering på enklare CPUer (max 16).</p>
           <input type="range" id="thread-count-slider" min="1" max="16" value="4" step="1"
             class="w-full accent-primary cursor-pointer">
+        </div>
+
+        <!-- Talaridentifiering (diarization) -->
+        <div class="flex flex-col gap-3 p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl">
+          <div class="flex items-center justify-between">
+            <div>
+              <p class="text-sm font-medium text-slate-700 dark:text-slate-300">Identifiera talare</p>
+              <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5">Märker varje textsegment med "Talare 1/2/3". Tar betydligt längre tid (ett extra steg efter transkriberingen). Kräver en engångsnedladdning av en talarmodell (~35 MB) första gången. Fungerar bäst på inspelningar minst ~10 sekunder långa.</p>
+            </div>
+            <label class="relative inline-flex items-center cursor-pointer ml-4 flex-shrink-0">
+              <input type="checkbox" id="diarization-toggle" class="sr-only peer">
+              <div class="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+            </label>
+          </div>
+          <div class="flex items-center justify-between pt-2 border-t border-slate-200 dark:border-slate-700">
+            <div class="flex-1 pr-3">
+              <p class="text-xs font-medium text-slate-600 dark:text-slate-400">Inkludera talare i exporterad text</p>
+              <p class="text-[11px] text-slate-400 dark:text-slate-500">Lägger till "Talare N:" i kopierad/sparad text (bra för summeringar).</p>
+            </div>
+            <label class="relative inline-flex items-center cursor-pointer flex-shrink-0">
+              <input type="checkbox" id="include-speakers-toggle" class="sr-only peer" checked>
+              <div class="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+            </label>
+          </div>
+          <div class="flex items-center justify-between pt-2 border-t border-slate-200 dark:border-slate-700">
+            <div class="flex-1 pr-3">
+              <p class="text-xs font-medium text-slate-600 dark:text-slate-400">Max antal talare</p>
+              <p class="text-[11px] text-slate-400 dark:text-slate-500">Lämna tomt för automatiskt (rekommenderas).</p>
+            </div>
+            <input type="number" id="max-speakers-input" min="1" max="20" placeholder="auto"
+              class="w-20 px-2 py-1 text-sm bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-700 dark:text-slate-300 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary">
+          </div>
         </div>
 
         <!-- GPU-acceleration (Vulkan, Windows only) -->

@@ -1,6 +1,6 @@
 [package]
 name = "tauri-app"
-version = "1.5.4"
+version = "1.6.0"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -17,7 +17,14 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+[features]
+default = []
+# Talaridentifiering via native-pyannote-rs (pure Rust/Burn). Bakom en feature så
+# vanliga byggen kan hoppa över den tunga Burn-grafen; aktiveras i Windows-release-CI.
+diarization = ["dep:native-pyannote-rs"]
+
 [dependencies]
+native-pyannote-rs = { version = "0.1.4", optional = true }
 tauri = { version = "2", features = ["devtools", "protocol-asset"] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
