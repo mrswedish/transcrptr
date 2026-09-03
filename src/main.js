@@ -494,38 +494,39 @@ async function importSessionFolder(dir) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Tema (ljust/mörkt). Markup har haft dark:-klasser länge, men klassen `dark`
-// sattes aldrig — så mörkt läge var i praktiken avstängt. Här aktiveras det.
-// Värden: "light" | "dark" | "system" (default).
+// Tema — två lägen: "light" | "dark". Växlas med temaknappen i headern.
+// Vid allra första start används datorns inställning som utgångspunkt, därefter
+// gäller användarens eget val. Markup har haft dark:-klasser länge men klassen
+// `dark` sattes aldrig förrän v1.6.0 — mörkt läge var i praktiken avstängt.
 // ─────────────────────────────────────────────────────────────────────────────
-let themePref = "system";
-const prefersDark = window.matchMedia("(prefers-color-scheme: dark)");
-
-function resolveDark() {
-  return themePref === "dark" || (themePref === "system" && prefersDark.matches);
-}
+let themePref = "light";
 
 function applyTheme() {
-  document.documentElement.classList.toggle("dark", resolveDark());
-  // Håll temaväljaren i synk om den finns i DOM
-  const sel = document.getElementById("theme-select");
-  if (sel && sel.value !== themePref) sel.value = themePref;
+  const isDark = themePref === "dark";
+  document.documentElement.classList.toggle("dark", isDark);
+  // Ikonen visar vad ett klick LEDER TILL, inte nuvarande läge.
+  const icon = document.getElementById("theme-icon");
+  if (icon) icon.textContent = isDark ? "light_mode" : "dark_mode";
+  const btn = document.getElementById("btn-theme");
+  if (btn) btn.title = isDark ? "Byt till ljust tema" : "Byt till mörkt tema";
 }
 
 function setTheme(pref) {
-  themePref = pref;
-  localStorage.setItem("theme", pref);
+  themePref = pref === "dark" ? "dark" : "light";
+  localStorage.setItem("theme", themePref);
   applyTheme();
 }
 
 function initTheme() {
   const saved = localStorage.getItem("theme");
-  themePref = (saved === "light" || saved === "dark") ? saved : "system";
+  if (saved === "light" || saved === "dark") {
+    themePref = saved;
+  } else {
+    // Första start: utgå från datorns inställning och spara valet.
+    themePref = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    localStorage.setItem("theme", themePref);
+  }
   applyTheme();
-  // Följ OS-ändringar när användaren valt "system"
-  prefersDark.addEventListener("change", () => {
-    if (themePref === "system") applyTheme();
-  });
 }
 
 // Kör direkt (inte i initialize) så rätt tema gäller innan första målningen.
@@ -2953,12 +2954,11 @@ gpuToggleEl && gpuToggleEl.addEventListener("change", () => {
   localStorage.setItem("useGpu", useGpu.toString());
 });
 
-// Temaväljare — tillämpas direkt vid ändring
-const themeSelectEl = document.getElementById("theme-select");
-if (themeSelectEl) {
-  themeSelectEl.value = themePref;
-  themeSelectEl.addEventListener("change", () => {
-    setTheme(themeSelectEl.value);
+// Temaknapp i headern — växlar ljust/mörkt
+const btnTheme = document.getElementById("btn-theme");
+if (btnTheme) {
+  btnTheme.addEventListener("click", () => {
+    setTheme(themePref === "dark" ? "light" : "dark");
     // EQ-baren har inline-färg satt i JS — måla om den i det nya temat
     if (!isRecording) resetEq();
   });
