@@ -459,7 +459,9 @@ async function setupEventListeners() {
 
 // Parsar sessionens starttid ur mappnamnet (inspelning-YYYYMMDD-HHMMSS / recording-<unix>).
 function sessionStartFromFolderName(folderName) {
-  const newFmt = folderName.match(/^inspelning-(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})$/);
+  // Tillåter valfritt namnsuffix efter tidsstämpeln, t.ex.
+  // "inspelning-20260903-142233-ledningsgrupp" (se rename_session i Rust).
+  const newFmt = folderName.match(/^inspelning-(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})(?:-.*)?$/);
   const oldFmt = folderName.match(/^recording-(\d+)$/);
   if (newFmt) {
     const [, y, m, d, hh, mm, ss] = newFmt;
@@ -1515,6 +1517,13 @@ function sessionDirFromRecordingPath(p) {
 
 function showPostRecordingActions(sessionDir) {
   document.getElementById("post-recording-actions")?.classList.remove("hidden");
+  // Namnfältet döper om sessionsmappen — visa det bara när en sådan finns.
+  // Mac-flödet (MediaRecorder, type "segments") har inga filer på disk ännu,
+  // så där finns ingen mapp att namnge.
+  const nameRow = document.getElementById("session-name-row");
+  const nameInput = document.getElementById("session-name-input");
+  if (nameInput) nameInput.value = "";
+  if (nameRow) nameRow.classList.toggle("hidden", !sessionDir);
   const btn = document.getElementById("post-recording-path");
   const txt = document.getElementById("post-recording-path-text");
   if (btn && txt) {
@@ -2928,13 +2937,59 @@ btnPlayPause && btnPlayPause.addEventListener("click", () => {
 // Systemljud-toggle — uppdatera direkt utan spara-krav
 // -------------------------------------------------------------
 // Post-recording action buttons
-document.getElementById("btn-start-transcription")?.addEventListener("click", () => startPendingTranscription());
+
+// Döper om sessionsmappen om användaren skrivit ett namn. Körs före varje
+// åtgärd i dialogen så namnet aldrig tappas. Tomt fält = ingen omdöpning.
+// Uppdaterar pendingRecording.filePath eftersom sökvägen ändras vid omdöpning.
+async function applySessionName() {
+  const input = document.getElementById("session-name-input");
+  const name = input ? input.value.trim() : "";
+  if (!name) return;
+  try {
+    const newPath = await invoke("rename_session", { name });
+    if (pendingRecording && pendingRecording.type === "wav-file") {
+      pendingRecording.filePath = newPath;
+    }
+    logToFile(`applySessionName: sessionen sparad som "${name}"`);
+  } catch (e) {
+    // Omdöpning är en bekvämlighet — misslyckas den ska flödet ändå fortsätta utan
+    // att stoppa användaren med en dialog. Inspelningen finns kvar oavsett; felet
+    // hamnar i loggen för felsökning.
+    const msg = typeof e === "string" ? e : e.message || String(e);
+    logToFile(`applySessionName: kunde inte döpa om: ${msg}`);
+  } finally {
+    if (input) input.value = "";
+  }
+}
+
+document.getElementById("btn-start-transcription")?.addEventListener("click", async () => {
+  await applySessionName();
+  startPendingTranscription();
+});
+
+// "Spara för senare" — stänger dialogen direkt. Ljudet ligger redan i sessionsmappen,
+// så inget mer behöver göras. Detta är vägen vidare till nästa möte.
+document.getElementById("btn-save-for-later")?.addEventListener("click", async () => {
+  await applySessionName();
+  hidePostRecordingActions();
+  pendingRecording = null;
+  updateBadge("Inspelning sparad", "");
+});
+
+// Enter i namnfältet = spara för senare (snabbaste vägen vidare)
+document.getElementById("session-name-input")?.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    document.getElementById("btn-save-for-later")?.click();
+  }
+});
 // Klick på sökvägen i post-recording-dialogen öppnar sessionsmappen i Utforskaren
 document.getElementById("post-recording-path")?.addEventListener("click", async () => {
   const p = document.getElementById("post-recording-path")?.dataset.path;
   if (p) { try { await window.__TAURI__.opener.openPath(p); } catch (_) {} }
 });
 document.getElementById("btn-save-audio-only")?.addEventListener("click", async () => {
+  await applySessionName();
   hidePostRecordingActions();
   pendingRecording = null;
   btnRedo.classList.remove("hidden"); btnRedo.style.display = "inline-flex";

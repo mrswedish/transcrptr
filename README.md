@@ -16,7 +16,10 @@ Transkribera använder [KB-whisper](https://huggingface.co/KBLab/kb-whisper-smal
 - **🔒 Integritet:** Ditt ljud stannar på din dator. Inget skickas till externa servrar. [Integritetspolicy](PRIVACY.md)
 - **⚡ Hårdvaruaccelererad:** Vulkan (Windows) och Metal (Mac) utnyttjar din GPU för snabbare transkribering. Kan stängas av för äldre grafikkort.
 - **🎙️ Mötesinspelning (Windows):** Spela in både mikrofon och datorljud från t.ex. Teams/Zoom — via WASAPI Endpoint Loopback (fungerar från Windows 7) eller Stereo Mix (se guide nedan).
+- **🔌 Fungerar helt offline:** Inget hämtas från internet vid start — allt utseende och alla typsnitt finns i programmet. Endast modellnedladdning kräver nätverk, och den sker bara en gång.
 - **💽 Automatisk sparning till disk:** Allt inspelat material streamas direkt till en tidsstämplad sessionsmapp (`inspelning-...`) under inspelningens gång — skyddar mot dataförlust vid krasch eller strömavbrott. Efter stopp visas sökvägen till mappen direkt i appen (klicka för att öppna i Utforskaren).
+- **⏭️ Spara för senare:** Efter en inspelning kan du välja *Transkribera nu* eller *Spara för senare* — det senare stänger dialogen direkt så du hinner starta nästa möte. Ge inspelningen ett valfritt namn så blir sessionsmappen lätt att hitta igen (`inspelning-20260903-142233-ledningsgrupp`).
+- **🌗 Ljust och mörkt tema:** Växla direkt med temaknappen i appens överkant. Första gången följer appen datorns inställning.
 - **📂 Importera fil eller mapp:** Transkribera valfri ljudfil — MP3, M4A, AAC, WAV, OGG, FLAC, MP4, WebM, MKV — eller öppna en hel sessionsmapp med streamat material (t.ex. en inspelning som inte avslutades korrekt). Avkodningen sker helt i Rust (Symphonia) utan att belasta JS-heapen — fungerar även för inspelningar på flera timmar.
 - **🎚️ Antialiaserad ljudbehandling:** Lågpassfilter (cutoff 7 kHz) före nedsampling till 16 kHz — minskar aliasing-artefakter från 44.1k/48k-källor (iPhone, Mac mic) för bättre transkribering.
 - **⏹️ Avbryt transkribering:** Avbryt pågående transkribering när som helst med en knapp. Inspelad audio bevaras alltid och kan sparas även efter avbrott.

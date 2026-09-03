@@ -272,6 +272,83 @@ fn get_recording_path(state: tauri::State<'_, AppState>) -> Result<String, Strin
         .ok_or_else(|| "Ingen aktiv inspelning".to_string())
 }
 
+/// Rensar ett användarangivet sessionsnamn så det duger som mappnamn på Windows.
+/// Otillåtna tecken blir bindestreck; längden kapas. Tom sträng → None.
+fn sanitize_session_name(raw: &str) -> Option<String> {
+    let cleaned: String = raw
+        .trim()
+        .chars()
+        .map(|c| match c {
+            // Reserverade i Windows-filnamn, plus path-separatorer
+            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '-',
+            c if c.is_control() => '-',
+            c => c,
+        })
+        .collect();
+    // Kollapsa upprepade bindestreck/mellanslag och trimma kanterna
+    let mut out = String::with_capacity(cleaned.len());
+    let mut prev_sep = false;
+    for c in cleaned.chars() {
+        let is_sep = c == '-' || c == ' ';
+        if is_sep {
+            if !prev_sep && !out.is_empty() { out.push('-'); }
+            prev_sep = true;
+        } else {
+            out.push(c);
+            prev_sep = false;
+        }
+    }
+    let out = out.trim_matches('-').chars().take(40).collect::<String>();
+    let out = out.trim_matches('-').to_string();
+    // Windows tillåter inte mappnamn som slutar på punkt
+    let out = out.trim_end_matches('.').to_string();
+    if out.is_empty() { None } else { Some(out) }
+}
+
+/// Döper om den senaste sessionsmappen genom att lägga till ett namn efter
+/// tidsstämpeln: `inspelning-20260903-142233-ledningsgrupp`.
+/// Tidsstämpeln behålls som prefix så sortering och datumparsning fortsätter fungera.
+/// Uppdaterar recording_path så efterföljande uppspelning/transkribering hittar filen.
+#[tauri::command]
+fn rename_session(state: tauri::State<'_, AppState>, name: String) -> Result<String, String> {
+    let recorder = state.inner().audio_recorder.lock()
+        .map_err(|e| format!("Recorder-lås: {e}"))?;
+    let mut path_guard = recorder.recording_path.lock()
+        .map_err(|e| format!("Path-lås: {e}"))?;
+    let current = path_guard.clone()
+        .ok_or_else(|| "Ingen inspelning att döpa om".to_string())?;
+
+    let Some(clean) = sanitize_session_name(&name) else {
+        // Inget namn angivet — behåll mappen som den är.
+        return Ok(current.to_string_lossy().into_owned());
+    };
+
+    let session_dir = current.parent()
+        .ok_or_else(|| "Kunde inte hitta sessionsmappen".to_string())?;
+    let old_name = session_dir.file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| "Ogiltigt mappnamn".to_string())?;
+    let parent = session_dir.parent()
+        .ok_or_else(|| "Kunde inte hitta överordnad mapp".to_string())?;
+
+    // Bygg nytt namn: behåll allt fram till ev. tidigare suffix.
+    let new_name = format!("{old_name}-{clean}");
+    let new_dir = parent.join(&new_name);
+    if new_dir.exists() {
+        return Err(format!("Det finns redan en mapp som heter {new_name}"));
+    }
+
+    std::fs::rename(session_dir, &new_dir)
+        .map_err(|e| format!("Kunde inte döpa om mappen: {e}"))?;
+
+    let file_name = current.file_name()
+        .ok_or_else(|| "Ogiltigt filnamn".to_string())?;
+    let new_path = new_dir.join(file_name);
+    *path_guard = Some(new_path.clone());
+    log_line(&format!("rename_session: {} → {}", old_name, new_name));
+    Ok(new_path.to_string_lossy().into_owned())
+}
+
 /// Utökar asset-protokollets scope vid runtime till EXAKT en fil, så att <audio>
 /// kan streama just den filen via convertFileSrc. Asset-scopen i tauri.conf.json är tom
 /// (`[]`) — vi tillåter aldrig hela filsystemet. JS anropar detta precis innan spelaren
@@ -1327,6 +1404,7 @@ pub fn run() {
             log_message,
             append_mic_chunk,
             get_recording_path,
+            rename_session,
             allow_asset_path
         ])
         .run(tauri::generate_context!())
