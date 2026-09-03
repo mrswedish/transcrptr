@@ -4,6 +4,10 @@ Transkribera är en lokal, integritetsfokuserad skrivbordsapp som omvandlar tal 
 
 ![Transkribera Screenshot](public/screenshot.png)
 
+> **För IT och förvaltare:** [Teknisk dokumentation](TEKNISK-DOKUMENTATION.md) beskriver var data
+> lagras, vilken nätverkstrafik som förekommer, vad som blir kvar vid avinstallation och hur
+> systemet är byggt.
+
 ## 🇸🇪 Fokus på svenska
 
 Transkribera använder [KB-whisper](https://huggingface.co/KBLab/kb-whisper-small) — en AI-modell från **Kungliga biblioteket (KB)** specialtränad på **50 000+ timmar** av svenskt tal, däribland tv-sändningar, riksdagstal och dialekter från hela landet.
