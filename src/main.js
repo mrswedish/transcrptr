@@ -34,8 +34,10 @@ const recordingStatusText = document.getElementById("recording-status-text");
 const idleHint = document.getElementById("idle-hint");
 
 // Pill-knappens klasser för de två lägena (v1.5)
-const REC_PILL_IDLE = "btn-record-pill shrink-0 flex items-center gap-2.5 pl-3 pr-5 h-12 bg-red-500 hover:bg-red-600 active:scale-95 transition-all rounded-full shadow-md shadow-red-500/30 text-white font-semibold text-sm";
-const REC_PILL_ACTIVE = "btn-record-pill shrink-0 flex items-center gap-2.5 pl-3 pr-5 h-12 bg-slate-700 hover:bg-slate-800 dark:bg-slate-600 dark:hover:bg-slate-500 active:scale-95 transition-all rounded-full shadow-md text-white font-semibold text-sm";
+// Alternativ A: profilrödan används i viloläge; under inspelning blir knappen mörk
+// så att den pulserande röda punkten ensam signalerar "spelar in".
+const REC_PILL_IDLE = "btn-record-pill shrink-0 flex items-center gap-2.5 pl-3 pr-5 h-12 bg-primary hover:bg-primary-hover active:scale-95 transition-all rounded-full shadow-md shadow-primary/25 text-white font-semibold text-sm";
+const REC_PILL_ACTIVE = "btn-record-pill shrink-0 flex items-center gap-2.5 pl-3 pr-5 h-12 bg-slate-800 hover:bg-slate-900 dark:bg-slate-600 dark:hover:bg-slate-500 active:scale-95 transition-all rounded-full shadow-md text-white font-semibold text-sm";
 
 // Central UI-state-växling för inspelningskontrollerna
 function setRecordingUI(state) {                // "idle" | "recording" | "paused"
@@ -88,13 +90,22 @@ const selLanguage = document.getElementById("transcription-language");
 const selMic = document.getElementById("mic-select");
 const eqBar = document.getElementById("eq-bar");
 
+// Profilfärgen läses från CSS-variabeln så EQ-baren följer temat (ljust/mörkt)
+// utan hårdkodad hex. Variabeln är RGB-kanaler: "226 0 26".
+function primaryColor() {
+  const v = getComputedStyle(document.documentElement)
+    .getPropertyValue("--c-primary").trim();
+  return v ? `rgb(${v})` : "#e2001a";
+}
+
 // Animate the EQ-bar columns based on audio level (average 0–128)
 function animateEq(average) {
   if (!eqBar) return;
   const cols = eqBar.querySelectorAll(".eq-col");
   const norm = Math.min(average / 70, 1); // 0–1
   const shape = [0.3, 0.55, 0.85, 1.0, 0.85, 0.55, 0.3]; // bell curve base
-  const color = norm > 0.85 ? "#ef4444" : norm > 0.6 ? "#f59e0b" : "#2DD4BF";
+  // Nivåfärgning: hög nivå = varning (rött/amber), normal = profilfärg.
+  const color = norm > 0.85 ? "#ef4444" : norm > 0.6 ? "#f59e0b" : primaryColor();
   cols.forEach((col, i) => {
     const jitter = (Math.random() * 0.35 - 0.175) * norm;
     const h = Math.max(0.08, Math.min(1, shape[i] * norm + jitter));
@@ -107,7 +118,7 @@ function resetEq() {
   if (!eqBar) return;
   eqBar.querySelectorAll(".eq-col").forEach((col, i) => {
     col.style.height = ["25%","45%","75%","100%","75%","45%","25%"][i];
-    col.style.backgroundColor = "#2DD4BF";
+    col.style.backgroundColor = primaryColor();
   });
 }
 
@@ -443,7 +454,7 @@ async function setupEventListeners() {
     });
   }
 
-  // (v1.5: recover-knappen i settings borttagen — importeras nu via "Välj fil/mapp" i headern)
+  // (v1.5: recover-knappen i settings borttagen — importeras nu via "Öppna fil/mapp" i headern)
 }
 
 // Parsar sessionens starttid ur mappnamnet (inspelning-YYYYMMDD-HHMMSS / recording-<unix>).
@@ -481,6 +492,44 @@ async function importSessionFolder(dir) {
     await message(`Kunde inte läsa inspelningsmappen: ${msg}`, { title: "Fel", kind: "error" });
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tema (ljust/mörkt). Markup har haft dark:-klasser länge, men klassen `dark`
+// sattes aldrig — så mörkt läge var i praktiken avstängt. Här aktiveras det.
+// Värden: "light" | "dark" | "system" (default).
+// ─────────────────────────────────────────────────────────────────────────────
+let themePref = "system";
+const prefersDark = window.matchMedia("(prefers-color-scheme: dark)");
+
+function resolveDark() {
+  return themePref === "dark" || (themePref === "system" && prefersDark.matches);
+}
+
+function applyTheme() {
+  document.documentElement.classList.toggle("dark", resolveDark());
+  // Håll temaväljaren i synk om den finns i DOM
+  const sel = document.getElementById("theme-select");
+  if (sel && sel.value !== themePref) sel.value = themePref;
+}
+
+function setTheme(pref) {
+  themePref = pref;
+  localStorage.setItem("theme", pref);
+  applyTheme();
+}
+
+function initTheme() {
+  const saved = localStorage.getItem("theme");
+  themePref = (saved === "light" || saved === "dark") ? saved : "system";
+  applyTheme();
+  // Följ OS-ändringar när användaren valt "system"
+  prefersDark.addEventListener("change", () => {
+    if (themePref === "system") applyTheme();
+  });
+}
+
+// Kör direkt (inte i initialize) så rätt tema gäller innan första målningen.
+initTheme();
 
 // Initialize Application
 async function initialize() {
@@ -1966,7 +2015,7 @@ btnFile.addEventListener("click", async () => {
       directory: true,
       multiple: false,
       defaultPath: recordingDir || undefined,
-      title: "Välj sessionsmapp (inspelning-...)",
+      title: "Öppna sessionsmapp (inspelning-...)",
     });
     if (typeof dir !== "string" || !dir) return;
     const info = await invoke("inspect_session_dir", { dir });
@@ -2206,7 +2255,9 @@ function buildSegmentRow(seg, idx) {
     const newView = buildConfidenceView(transcriptSegments[idx]);
     newView.title = "Klicka för att redigera";
     newView.addEventListener("click", () => { newView.classList.add("hidden"); ta.classList.remove("hidden"); requestAnimationFrame(autoGrow); ta.focus(); });
-    row.replaceChild(newView, confView.parentNode ? confView : newView);
+    // Ersätt den befintliga vyn (eller sätt in en ny). Tidigare fanns här ett
+    // extra replaceChild som kastade NotFoundError när confView redan bytts ut —
+    // raderna nedan gör jobbet korrekt på egen hand.
     ta.classList.add("hidden");
     const existing = row.querySelector(".segment-view");
     if (existing) row.replaceChild(newView, existing);
@@ -2745,8 +2796,10 @@ btnCopy.addEventListener("click", () => {
     : outputText.value;
   if (text) {
     navigator.clipboard.writeText(text).then(() => {
+      // Behåll ikonspråket (Material Symbols) i stället för en emoji.
       const prevIcon = btnCopy.innerHTML;
-      btnCopy.innerHTML = `<span class="icon">✅</span> Kopierad!`;
+      btnCopy.innerHTML =
+        `<span class="material-symbols-outlined text-lg">check</span><span>Kopierad!</span>`;
       setTimeout(() => { btnCopy.innerHTML = prevIcon; }, 2000);
     });
   }
@@ -2899,6 +2952,17 @@ gpuToggleEl && gpuToggleEl.addEventListener("change", () => {
   useGpu = gpuToggleEl.checked;
   localStorage.setItem("useGpu", useGpu.toString());
 });
+
+// Temaväljare — tillämpas direkt vid ändring
+const themeSelectEl = document.getElementById("theme-select");
+if (themeSelectEl) {
+  themeSelectEl.value = themePref;
+  themeSelectEl.addEventListener("change", () => {
+    setTheme(themeSelectEl.value);
+    // EQ-baren har inline-färg satt i JS — måla om den i det nya temat
+    if (!isRecording) resetEq();
+  });
+}
 
 // -------------------------------------------------------------
 // Personlig ordlista — import/export
