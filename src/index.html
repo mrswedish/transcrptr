@@ -288,6 +288,52 @@
           Hjälp med mötesljud
         </button>
 
+        <!-- Språk — det vanligaste valet, därför överst -->
+        <div class="flex flex-col gap-2 p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl">
+          <label for="transcription-language" class="text-sm font-medium text-slate-700 dark:text-slate-300">Språk för transkribering</label>
+          <select id="transcription-language"
+            class="p-2.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-sm text-slate-700 dark:text-slate-300 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary">
+            <option value="sv" selected>Svenska</option>
+            <option value="en">Engelska</option>
+            <option value="auto">Automatisk identifiering</option>
+          </select>
+        </div>
+
+        <!-- Mapp för inspelningar -->
+        <div class="flex flex-col gap-2 p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl">
+          <p class="text-sm font-medium text-slate-700 dark:text-slate-300">Mapp för inspelningar</p>
+          <p class="text-xs text-slate-400 dark:text-slate-500">Här sparas inspelningar direkt till disk under inspelningen — skyddar mot dataförlust vid krasch.</p>
+          <div class="flex gap-2 items-center mt-1">
+            <input type="text" id="recording-dir-path" readonly
+              class="flex-1 px-3 py-2 text-xs font-mono bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-700 dark:text-slate-300 truncate"
+              placeholder="Standardmapp..." />
+            <button id="btn-browse-recording-dir"
+              class="px-4 py-2 text-sm font-medium bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 rounded-lg transition-colors">
+              Bläddra
+            </button>
+          </div>
+          <p id="recordings-usage" class="text-xs text-slate-400 dark:text-slate-500 mt-1"></p>
+        </div>
+
+        <!-- Radera alla ljudinspelningar -->
+        <div class="flex flex-col gap-2 p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl">
+          <p class="text-sm font-medium text-slate-700 dark:text-slate-300">Radera alla ljudinspelningar</p>
+          <p class="text-xs text-slate-400 dark:text-slate-500">Tar bort alla sessionsmappar (inspelning-...) i inspelningsmappen permanent. Sparade textfiler och exporterade ljudfiler påverkas inte.</p>
+          <button id="btn-delete-recordings"
+            class="self-end px-4 py-2 text-sm font-medium bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/50 rounded-lg transition-colors">
+            Radera alla
+          </button>
+        </div>
+        <!-- ── Avancerat ──────────────────────────────────────────────────
+             Felsökningsverktyg. Dolda som standard: en vanlig användare ska
+             aldrig behöva röra dem, men de behövs vid supportärenden. -->
+        <details id="advanced-settings" class="group">
+          <summary class="flex items-center gap-2 cursor-pointer select-none text-sm font-medium text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors py-1">
+            <span class="material-symbols-outlined text-base transition-transform group-open:rotate-90">chevron_right</span>
+            Avancerat
+            <span class="text-xs font-normal text-slate-400 dark:text-slate-500">— prestanda och felsökning</span>
+          </summary>
+          <div class="flex flex-col gap-4 pt-4">
         <!-- CPU-trådar för transkribering -->
         <div class="flex flex-col gap-2 p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl">
           <div class="flex items-center justify-between">
@@ -321,22 +367,6 @@
           </div>
         </div>
 
-        <!-- Systemljud via WASAPI Endpoint Loopback (Windows) -->
-        <!-- Mapp för inspelningar -->
-        <div class="flex flex-col gap-2 p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl">
-          <p class="text-sm font-medium text-slate-700 dark:text-slate-300">Mapp för inspelningar</p>
-          <p class="text-xs text-slate-400 dark:text-slate-500">Här sparas inspelningar direkt till disk under inspelningen — skyddar mot dataförlust vid krasch.</p>
-          <div class="flex gap-2 items-center mt-1">
-            <input type="text" id="recording-dir-path" readonly
-              class="flex-1 px-3 py-2 text-xs font-mono bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-700 dark:text-slate-300 truncate"
-              placeholder="Standardmapp..." />
-            <button id="btn-browse-recording-dir"
-              class="px-4 py-2 text-sm font-medium bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 rounded-lg transition-colors">
-              Bläddra
-            </button>
-          </div>
-          <p id="recordings-usage" class="text-xs text-slate-400 dark:text-slate-500 mt-1"></p>
-        </div>
 
         <!-- Visa loggfil för diagnostik -->
         <div class="flex flex-col gap-2 p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl">
@@ -348,26 +378,21 @@
           </button>
         </div>
 
-        <!-- Radera alla ljudinspelningar -->
-        <div class="flex flex-col gap-2 p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl">
-          <p class="text-sm font-medium text-slate-700 dark:text-slate-300">Radera alla ljudinspelningar</p>
-          <p class="text-xs text-slate-400 dark:text-slate-500">Tar bort alla sessionsmappar (inspelning-...) i inspelningsmappen permanent. Sparade textfiler och exporterade ljudfiler påverkas inte.</p>
-          <button id="btn-delete-recordings"
-            class="self-end px-4 py-2 text-sm font-medium bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/50 rounded-lg transition-colors">
-            Radera alla
-          </button>
-        </div>
+            <!-- Markering av osäkra ord (tidigare "Konfidenströskel") -->
+            <div class="flex flex-col gap-2 p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl">
+              <div class="flex items-center justify-between">
+                <div>
+                  <p class="text-sm font-medium text-slate-700 dark:text-slate-300">Markera osäkra ord</p>
+                  <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5">Ord som appen är osäker på färgas i segmentvyn: <span class="tok tok-low px-1 rounded">gul</span> = osäker, <span class="tok tok-very-low px-1 rounded">röd</span> = mycket osäker. Högre värde markerar fler ord.</p>
+                </div>
+                <span id="confidence-threshold-label" class="text-sm font-semibold text-primary shrink-0 ml-3">60%</span>
+              </div>
+              <input type="range" id="confidence-threshold-slider" min="10" max="99" value="60" step="1"
+                class="w-full accent-primary cursor-pointer">
+            </div>
+          </div>
+        </details>
 
-        <div class="flex flex-col gap-2">
-          <label for="transcription-language" class="text-sm font-medium text-slate-700 dark:text-slate-300">Språk för
-            transkribering</label>
-          <select id="transcription-language"
-            class="p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-700 dark:text-slate-300 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary">
-            <option value="sv" selected>Svenska</option>
-            <option value="en">Engelska</option>
-            <option value="auto">Automatisk identifiering</option>
-          </select>
-        </div>
         <!-- Personlig ordlista -->
         <div class="pt-2 border-t border-slate-200 dark:border-slate-700">
           <h3 class="text-sm font-bold text-slate-800 dark:text-white mb-1">Personlig ordlista</h3>
@@ -387,19 +412,6 @@
               Exportera .txt
             </button>
           </div>
-        </div>
-
-        <!-- Konfidenströskel -->
-        <div class="p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl">
-          <div class="flex items-center justify-between mb-2">
-            <div>
-              <p class="text-sm font-medium text-slate-700 dark:text-slate-300">Konfidenströskel</p>
-              <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5">Ord med lägre sannolikhet markeras i segmentvyn. <span class="tok tok-low px-1 rounded">Gul</span> = osäker, <span class="tok tok-very-low px-1 rounded">röd</span> = mycket osäker.</p>
-            </div>
-            <span id="confidence-threshold-label" class="text-sm font-semibold text-primary shrink-0 ml-3">60%</span>
-          </div>
-          <input type="range" id="confidence-threshold-slider" min="10" max="99" value="60" step="1"
-            class="w-full accent-primary cursor-pointer">
         </div>
 
         <!-- Nedladdade modeller — välj aktiv eller ta bort -->
@@ -447,7 +459,7 @@
                 <input type="checkbox" id="model-quantized" checked
                   class="w-4 h-4 rounded accent-primary cursor-pointer shrink-0">
                 <span class="text-sm text-slate-700 dark:text-slate-300">
-                  Kvantiserad/komprimerad <span class="text-slate-400 font-normal">— 40% mindre, samma kvalitet (rekommenderas)</span>
+                  Komprimerad modell <span class="text-slate-400 font-normal">— rekommenderas: 40 % mindre nedladdning, ingen märkbar kvalitetsskillnad. Kryssa bara ur om du har särskilda skäl.</span>
                 </span>
               </label>
             </div>
@@ -455,7 +467,7 @@
             <button id="btn-download-model"
               class="w-full py-3 bg-primary hover:bg-primary-hover text-white text-sm font-semibold rounded-xl transition-colors flex items-center justify-center gap-2">
               <span class="material-symbols-outlined text-base">download</span>
-              Ladda ner
+              <span class="download-label">Ladda ner</span>
             </button>
           </div>
         </div>
@@ -516,10 +528,10 @@
           </button>
           <button id="import-choice-folder"
             class="flex items-center gap-3 px-4 py-3 bg-slate-50 dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 rounded-2xl transition-colors text-left">
-            <span class="material-symbols-outlined text-primary">folder_open</span>
+            <span class="material-symbols-outlined text-primary">history</span>
             <span>
-              <span class="block text-sm font-semibold text-slate-700 dark:text-slate-200">Sessionsmapp</span>
-              <span class="block text-xs text-slate-400 dark:text-slate-500">Mapp med streamat material (inspelning-...)</span>
+              <span class="block text-sm font-semibold text-slate-700 dark:text-slate-200">En tidigare inspelning</span>
+              <span class="block text-xs text-slate-400 dark:text-slate-500">Något du spelat in med Transkribera</span>
             </span>
           </button>
         </div>

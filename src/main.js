@@ -473,12 +473,14 @@ function sessionStartFromFolderName(folderName) {
 }
 
 // Importerar en sessionsmapp: mixar (recover_session) och lämnar över till post-recording-flödet.
-async function importSessionFolder(dir) {
+async function importSessionFolder(dir, needsRepair = false) {
   // Nollställ ev. öppen post-recording-dialog innan vi tar över state (F6)
   pendingRecording = null;
   hidePostRecordingActions();
   try {
-    loadingText.innerText = "Förbereder inspelning...";
+    loadingText.innerText = needsRepair
+      ? "Återställer avbruten inspelning..."
+      : "Förbereder inspelning...";
     loadingOverlay.classList.remove("hidden");
     const recordedPath = await invoke("recover_session", { sessionDir: dir });
     loadingOverlay.classList.add("hidden");
@@ -976,6 +978,22 @@ const SIZE_DESCS = {
   turbo:  "~1.5 GB · Snabb · 100+ språk · Välj vid blandspråkigt innehåll, engelska facktermer eller internationella möten",
 };
 
+// Ungefärlig nedladdningsstorlek i MB. Okvantiserade varianter är betydligt
+// större — används för att visa storlek på knappen och varna före stora hämtningar.
+const MODEL_SIZES_MB = {
+  "medium-true": 900,  "medium-false": 1500,
+  "large-true": 2000,  "large-false": 3000,
+  "turbo-true": 1500,  "turbo-false": 1500,   // turbo är alltid q8_0
+};
+
+function modelSizeMb(size, quantized) {
+  return MODEL_SIZES_MB[`${size}-${quantized}`] ?? 1000;
+}
+
+function formatMb(mb) {
+  return mb >= 1000 ? `${(mb / 1000).toFixed(1).replace(".0", "")} GB` : `${mb} MB`;
+}
+
 const revisionSection = document.getElementById("revision-section");
 const quantizedRow = document.getElementById("quantized-row");
 
@@ -1006,6 +1024,18 @@ function syncPickButtons(group, value) {
       }
     }
   }
+  updateDownloadButtonLabel();
+}
+
+// Visar nedladdningsstorleken på knappen så den syns innan man klickar.
+// Uppdateras när storlek eller kvantisering ändras.
+function updateDownloadButtonLabel() {
+  const btn = document.getElementById("btn-download-model");
+  if (!btn) return;
+  const label = btn.querySelector(".download-label");
+  if (!label) return;
+  const quantized = cbModelQuantized ? cbModelQuantized.checked : true;
+  label.textContent = `Ladda ner · ${formatMb(modelSizeMb(dlSize, quantized))}`;
 }
 
 document.querySelectorAll("[data-pick]").forEach(btn => {
@@ -1118,10 +1148,61 @@ btnSaveSettings.addEventListener("click", async () => {
   updateFooter();
 });
 
-// "Ladda ner vald modell" — always downloads the selected combination
+// Kvantiseringen påverkar nedladdningsstorleken — uppdatera knappetiketten.
+// Varna direkt vid urkryssning: "kvantiserad" låter som en försämring, men är
+// rekommendationen. Utan detta laddar folk ner 3 GB i tron att de får bättre kvalitet.
+if (cbModelQuantized) {
+  cbModelQuantized.addEventListener("change", async () => {
+    updateDownloadButtonLabel();
+    if (!cbModelQuantized.checked) {
+      const full = formatMb(modelSizeMb(dlSize, false));
+      const comp = formatMb(modelSizeMb(dlSize, true));
+      const ok = await showConfirm(
+        `Den okomprimerade modellen är ${full} i stället för ${comp}, utan märkbart bättre ` +
+        "resultat.\n\nVill du ändå välja den?",
+        "Större nedladdning");
+      if (!ok) {
+        cbModelQuantized.checked = true;
+        updateDownloadButtonLabel();
+      }
+    }
+  });
+}
+
+// "Ladda ner vald modell" — always downloads the selected combination.
+// Skyddar mot oavsiktliga stora hämtningar: visar storleken, bekräftar över 1 GB
+// och varnar om disken inte räcker. Tidigare startade nedladdningen direkt utan
+// någon kontroll — man kunde dra ner 3 GB av misstag.
+const LARGE_DOWNLOAD_MB = 1000;
+
 if (btnDownloadModel) {
   btnDownloadModel.addEventListener("click", async () => {
     const quantized = cbModelQuantized ? cbModelQuantized.checked : true;
+    const sizeMb = modelSizeMb(dlSize, quantized);
+    const sizeText = formatMb(sizeMb);
+
+    // Diskkontroll — behövs plats för modellen plus lite marginal.
+    try {
+      const info = await invoke("get_disk_info");
+      const freeMb = info.available_space / 1048576;
+      if (freeMb < sizeMb * 1.1) {
+        await message(
+          `Modellen behöver ${sizeText} men det finns bara ${formatMb(Math.round(freeMb))} ledigt.\n\n` +
+          "Frigör utrymme och försök igen, eller välj en mindre modell.",
+          { title: "För lite diskutrymme", kind: "error" });
+        return;
+      }
+    } catch (_) { /* diskinfo är icke-kritisk — fortsätt */ }
+
+    // Bekräfta stora nedladdningar.
+    if (sizeMb >= LARGE_DOWNLOAD_MB) {
+      const ok = await showConfirm(
+        `Modellen är ${sizeText} och laddas ner en gång. Det kan ta en stund på en långsam ` +
+        "uppkoppling, och appen är upptagen under tiden.\n\nVill du fortsätta?",
+        "Ladda ner modell");
+      if (!ok) return;
+    }
+
     settingsModal.classList.add("hidden");
     await downloadAndActivate(dlSize, dlRevision, quantized);
   });
@@ -2020,21 +2101,31 @@ btnFile.addEventListener("click", async () => {
       }
       return;
     }
-    // choice === "folder": välj sessionsmapp och importera via recover-flödet
+    // choice === "folder": öppna en tidigare inspelning. Appen avgör själv om
+    // mappen behöver repareras (avbruten inspelning där råspåren finns men
+    // recording.wav saknas) eller redan är färdig — användaren ska inte behöva
+    // känna till skillnaden.
     const dir = await window.__TAURI__.dialog.open({
       directory: true,
       multiple: false,
       defaultPath: recordingDir || undefined,
-      title: "Öppna sessionsmapp (inspelning-...)",
+      title: "Välj en tidigare inspelning",
     });
     if (typeof dir !== "string" || !dir) return;
     const info = await invoke("inspect_session_dir", { dir });
     if (!info.is_session) {
-      await message("Mappen innehåller inget inspelat material (mic.wav / lb_*.wav / recording.wav).",
-        { title: "Ogiltig mapp", kind: "error" });
+      await message(
+        "Den här mappen innehåller ingen inspelning.\n\n" +
+        "Välj en mapp som börjar med \"inspelning-\" — de skapas automatiskt när du spelar in.",
+        { title: "Ingen inspelning hittades", kind: "error" });
       return;
     }
-    await importSessionFolder(dir);
+    // Avbruten inspelning (råspår men ingen färdig recording.wav) → laga först.
+    const needsRepair = !info.has_ready_recording;
+    if (needsRepair) {
+      logToFile("import: avbruten inspelning upptäckt — reparerar och mixar råspåren");
+    }
+    await importSessionFolder(dir, needsRepair);
   } catch (e) {
     console.error("Import misslyckades:", e);
   }
