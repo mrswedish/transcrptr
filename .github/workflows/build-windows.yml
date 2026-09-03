@@ -47,6 +47,11 @@ jobs:
       - name: Install frontend dependencies
         run: npm install
 
+      # Bygger src/app.css (Tailwind). tauri-action kör även beforeBuildCommand,
+      # men vi gör det explicit här så bygget failar tydligt om CSS:en inte kan genereras.
+      - name: Build CSS
+        run: npm run build:css
+
       - name: Build and Release Tauri App
         uses: tauri-apps/tauri-action@v0
         env:

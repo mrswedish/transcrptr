@@ -1,10 +1,12 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Transkribera",
-  "version": "1.5.4",
+  "version": "1.5.5",
   "identifier": "com.patriksvensk.transcrptr",
   "build": {
-    "frontendDist": "../src"
+    "frontendDist": "../src",
+    "beforeBuildCommand": "npm run build:css",
+    "beforeDevCommand": "npm run build:css"
   },
   "app": {
     "withGlobalTauri": true,

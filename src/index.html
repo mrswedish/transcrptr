@@ -5,105 +5,10 @@
   <meta charset="utf-8" />
   <meta content="width=device-width, initial-scale=1.0" name="viewport" />
   <title>Transkribera</title>
-  <script src="https://cdn.tailwindcss.com?plugins=forms,typography,container-queries"></script>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet" />
-  <link
-    href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200"
-    rel="stylesheet" />
-  <script>
-    tailwind.config = {
-      darkMode: "class",
-      theme: {
-        extend: {
-          colors: {
-            primary: "#2DD4BF",
-            "background-light": "#F8FAFC",
-            "background-dark": "#0F172A",
-          },
-          fontFamily: {
-            display: ["Inter", "sans-serif"],
-          },
-          borderRadius: {
-            DEFAULT: "1rem",
-          },
-        },
-      },
-    };
-  </script>
-  <style type="text/tailwindcss">
-    .material-symbols-outlined {
-        font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
-      }
-      body {
-        font-family: 'Inter', sans-serif;
-        -webkit-tap-highlight-color: transparent;
-        min-height: max(884px, 100dvh);
-      }
-      .hidden {
-        display: none !important;
-      }
-      .eq-col {
-        transition: height 80ms ease-out, background-color 150ms ease;
-        min-height: 8%;
-        border-radius: 2px;
-      }
-      @keyframes lb-glow {
-        0%, 100% { opacity: 0.35; transform: scale(1); }
-        50%       { opacity: 1;    transform: scale(1.25); }
-      }
-      .lb-dot {
-        animation: lb-glow 1.4s ease-in-out infinite;
-      }
-      /* Segment editor */
-      #segment-editor { min-height: 100%; }
-      .segment-row {
-        display: flex;
-        gap: 10px;
-        align-items: flex-start;
-        padding: 5px 4px;
-        border-radius: 8px;
-        transition: background-color 150ms;
-        border-bottom: 1px solid transparent;
-      }
-      .segment-row:hover { background-color: rgba(148,163,184,0.07); }
-      .segment-row.segment-active { background-color: rgba(45,212,191,0.10); }
-      .segment-ts {
-        font-size: 11px;
-        font-family: monospace;
-        color: #94a3b8;
-        cursor: pointer;
-        width: 52px;
-        flex-shrink: 0;
-        padding-top: 7px;
-        user-select: none;
-      }
-      .segment-ts:hover { color: #2DD4BF; }
-      .segment-input {
-        flex: 1;
-        background: transparent;
-        border: none;
-        outline: none;
-        resize: none;
-        font-size: 14px;
-        line-height: 1.65;
-        color: inherit;
-        overflow: hidden;
-        min-height: 24px;
-        padding: 0;
-      }
-      .segment-view {
-        flex: 1;
-        font-size: 14px;
-        line-height: 1.65;
-        cursor: text;
-        word-break: break-word;
-        min-height: 24px;
-        padding: 0;
-      }
-      .tok { border-radius: 3px; padding: 0 1px; }
-      .tok-low { background-color: rgba(251,191,36,0.35); }
-      .tok-very-low { background-color: rgba(239,68,68,0.30); }
-    </style>
+  <!-- Byggd Tailwind + lokala typsnitt — appen fungerar helt utan internet.
+       Tidigare hämtades CSS och typsnitt från CDN vid varje start.
+       CSS byggs av `npm run build:css` (körs automatiskt via beforeBuildCommand). -->
+  <link href="/app.css" rel="stylesheet" />
   <script type="module" src="/main.js" defer></script>
 </head>
 

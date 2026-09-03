@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# Genererad av `npm run build:css` — byggs vid varje release
+src/app.css
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
