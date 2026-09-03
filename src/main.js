@@ -223,6 +223,13 @@ function loadSettings() {
   const wasapiStatusEl = document.getElementById("wasapi-status");
   const syncWasapiVisual = () => {
     const on = !!(wasapiToggle && wasapiToggle.checked);
+    // Hjälptexten visas bara när mötesljud är AV, och bara där växeln finns
+    // (dvs. Windows — på Mac är wasapi-quick dold och hjälptexten irrelevant).
+    const hint = document.getElementById("wasapi-hint");
+    if (hint) {
+      const togglePresent = wasapiQuickEl && !wasapiQuickEl.classList.contains("hidden");
+      hint.classList.toggle("hidden", on || !togglePresent);
+    }
     if (!wasapiQuickEl) return;
     if (on) {
       wasapiQuickEl.classList.add("bg-primary", "border-primary", "shadow-md", "shadow-primary/20");
@@ -280,8 +287,11 @@ function loadSettings() {
   if (vocabInput) vocabInput.value = personalVocabulary.join("\n");
 
   // Sync pill pickers to current state
-  syncPickButtons("size", modelSize);
-  syncPickButtons("revision", modelRevision);
+  // Spegla sparad modell i kvalitetsvalet
+  const savedQuality = modelSize === "large" ? "best" : modelSize === "turbo" ? "multi" : "balanced";
+  const verbatimEl = document.getElementById("model-verbatim");
+  if (verbatimEl) verbatimEl.checked = modelRevision === "strict";
+  if (typeof applyQuality === "function") applyQuality(savedQuality);
   if (cbModelQuantized) cbModelQuantized.checked = modelQuantized;
   if (selLanguage) selLanguage.value = transcriptionLanguage;
 
@@ -617,6 +627,9 @@ async function initialize() {
       wasapiQuick.classList.remove('hidden');
       wasapiQuick.classList.add('flex');
     }
+    // Växeln blev synlig först nu — visa hjälptexten om mötesljud är avslaget.
+    const wasapiHint = document.getElementById('wasapi-hint');
+    if (wasapiHint) wasapiHint.classList.toggle('hidden', wasapiEnabled);
     document.getElementById('gpu-section')?.classList.remove('hidden');
     const stereoHelp = document.getElementById('btn-stereo-mix-help');
     if (stereoHelp) {
@@ -968,17 +981,7 @@ function disableControls() {
 // -------------------------------------------------------------
 // Pill button logic for download pickers
 // -------------------------------------------------------------
-const REVISION_DESCS = {
-  standard: "Balanserat transkript för generellt bruk",
-  strict:   "Ordagrant transkript — passar diktering och protokoll",
-};
-const SIZE_DESCS = {
-  medium: "~900 MB · Balanserad hastighet och kvalitet · Rekommenderas för svenska",
-  large:  "~2 GB · Bäst kvalitet på svenska · Långsammast",
-  turbo:  "~1.5 GB · Snabb · 100+ språk · Välj vid blandspråkigt innehåll, engelska facktermer eller internationella möten",
-};
-
-// Ungefärlig nedladdningsstorlek i MB. Okvantiserade varianter är betydligt
+// Ungefärlig nedladdningsstorlek i MB. Okomprimerade varianter är betydligt
 // större — används för att visa storlek på knappen och varna före stora hämtningar.
 const MODEL_SIZES_MB = {
   "medium-true": 900,  "medium-false": 1500,
@@ -994,39 +997,6 @@ function formatMb(mb) {
   return mb >= 1000 ? `${(mb / 1000).toFixed(1).replace(".0", "")} GB` : `${mb} MB`;
 }
 
-const revisionSection = document.getElementById("revision-section");
-const quantizedRow = document.getElementById("quantized-row");
-
-function syncPickButtons(group, value) {
-  document.querySelectorAll(`[data-pick="${group}"]`).forEach(btn => {
-    const isActive = btn.dataset.value === value;
-    btn.className = `pick-btn flex-1 py-2 px-1 text-xs font-semibold rounded-lg transition-colors ${
-      isActive
-        ? "bg-white dark:bg-slate-700 text-slate-800 dark:text-white shadow-sm"
-        : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
-    }`;
-  });
-  const descEl = document.getElementById(`${group}-desc`);
-  if (descEl) {
-    descEl.innerText = group === "revision" ? REVISION_DESCS[value] ?? "" : SIZE_DESCS[value] ?? "";
-  }
-  // Turbo has no KB-whisper revisions — hide revision picker; quantized row stays visible but forced on
-  if (group === "size") {
-    const isTurbo = value === "turbo";
-    if (revisionSection) revisionSection.classList.toggle("hidden", isTurbo);
-    const qCheckbox = document.getElementById("model-quantized");
-    if (qCheckbox) {
-      if (isTurbo) {
-        qCheckbox.checked = true;
-        qCheckbox.disabled = true;
-      } else {
-        qCheckbox.disabled = false;
-      }
-    }
-  }
-  updateDownloadButtonLabel();
-}
-
 // Visar nedladdningsstorleken på knappen så den syns innan man klickar.
 // Uppdateras när storlek eller kvantisering ändras.
 function updateDownloadButtonLabel() {
@@ -1038,22 +1008,48 @@ function updateDownloadButtonLabel() {
   label.textContent = `Ladda ner · ${formatMb(modelSizeMb(dlSize, quantized))}`;
 }
 
-document.querySelectorAll("[data-pick]").forEach(btn => {
-  btn.addEventListener("click", () => {
-    const group = btn.dataset.pick;
-    const value = btn.dataset.value;
-    if (group === "revision") dlRevision = value;
-    if (group === "size") {
-      dlSize = value;
-      if (value === "turbo") dlRevision = "standard"; // turbo has no KB revisions
-    }
-    syncPickButtons(group, value);
+// ─────────────────────────────────────────────────────────────────────────────
+// Kvalitetsval — tre namngivna alternativ i stället för att låta användaren
+// kombinera Stil × Storlek × Format själv (9 varianter). Varje val motsvarar en
+// färdig kombination; "Ordagrann" är ortogonalt och ligger som egen kryssruta.
+// ─────────────────────────────────────────────────────────────────────────────
+const QUALITY_PRESETS = {
+  balanced: { size: "medium", supportsVerbatim: true  },
+  best:     { size: "large",  supportsVerbatim: true  },
+  multi:    { size: "turbo",  supportsVerbatim: false }, // Turbo saknar KB-varianter
+};
+let dlQuality = "balanced";
+
+const QUALITY_ACTIVE = "quality-btn flex items-start gap-3 px-3 py-2.5 border rounded-xl transition-colors text-left bg-primary/5 border-primary/40 text-slate-800 dark:text-white";
+const QUALITY_IDLE   = "quality-btn flex items-start gap-3 px-3 py-2.5 border rounded-xl transition-colors text-left bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:border-primary/30";
+
+function applyQuality(quality) {
+  const preset = QUALITY_PRESETS[quality] ?? QUALITY_PRESETS.balanced;
+  dlQuality = quality;
+  dlSize = preset.size;
+
+  // Ordagrann gäller bara KB-modellerna; dölj valet för "Flera språk".
+  const verbatimRow = document.getElementById("verbatim-row");
+  const verbatim = document.getElementById("model-verbatim");
+  if (verbatimRow) verbatimRow.classList.toggle("hidden", !preset.supportsVerbatim);
+  if (!preset.supportsVerbatim && verbatim) verbatim.checked = false;
+  dlRevision = (preset.supportsVerbatim && verbatim && verbatim.checked) ? "strict" : "standard";
+
+  document.querySelectorAll("[data-quality]").forEach(b => {
+    b.className = b.dataset.quality === quality ? QUALITY_ACTIVE : QUALITY_IDLE;
   });
+  updateDownloadButtonLabel();
+}
+
+document.querySelectorAll("[data-quality]").forEach(btn => {
+  btn.addEventListener("click", () => applyQuality(btn.dataset.quality));
 });
 
-// Init pill defaults
-syncPickButtons("revision", dlRevision);
-syncPickButtons("size", dlSize);
+document.getElementById("model-verbatim")?.addEventListener("change", () => {
+  applyQuality(dlQuality);
+});
+
+applyQuality(dlQuality);
 
 // -------------------------------------------------------------
 // Settings Logic
@@ -1526,7 +1522,27 @@ async function startRecording() {
     isRecording = false;
     isPaused = false;
     enableControls();
-    await message("Nekad mikrofonåtkomst eller så uppstod ett fel: " + (err.message || err), { title: 'Fel', kind: 'error' });
+    // Skilj på nekad behörighet (vanligast, och åtgärdbart) och övriga fel.
+    const namn = err && err.name ? err.name : "";
+    const nekad = namn === "NotAllowedError" || namn === "SecurityError";
+    const saknas = namn === "NotFoundError" || namn === "OverconstrainedError";
+    if (nekad) {
+      await message(
+        "Appen får inte använda mikrofonen.\n\n" +
+        "Öppna Inställningar → Sekretess och säkerhet → Mikrofon i Windows och " +
+        "tillåt Transkribera. Starta sedan om appen.",
+        { title: 'Mikrofonen är blockerad', kind: 'error' });
+    } else if (saknas) {
+      await message(
+        "Ingen mikrofon hittades.\n\n" +
+        "Kontrollera att mikrofonen är inkopplad och vald i listan högst upp i appen.",
+        { title: 'Ingen mikrofon', kind: 'error' });
+    } else {
+      await message(
+        "Inspelningen kunde inte starta.\n\n" +
+        `Teknisk information: ${err.message || err}`,
+        { title: 'Kunde inte spela in', kind: 'error' });
+    }
   }
 }
 
@@ -1787,7 +1803,16 @@ async function stopSession() {
     } catch (err) {
       console.error("WASAPI stop error:", err);
       wasapiRecordingReady = false;
-      await message("Kunde inte hämta ljud: " + err, { title: 'Fel', kind: 'error' });
+      // Viktigt: ljudet streamas till disk under inspelningen, så det finns kvar
+      // även när det här steget misslyckas. Säg det — annars tror användaren att
+      // mötet är förlorat.
+      const detalj = typeof err === "string" ? err : err.message || String(err);
+      await message(
+        "Inspelningen kunde inte förberedas för uppspelning.\n\n" +
+        "Ljudet finns kvar på disk. Öppna det med \"Öppna fil/mapp\" → " +
+        "\"En tidigare inspelning\" och välj den senaste mappen.\n\n" +
+        `Teknisk information: ${detalj}`,
+        { title: 'Inspelningen är sparad', kind: 'warning' });
     } finally {
       loadingOverlay.classList.add("hidden");
       enableControls();

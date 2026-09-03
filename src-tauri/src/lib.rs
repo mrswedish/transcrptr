@@ -443,10 +443,20 @@ async fn download_model(app_handle: AppHandle, size: String, quantized: bool, re
     }
 
     let tmp_path = model_path.with_extension("tmp");
-    let res = reqwest::get(&url).await.map_err(|e| e.to_string())?;
-    
+    // Nätverksfel: i regionmiljö är brandvägg/proxy den vanligaste orsaken — säg det.
+    let res = reqwest::get(&url).await.map_err(|e| format!(
+        "Ingen kontakt med servern där modellen finns (huggingface.co).\n\n\
+         Kontrollera nätverket. På en arbetsdator kan brandvägg eller proxy blockera \
+         nedladdningen — kontakta i så fall IT-support.\n\nTeknisk information: {e}"
+    ))?;
+
     if !res.status().is_success() {
-        return Err(format!("Failed to download model: HTTP {}", res.status()));
+        return Err(format!(
+            "Servern nekade nedladdningen (HTTP {}).\n\n\
+             Försök igen om en stund. Kvarstår problemet kan brandvägg eller proxy \
+             blockera åtkomsten till huggingface.co.",
+            res.status()
+        ));
     }
 
     let total_size = res.content_length().unwrap_or(0);

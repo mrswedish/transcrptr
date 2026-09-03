@@ -56,13 +56,23 @@
           class="flex-1 min-w-0 px-3 py-2 text-sm bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-700 dark:text-slate-300 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary truncate">
           <option value="default">Systemets standardmikrofon</option>
         </select>
-        <label id="wasapi-quick" class="hidden items-center gap-2 cursor-pointer px-3 py-2 rounded-lg shrink-0 transition-colors bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700">
+        <label id="wasapi-quick"
+          title="Slå på för möten i Teams, Zoom m.fl. — annars spelas bara din egen mikrofon in"
+          class="hidden items-center gap-2 cursor-pointer px-3 py-2 rounded-lg shrink-0 transition-colors bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700">
           <input type="checkbox" id="wasapi-toggle" class="sr-only">
           <span class="wasapi-icon material-symbols-outlined text-slate-400 text-lg">volume_up</span>
-          <span class="wasapi-label text-xs font-medium text-slate-500 dark:text-slate-400">Systemljud</span>
+          <span class="wasapi-label text-xs font-medium text-slate-500 dark:text-slate-400">Mötesljud</span>
           <span id="wasapi-status" class="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-400">AV</span>
         </label>
       </div>
+
+      <!-- Syns bara när mötesljud är AV. Det enda valet som kan förstöra en hel
+           inspelning — glömmer man det får man bara sin egen röst, och märker det
+           först efter transkriberingen. -->
+      <p id="wasapi-hint" class="hidden text-xs text-slate-400 dark:text-slate-500 mb-3 -mt-1 flex items-start gap-1.5">
+        <span class="material-symbols-outlined text-sm shrink-0 mt-px">info</span>
+        <span>Bara din mikrofon spelas in. Slå på <strong class="font-semibold">Mötesljud</strong> för att även få med vad andra säger i Teams eller Zoom.</span>
+      </p>
 
       <!-- Control row: rec/stop, pausa, idle-hint eller live status -->
       <div class="flex items-center gap-3">
@@ -427,39 +437,43 @@
           <h3 class="text-sm font-bold text-slate-800 dark:text-white mb-4">Ladda ner modell</h3>
           <div class="flex flex-col gap-4">
 
-            <!-- Stil (revision) — hidden when Turbo is selected -->
-            <div id="revision-section">
-              <p class="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-2">Stil</p>
-              <div class="flex gap-1 p-1 bg-slate-100 dark:bg-slate-900 rounded-xl">
-                <button type="button" data-pick="revision" data-value="standard"
-                  class="pick-btn flex-1 py-2 px-1 text-xs font-semibold rounded-lg transition-colors">Standard</button>
-                <button type="button" data-pick="revision" data-value="strict"
-                  class="pick-btn flex-1 py-2 px-1 text-xs font-semibold rounded-lg transition-colors">Ordagrann</button>
-              </div>
-              <p id="revision-desc" class="text-[11px] text-slate-400 dark:text-slate-500 mt-1.5 leading-snug">Balanserat transkript för generellt bruk</p>
+            <!-- Kvalitetsval — ersätter Stil/Storlek/format. Varje kort motsvarar
+                 en färdig modellkombination; användaren slipper kombinera själv. -->
+            <div class="flex flex-col gap-2" id="quality-picker">
+              <button type="button" data-quality="balanced"
+                class="quality-btn flex items-start gap-3 px-3 py-2.5 border rounded-xl transition-colors text-left">
+                <span class="material-symbols-outlined text-lg shrink-0 mt-0.5">bolt</span>
+                <span class="min-w-0">
+                  <span class="block text-sm font-semibold">Snabbare <span class="font-normal opacity-70">· rekommenderas</span></span>
+                  <span class="block text-xs opacity-70">Bra kvalitet på svenska, klart på halva tiden mot Bästa.</span>
+                </span>
+              </button>
+              <button type="button" data-quality="best"
+                class="quality-btn flex items-start gap-3 px-3 py-2.5 border rounded-xl transition-colors text-left">
+                <span class="material-symbols-outlined text-lg shrink-0 mt-0.5">workspace_premium</span>
+                <span class="min-w-0">
+                  <span class="block text-sm font-semibold">Bästa kvalitet</span>
+                  <span class="block text-xs opacity-70">Mest exakt på svenska, men tar betydligt längre tid.</span>
+                </span>
+              </button>
+              <button type="button" data-quality="multi"
+                class="quality-btn flex items-start gap-3 px-3 py-2.5 border rounded-xl transition-colors text-left">
+                <span class="material-symbols-outlined text-lg shrink-0 mt-0.5">language</span>
+                <span class="min-w-0">
+                  <span class="block text-sm font-semibold">Flera språk</span>
+                  <span class="block text-xs opacity-70">För engelska facktermer, blandspråkigt eller internationella möten.</span>
+                </span>
+              </button>
             </div>
 
-            <!-- Storlek -->
-            <div>
-              <p class="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-2">Storlek</p>
-              <div class="flex gap-1 p-1 bg-slate-100 dark:bg-slate-900 rounded-xl">
-                <button type="button" data-pick="size" data-value="medium"
-                  class="pick-btn flex-1 py-2 px-1 text-xs font-semibold rounded-lg transition-colors">Medium</button>
-                <button type="button" data-pick="size" data-value="large"
-                  class="pick-btn flex-1 py-2 px-1 text-xs font-semibold rounded-lg transition-colors">Large</button>
-                <button type="button" data-pick="size" data-value="turbo"
-                  class="pick-btn flex-1 py-2 px-1 text-xs font-semibold rounded-lg transition-colors">Turbo · Global</button>
-              </div>
-              <p id="size-desc" class="text-[11px] text-slate-400 dark:text-slate-500 mt-1.5 leading-snug">~900 MB · Balanserad hastighet och kvalitet · Rekommenderas</p>
-            </div>
-
-            <!-- Kvantisering (dold för Turbo som alltid är q8_0) -->
-            <div id="quantized-row">
-              <label class="flex items-center gap-3 cursor-pointer select-none">
-                <input type="checkbox" id="model-quantized" checked
-                  class="w-4 h-4 rounded accent-primary cursor-pointer shrink-0">
+            <!-- Ordagrann — ortogonalt mot kvalitet, gäller hur texten skrivs.
+                 Finns inte för "Flera språk" (Turbo saknar KB-varianter). -->
+            <div id="verbatim-row">
+              <label class="flex items-start gap-3 cursor-pointer select-none">
+                <input type="checkbox" id="model-verbatim"
+                  class="w-4 h-4 rounded accent-primary cursor-pointer shrink-0 mt-0.5">
                 <span class="text-sm text-slate-700 dark:text-slate-300">
-                  Komprimerad modell <span class="text-slate-400 font-normal">— rekommenderas: 40 % mindre nedladdning, ingen märkbar kvalitetsskillnad. Kryssa bara ur om du har särskilda skäl.</span>
+                  Ordagrann utskrift <span class="text-slate-400 font-normal">— tar med upprepningar och talspråk. Passar diktering och protokoll. Utan kryss städas texten lätt.</span>
                 </span>
               </label>
             </div>
