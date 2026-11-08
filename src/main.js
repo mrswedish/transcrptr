@@ -189,6 +189,7 @@ let recordingStartTime = null;
 let recordingTimerInterval = null;
 let estimatedRecordingSize = 0;
 let lastRecordedSegments = []; // Store for "Redo" feature
+let lastTranscribedPath = null; // Senast transkriberade filen — "Gör om" kör om den via Rust
 
 // Load config from local storage
 function loadSettings() {
@@ -1225,14 +1226,17 @@ if (btnDownloadModel) {
 
 // Redo transcription with different model
 btnRedo.addEventListener("click", async () => {
-  if (lastRecordedSegments.length === 0) return;
+  if (lastRecordedSegments.length === 0 && !lastTranscribedPath) return;
   
   const confirmed = await showConfirm("Vill du göra om transkriberingen med nuvarande inställningar?", "Gör om transkribering");
   if (!confirmed) return;
   
   btnRedo.classList.add("hidden");
 
-  if (lastRecordedSegments.length > 1) {
+  if (lastTranscribedPath) {
+    // Windows och filimport: Rust avkodar och transkriberar filen igen.
+    await processAudioFile(lastTranscribedPath);
+  } else if (lastRecordedSegments.length > 1) {
     await processSegments([...lastRecordedSegments]);
   } else {
     await processAudioBlob(lastRecordedSegments[0].blob);
@@ -1377,6 +1381,7 @@ async function startRecording() {
   if (btnSaveAudio) btnSaveAudio.classList.add("hidden");
   document.getElementById("btn-segment-toggle")?.classList.add("hidden");
   wasapiRecordingReady = false;
+  lastTranscribedPath = null;
   try {
     let recordingStatusMsg = "Spelar in...";
     // v1.4.6: På Windows använder vi ALLTID Rust-backend för tempfiler/krasch-skydd.
@@ -2652,6 +2657,7 @@ async function processAudioBlob(blob) {
 // processAudioFile — Rust-side decode + transcribe (no JS heap allocation)
 // -------------------------------------------------------------
 async function processAudioFile(filePath) {
+  lastTranscribedPath = filePath;
   try {
     // Stäng ev. kvarvarande post-recording-overlay innan ny transkribering visas
     // (annars ligger den blurrad ovanpå resultatet om man importerar utan att välja
