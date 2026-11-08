@@ -889,36 +889,6 @@ fn pianissimo_panic_msg(p: Box<dyn std::any::Any + Send>) -> String {
     format!("Transkriberingen kraschade: {msg}.")
 }
 
-/// PCM (i16 LE, 16 kHz mono) från JS-vägen.
-async fn transcribe_segments_pianissimo(
-    app_handle: AppHandle,
-    cancel_flag: Arc<AtomicBool>,
-    model_dir: PathBuf,
-    audio_bytes: Vec<u8>,
-) -> Result<Vec<TranscriptSegment>, String> {
-    tokio::task::spawn_blocking(move || {
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<Vec<TranscriptSegment>, String> {
-            let samples: Vec<f32> = audio_bytes
-                .chunks_exact(2)
-                .map(|b| i16::from_le_bytes([b[0], b[1]]) as f32 / 32768.0)
-                .collect();
-            let mut model = pianissimo::Pianissimo::load(&model_dir, pianissimo_threads())
-                .map_err(|e| format!("Kunde inte starta Pianissimo: {e}"))?;
-            let app = app_handle.clone();
-            let segs = model
-                .transcribe(&samples, &cancel_flag, move |p| {
-                    let _ = app.emit("transcription_progress", TranscriptionProgressPayload { progress: p.min(99) });
-                })
-                .map_err(|e| format!("Transkribering med Pianissimo misslyckades: {e}"))?;
-            let _ = app_handle.emit("transcription_progress", TranscriptionProgressPayload { progress: 100 });
-            Ok(pianissimo_to_segments(segs, 0))
-        }))
-        .unwrap_or_else(|p| Err(pianissimo_panic_msg(p)))
-    })
-    .await
-    .map_err(|e| format!("Task-fel: {e}"))?
-}
-
 /// Filväg: streamar avkodning i 5-minuterschunkar, modellen laddas en gång.
 async fn transcribe_file_pianissimo(
     app_handle: AppHandle,
@@ -960,141 +930,6 @@ async fn transcribe_file_pianissimo(
     .map_err(|e| format!("Task-fel: {e}"))??;
     let _ = app_final.emit("transcription_progress", TranscriptionProgressPayload { progress: 100 });
     Ok(segs)
-}
-
-#[tauri::command]
-async fn transcribe_audio_segments(app_handle: AppHandle, state: tauri::State<'_, AppState>, audio_bytes: Vec<u8>, size: String, quantized: bool, revision: String, language: String, initial_prompt: Option<String>, context_prefix: Option<String>, use_gpu: Option<bool>, thread_count: Option<u32>, gpu_device: Option<i32>) -> Result<Vec<TranscriptSegment>, String> {
-    state.inner().cancel_flag.store(false, Ordering::Relaxed);
-    let model_path = get_model_path(&app_handle, &size, quantized, &revision)?;
-    if !model_path.exists() {
-        return Err("Model not found. Please download it first.".to_string());
-    }
-
-    let cancel_flag = Arc::clone(&state.inner().cancel_flag);
-    if size == pianissimo::ENGINE_ID {
-        return transcribe_segments_pianissimo(app_handle, cancel_flag, model_path, audio_bytes).await;
-    }
-    let audio_len = audio_bytes.len();
-
-    let segments =tokio::task::spawn_blocking(move || {
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let num_samples = audio_len / std::mem::size_of::<i16>();
-            eprintln!("[transcrptr] transcribe_audio_segments {} samples, lang={}", num_samples, language);
-
-            let ctx = load_whisper_with_fallback(&model_path, use_gpu.unwrap_or(true), gpu_device)?;
-
-            log_line("transcribe_audio_segments: anropar ctx.create_state...");
-            let mut transcriber_state = match ctx.create_state() {
-                Ok(s) => { log_line("transcribe_audio_segments: create_state OK"); s }
-                Err(e) => { log_line(&format!("transcribe_audio_segments: create_state FAIL: {e}")); return Err(format!("Failed to create state: {}", e)); }
-            };
-            let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
-            params.set_n_threads(whisper_thread_count(thread_count));
-
-            let lang_hint = match language.as_str() {
-                "sv" => { params.set_language(Some("sv")); "Följande är en transkribering på svenska." }
-                "en" => { params.set_language(Some("en")); "The following is a transcription in English." }
-                _ => { params.set_language(None); "" }
-            };
-            let mut composed = lang_hint.to_string();
-            if let Some(ctx) = &context_prefix {
-                let ctx = ctx.trim();
-                if !ctx.is_empty() { if !composed.is_empty() { composed.push(' '); } composed.push_str(ctx); }
-            }
-            if let Some(vocab) = &initial_prompt {
-                let vocab = vocab.trim();
-                if !vocab.is_empty() { if !composed.is_empty() { composed.push(' '); } composed.push_str(vocab); }
-            }
-            if !composed.is_empty() { params.set_initial_prompt(&composed); }
-
-            params.set_print_progress(false);
-            params.set_print_special(false);
-            params.set_print_realtime(false);
-            params.set_print_timestamps(false);
-
-            params.set_temperature(0.0);
-            params.set_no_speech_thold(0.6);
-            params.set_suppress_blank(true);
-            params.set_split_on_word(true);
-
-            let progress = Arc::new(AtomicI32::new(0));
-            let progress_clone = Arc::clone(&progress);
-            params.set_progress_callback_safe(move |p| { progress_clone.store(p, Ordering::Relaxed); });
-
-            let app_handle_clone = app_handle.clone();
-            let progress_poller = Arc::clone(&progress);
-            let cancel_poller = Arc::clone(&cancel_flag);
-            let poller_handle = tokio::spawn(async move {
-                let mut last_emitted = -1;
-                loop {
-                    if cancel_poller.load(Ordering::Relaxed) { break; }
-                    let current_progress = progress_poller.load(Ordering::Relaxed);
-                    if current_progress != last_emitted {
-                        let _ = app_handle_clone.emit("transcription_progress", TranscriptionProgressPayload { progress: current_progress });
-                        last_emitted = current_progress;
-                    }
-                    if current_progress >= 100 { break; }
-                    tokio::time::sleep(Duration::from_millis(500)).await;
-                }
-            });
-
-            let samples: Vec<f32> = audio_bytes
-                .chunks_exact(2)
-                .map(|b| i16::from_le_bytes([b[0], b[1]]) as f32 / 32768.0)
-                .collect();
-
-            log_line(&format!("transcribe_audio_segments: anropar transcriber_state.full med {} samples", samples.len()));
-            let res = transcriber_state.full(params, &samples);
-            log_line(&format!("transcribe_audio_segments: full returnerade: {:?}", res.as_ref().map(|_| "Ok").map_err(|e| format!("{e:?}"))));
-            poller_handle.abort();
-
-            if let Err(e) = res {
-                return Err(format!("Transcription failed: {:?}", e));
-            }
-
-            let _ = app_handle.emit("transcription_progress", TranscriptionProgressPayload { progress: 100 });
-
-            let num_segs = transcriber_state.full_n_segments();
-            let mut out: Vec<TranscriptSegment> = Vec::new();
-            for i in 0..num_segs {
-                let seg = transcriber_state.get_segment(i).ok_or("Failed to get segment")?;
-                let text = seg.to_str_lossy().map_err(|e| format!("Failed to get text: {:?}", e))?;
-                let trimmed = clean_whisper_text(text.as_ref());
-                if trimmed.is_empty() { continue; }
-                // whisper.cpp timestamps are in centiseconds → convert to ms (* 10)
-                let t0 = seg.start_timestamp() * 10;
-                let t1 = seg.end_timestamp() * 10;
-                // Collect token probabilities (skip special tokens like [_BEG_], [_TT_*])
-                let mut tokens: Vec<TokenInfo> = Vec::new();
-                for t in 0..seg.n_tokens() {
-                    if let Some(tok) = seg.get_token(t) {
-                        if let Ok(tok_text) = tok.to_str_lossy() {
-                            let tok_str = tok_text.into_owned();
-                            // Skip whisper special tokens ([_BEG_], [_TT_*], <|nospeech|> etc.)
-                            if tok_str.starts_with("[_") || tok_str.starts_with("<|") { continue; }
-                            let prob = tok.token_probability();
-                            tokens.push(TokenInfo { text: tok_str, prob });
-                        }
-                    }
-                }
-                out.push(TranscriptSegment { start_ms: t0, end_ms: t1, text: trimmed, tokens });
-            }
-
-            Ok::<Vec<TranscriptSegment>, String>(out)
-        }));
-
-        match result {
-            Ok(inner) => inner,
-            Err(panic_info) => {
-                let panic_msg = if let Some(s) = panic_info.downcast_ref::<&str>() { s.to_string() }
-                    else if let Some(s) = panic_info.downcast_ref::<String>() { s.clone() }
-                    else { "Unknown panic".to_string() };
-                Err(format!("Transkriberingen kraschade: {}.", panic_msg))
-            },
-        }
-    }).await.map_err(|e| format!("Transcription task failed: {}", e))??;
-
-    Ok(segments)
 }
 
 #[tauri::command]
@@ -1342,30 +1177,6 @@ async fn stop_backend_recording(state: tauri::State<'_, AppState>) -> Result<(),
 }
 
 #[tauri::command]
-async fn save_audio_data(app_handle: AppHandle, audio_data: Vec<u8>) -> Result<(), String> {
-    use tauri_plugin_dialog::FilePath;
-
-    let file_path = app_handle.dialog()
-        .file()
-        .set_title("Spara som ny ljudfil")
-        .set_file_name("inspelning.wav")
-        .add_filter("WAV-fil", &["wav"])
-        .blocking_save_file();
-
-    match file_path {
-        Some(path) => {
-            let path_str = match path {
-                FilePath::Path(p) => p,
-                _ => return Err("Ogiltigt filformat".to_string()),
-            };
-            fs::write(&path_str, &audio_data).map_err(|e| format!("Kunde inte spara: {}", e))?;
-            Ok(())
-        },
-        None => Err("cancelled".to_string()),
-    }
-}
-
-#[tauri::command]
 async fn save_text_file(app_handle: AppHandle, content: String) -> Result<(), String> {
     use tauri_plugin_dialog::FilePath;
     
@@ -1425,7 +1236,6 @@ pub fn run() {
             get_disk_info,
             start_backend_recording,
             stop_backend_recording,
-            transcribe_audio_segments,
             transcribe_file,
             cancel_transcription,
             get_app_version,
@@ -1436,7 +1246,6 @@ pub fn run() {
             delete_all_recordings,
             save_text_file,
             save_audio_file,
-            save_audio_data,
             pick_audio_file,
             get_log_path,
             log_message,

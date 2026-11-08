@@ -136,8 +136,6 @@ btnCancelTranscription?.addEventListener("click", async () => {
 // State
 let isRecording = false;
 let isPaused = false;
-let mediaRecorder = null;
-let audioChunks = [];
 let modelSize = "pianissimo";
 let modelRevision = "standard";
 let modelQuantized = true;
@@ -156,7 +154,6 @@ let segmentRowsCache = [];          // DOM-elementen i samma ordning som transcr
 let currentActiveSegIdx = -1;       // index för aktivt segment under uppspelning
 let segmentViewActive = false;
 let confidenceThreshold = 0.6;      // Words below this prob get highlighted
-let currentPlaybackBlob = null;
 let currentPlaybackUrl = null;
 let currentPlaybackIsAsset = false;  // true = src är en asset-URL (disk-stream), inte blob
 // audioPlayer is resolved after DOM is ready (must be in DOM for WKWebView)
@@ -175,9 +172,6 @@ let analyzer = null;
 let micStream = null;
 
 // Session/Segment state
-let sessionSegments = [];       // Array of {blob, startTime} objects
-let currentSegmentChunks = [];  // Chunks for the currently-recording segment
-let currentSegmentStartTime = null; // When the current segment started
 
 // Chunk progress state (used by transcription_progress listener)
 let currentChunkIdx = 0;
@@ -1226,22 +1220,14 @@ if (btnDownloadModel) {
 
 // Redo transcription with different model
 btnRedo.addEventListener("click", async () => {
-  if (lastRecordedSegments.length === 0 && !lastTranscribedPath) return;
-  
+  if (!lastTranscribedPath) return;
+
   const confirmed = await showConfirm("Vill du göra om transkriberingen med nuvarande inställningar?", "Gör om transkribering");
   if (!confirmed) return;
-  
+
   btnRedo.classList.add("hidden");
-
-  if (lastTranscribedPath) {
-    // Windows och filimport: Rust avkodar och transkriberar filen igen.
-    await processAudioFile(lastTranscribedPath);
-  } else if (lastRecordedSegments.length > 1) {
-    await processSegments([...lastRecordedSegments]);
-  } else {
-    await processAudioBlob(lastRecordedSegments[0].blob);
-  }
-
+  // Rust avkodar och transkriberar filen igen.
+  await processAudioFile(lastTranscribedPath);
   btnRedo.classList.remove("hidden");
   btnRedo.style.display = "inline-flex";
 });
@@ -1290,54 +1276,6 @@ function showConfirm(msg, title) {
   });
 }
 
-// Pause/Resume button
-btnPause.addEventListener("click", async () => {
-  if (!isRecording && !isPaused) return;
-
-  if (isRecording && !isPaused) {
-    // Currently recording → Pause (save current segment)
-    pauseSession();
-  } else if (isPaused) {
-    // Currently paused → Resume (start new segment)
-    resumeSession();
-  }
-});
-
-// Creates a new MediaRecorder on the existing micStream
-function createRecorder() {
-  const mrOptions = { audioBitsPerSecond: 64000 };
-  let recorder;
-  try {
-    recorder = new MediaRecorder(micStream, mrOptions);
-  } catch (e) {
-    console.warn("Kunde inte sätta bitrate, använder standard.", e);
-    recorder = new MediaRecorder(micStream);
-  }
-
-  currentSegmentChunks = [];
-  currentSegmentStartTime = new Date();
-
-  recorder.ondataavailable = event => {
-    currentSegmentChunks.push(event.data);
-  };
-
-  // When recorder stops, save the segment blob with metadata
-  recorder.onstop = () => {
-    if (currentSegmentChunks.length > 0) {
-      const segmentBlob = new Blob(currentSegmentChunks);
-      sessionSegments.push({
-        blob: segmentBlob,
-        startTime: currentSegmentStartTime
-      });
-      console.log(`Del ${sessionSegments.length} sparad (${segmentBlob.size} bytes)`);
-      updateSegmentBadge();
-    }
-    currentSegmentChunks = [];
-  };
-
-  return recorder;
-}
-
 function formatTimestamp(date) {
   return date.toLocaleString('sv-SE', {
     year: 'numeric', month: '2-digit', day: '2-digit',
@@ -1345,21 +1283,13 @@ function formatTimestamp(date) {
   });
 }
 
-function updateSegmentBadge() {
-  if (segmentBadge && sessionSegments.length > 0) {
-    segmentBadge.classList.remove("hidden");
-    segmentBadge.textContent = `Del ${sessionSegments.length}`;
-  }
-}
-
-// Build a summary string like "Del 1, Del 2, Del 3"
-function getRecordedPartsLabel() {
-  if (sessionSegments.length === 0) return "";
-  return sessionSegments.map((_, i) => `Del ${i + 1}`).join(", ");
-}
-
 async function startRecording() {
   const isWindows = navigator.userAgent.includes('Windows');
+  if (!isWindows) {
+    await message("Inspelning stöds just nu bara i Windows-versionen. Du kan öppna en ljudfil i stället.",
+      { title: "Inspelning ej tillgänglig", kind: "info" });
+    return;
+  }
   logToFile(`startRecording: isWindows=${isWindows}, wasapiEnabled=${wasapiEnabled}, selectedMicId=${selectedMicId}, recordingDir=${recordingDir || "<default>"}`);
   // Discard any pending post-recording choice if user starts a new recording
   if (pendingRecording) {
@@ -1387,7 +1317,7 @@ async function startRecording() {
     // v1.4.6: På Windows använder vi ALLTID Rust-backend för tempfiler/krasch-skydd.
     // wasapiEnabled styr bara om systemljud (loopback) ska fångas eller inte —
     // mic-flödet via ScriptProcessorNode + append_mic_chunk är konstant.
-    // På Mac används MediaRecorder (oförändrat — Mac har inte krash-historik).
+    // Mac pausat: ingen inspelning där tills vidare (se guard överst).
     if (isWindows) {
       logToFile(`startRecording: Windows Rust-backend (with_loopback=${wasapiEnabled})`);
       let resolvedMicId = selectedMicId;
@@ -1399,9 +1329,6 @@ async function startRecording() {
       logToFile("startRecording: anropar getUserMedia");
       micStream = await navigator.mediaDevices.getUserMedia(audioConstraints);
       logToFile("startRecording: getUserMedia OK");
-
-      sessionSegments = [];
-      currentSegmentChunks = [];
 
       audioContext = new (window.AudioContext || window.webkitAudioContext)();
       logToFile(`startRecording: AudioContext skapad (sampleRate=${audioContext.sampleRate})`);
@@ -1468,68 +1395,17 @@ async function startRecording() {
         if (result.loopback_active) loopbackIndicator.classList.remove("hidden");
         else loopbackIndicator.classList.add("hidden");
       }
-    } else {
-      logToFile("startRecording: Mac MediaRecorder-gren");
-      // For "default", use the actual firstMicDeviceId if we found one,
-      // because Tauri/WebView2 on Windows doesn't reliably handle implicit default
-      let resolvedMicId = selectedMicId;
-      if (selectedMicId === "default" && firstMicDeviceId) {
-        resolvedMicId = firstMicDeviceId;
-      }
-      const audioConstraints = resolvedMicId === "default"
-        ? { audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }
-        : { audio: { deviceId: { exact: resolvedMicId }, echoCancellation: true, noiseSuppression: true, autoGainControl: true } };
-
-      micStream = await navigator.mediaDevices.getUserMedia(audioConstraints);
-
-      // Reset session state
-      sessionSegments = [];
-      currentSegmentChunks = [];
-
-      // --- Visualizer Setup ---
-      audioContext = new (window.AudioContext || window.webkitAudioContext)();
-      analyzer = audioContext.createAnalyser();
-      const source = audioContext.createMediaStreamSource(micStream);
-      source.connect(analyzer);
-      analyzer.fftSize = 256;
-      const bufferLength = analyzer.frequencyBinCount;
-      const dataArray = new Uint8Array(bufferLength);
-
-      function drawVisualizer() {
-        if (!isRecording) return;
-        animationFrameId = requestAnimationFrame(drawVisualizer);
-        analyzer.getByteFrequencyData(dataArray);
-        let sum = 0;
-        for (let i = 0; i < bufferLength; i++) sum += dataArray[i];
-        const average = sum / bufferLength;
-        animateEq(average);
-      }
-      // ------------------------
-
-      mediaRecorder = createRecorder();
-      mediaRecorder.start(1000);
-      isRecording = true;
-      isPaused = false;
-      drawVisualizer();
-      startRecordingMetrics();
     }
 
     // UI Updates
     btnRecord.classList.add("recording");
     setRecordingUI("recording");
     if (recordingStatusText) recordingStatusText.textContent = recordingStatusMsg;
-    if (btnPause) {
-      if (!isWindows) {
-        btnPause.querySelector(".material-symbols-outlined").textContent = "pause";
-      } else {
-        // Pause inte supported i Rust-backend-flödet (gäller hela Windows från v1.4.6)
-        btnPause.classList.add("hidden");
-      }
-    }
+    // Paus stöds inte i Rust-backend-flödet
+    if (btnPause) btnPause.classList.add("hidden");
     if (segmentBadge) segmentBadge.classList.add("hidden");
     disableControls();
     btnRecord.disabled = false;
-    if (btnPause && !isWindows) btnPause.disabled = false;
   } catch (err) {
     const errMsg = err && (err.stack || err.message || String(err));
     console.error("startRecording error:", err);
@@ -1569,67 +1445,6 @@ async function startRecording() {
   }
 }
 
-function pauseSession() {
-  if (!mediaRecorder || mediaRecorder.state === "inactive") return;
-
-  // Stop the current recorder – onstop handler saves the segment
-  mediaRecorder.stop();
-  isRecording = false;
-  isPaused = true;
-
-  // Stop visualizer but keep micStream alive
-  if (animationFrameId) cancelAnimationFrame(animationFrameId);
-  resetEq();
-
-  // UI Updates
-  const partsLabel = getRecordedPartsLabel();
-  if (recordingStatusText) {
-    recordingStatusText.textContent = `Pausad${partsLabel ? " · " + partsLabel : ""}`;
-    recordingStatusText.classList.remove("text-slate-600", "dark:text-slate-300");
-    recordingStatusText.classList.add("text-amber-500");
-  }
-  if (eqBar) eqBar.querySelectorAll(".eq-col").forEach(c => c.style.backgroundColor = "#f59e0b");
-  if (btnPause) {
-    btnPause.querySelector(".material-symbols-outlined").textContent = "play_arrow";
-    btnPause.setAttribute("aria-label", "Fortsätt inspelning");
-  }
-}
-
-function resumeSession() {
-  if (!micStream) return;
-
-  // Create a new recorder on the same mic stream
-  mediaRecorder = createRecorder();
-  mediaRecorder.start(1000);
-  isRecording = true;
-  isPaused = false;
-
-  // Restart visualizer
-  const bufferLength = analyzer.frequencyBinCount;
-  const dataArray = new Uint8Array(bufferLength);
-  function drawVisualizer() {
-    if (!isRecording) return;
-    animationFrameId = requestAnimationFrame(drawVisualizer);
-    analyzer.getByteFrequencyData(dataArray);
-    let sum = 0;
-    for (let i = 0; i < bufferLength; i++) sum += dataArray[i];
-    animateEq(sum / bufferLength);
-  }
-  drawVisualizer();
-
-  // UI Updates
-  const nextPart = sessionSegments.length + 1;
-  if (recordingStatusText) {
-    recordingStatusText.textContent = `Spelar in — del ${nextPart}`;
-    recordingStatusText.classList.remove("text-amber-500");
-    recordingStatusText.classList.add("text-slate-600", "dark:text-slate-300");
-  }
-  if (btnPause) {
-    btnPause.querySelector(".material-symbols-outlined").textContent = "pause";
-    btnPause.setAttribute("aria-label", "Pausa");
-  }
-}
-
 // Strippar filnamnet ur en recording-path → sessionsmappen (.../inspelning-X/recording.wav → .../inspelning-X)
 function sessionDirFromRecordingPath(p) {
   return p ? p.replace(/[/\\][^/\\]+$/, "") : "";
@@ -1663,36 +1478,17 @@ function hidePostRecordingActions() {
 }
 
 async function saveRecordedAudio() {
-  let overlayWasShown = false;
   try {
-    if (wasapiRecordingReady) {
-      await invoke("save_audio_file");
-      return;
-    }
-    if (!lastRecordedSegments || lastRecordedSegments.length === 0 || !lastRecordedSegments[0].blob) {
+    if (!wasapiRecordingReady) {
       await message("Ingen inspelning att spara.", { title: "Fel", kind: "error" });
       return;
     }
-    loadingText.innerText = "Förbereder ljud för sparande...";
-    loadingOverlay.classList.remove("hidden");
-    overlayWasShown = true;
-
-    const blobs    = lastRecordedSegments.map(s => s.blob);
-    const combined = new Blob(blobs, { type: blobs[0].type });
-    loadingText.innerText = "Avkodar ljud...";
-    const float32Data = await decodeAudioToFloat32(combined);
-    loadingText.innerText = "Kodar WAV-fil...";
-    const wavBlob = float32ToPCM16WavBlob(float32Data, 16000);
-    loadingText.innerText = "Sparar fil...";
-    const wavBytes = Array.from(new Uint8Array(await wavBlob.arrayBuffer()));
-    await invoke("save_audio_data", { audioData: wavBytes });
+    await invoke("save_audio_file");
   } catch (err) {
     const msg = typeof err === "string" ? err : err.message || String(err);
     if (!msg.includes("cancelled") && !msg.includes("canceled")) {
       await message(`Kunde inte spara ljudfilen: ${msg}`, { title: "Fel", kind: "error" });
     }
-  } finally {
-    if (overlayWasShown) loadingOverlay.classList.add("hidden");
   }
 }
 
@@ -1718,14 +1514,6 @@ async function startPendingTranscription() {
     }
     await processAudioFile(path);
     return;
-  }
-
-  if (rec.type === "segments") {
-    if (rec.segments.length > 1) {
-      await processSegments(rec.segments);
-    } else {
-      await processAudioBlob(rec.segments[0].blob);
-    }
   }
 }
 
@@ -1797,219 +1585,6 @@ async function stopSession() {
     }
     return;
   }
-
-  // If still recording (not paused), stop the recorder first to capture last segment
-  if (mediaRecorder && mediaRecorder.state !== "inactive") {
-    await new Promise(resolve => {
-      const origOnstop = mediaRecorder.onstop;
-      mediaRecorder.onstop = () => {
-        origOnstop();
-        resolve();
-      };
-      mediaRecorder.stop();
-    });
-  }
-
-  // Release microphone
-  if (micStream) {
-    micStream.getTracks().forEach(track => track.stop());
-  }
-
-  if (audioContext && audioContext.state !== "closed") {
-    audioContext.close();
-  }
-
-  if (animationFrameId) cancelAnimationFrame(animationFrameId);
-  resetEq();
-
-  isRecording = false;
-  isPaused = false;
-  stopRecordingMetrics();
-
-  // UI Updates – reset
-  btnRecord.classList.remove("recording");
-  setRecordingUI("idle");
-  document.getElementById("loopback-indicator")?.classList.add("hidden");
-  if (recordingStatusText) recordingStatusText.classList.remove("text-amber-500");
-  if (segmentBadge) segmentBadge.classList.add("hidden");
-  disableControls();
-
-  // Process segments
-  if (sessionSegments.length > 0) {
-    lastRecordedSegments = [...sessionSegments];
-    const segments = [...sessionSegments];
-    sessionSegments = [];
-
-    // Let the user choose: transcribe now or just save the audio
-    pendingRecording = { type: "segments", segments };
-    showPostRecordingActions();
-    enableControls();
-  } else {
-    enableControls();
-  }
-}
-
-// Process multiple segments with section headers
-async function processSegments(segments) {
-  try {
-    loadingText.innerText = "Bearbetar ljud...";
-    loadingOverlay.classList.remove("hidden");
-    if (progressContainer) progressContainer.classList.add("hidden");
-    outputText.value = "";
-    transcriptSegments = [];
-    showRawView();
-
-    teardownPlayer();
-    transcribeBlob._float32Chunks = [];
-
-    isCancelling = false;
-    if (btnCancelTranscription) btnCancelTranscription.classList.remove("hidden");
-
-    const startTime = performance.now();
-    let cumulativeOffsetMs = 0;
-
-    for (let i = 0; i < segments.length; i++) {
-      if (isCancelling) break;
-      const seg = segments[i];
-      const partNum = i + 1;
-      const timestamp = formatTimestamp(seg.startTime);
-
-      loadingText.innerText = `Transkriberar Del ${partNum} av ${segments.length}...`;
-
-      if (outputText.value) outputText.value += "\n\n";
-      outputText.value += `// Start Del ${partNum} (${timestamp})\n\n`;
-      outputText.scrollTop = outputText.scrollHeight;
-
-      const { text: segmentText, durationMs } = await transcribeBlob(seg.blob, `Del ${partNum}`, cumulativeOffsetMs);
-      cumulativeOffsetMs += durationMs;
-
-      if (segmentText && segmentText.trim()) {
-        outputText.value += segmentText.trim();
-      } else {
-        outputText.value += "[Ingen text transkriberad]";
-      }
-
-      outputText.value += `\n\n// Slut Del ${partNum}`;
-      outputText.scrollTop = outputText.scrollHeight;
-    }
-
-    const elapsedMs = performance.now() - startTime;
-    const elapsedSec = Math.round(elapsedMs / 1000);
-    const elapsedMin = Math.floor(elapsedSec / 60);
-    const elapsedRemSec = elapsedSec % 60;
-    const elapsedStr = elapsedMin > 0 ? `${elapsedMin}m ${elapsedRemSec}s` : `${elapsedSec}s`;
-
-    if (progressBar) progressBar.style.width = "100%";
-    loadingText.innerText = `Klar! (${elapsedStr})`;
-    outputText.value += `\n\n[Transkribering klar: ${segments.length} delar, ${elapsedStr}]`;
-    outputText.scrollTop = outputText.scrollHeight;
-
-    // Build combined WAV blob for playback from all decoded Float32 chunks
-    if (transcribeBlob._float32Chunks && transcribeBlob._float32Chunks.length > 0) {
-      const totalLen = transcribeBlob._float32Chunks.reduce((s, c) => s + c.length, 0);
-      const combined = new Float32Array(totalLen);
-      let offset = 0;
-      for (const chunk of transcribeBlob._float32Chunks) {
-        combined.set(chunk, offset);
-        offset += chunk.length;
-      }
-      currentPlaybackBlob = float32ToPCM16WavBlob(combined, 16000);
-      transcribeBlob._float32Chunks = [];
-    }
-
-    if (transcriptSegments.length > 0) {
-      renderSegmentEditor();
-      showSegmentView();
-      const btnSeg = document.getElementById("btn-segment-toggle");
-      if (btnSeg) { btnSeg.classList.remove("hidden"); btnSeg.style.display = "inline-flex"; }
-      setupPlayer(currentPlaybackBlob);
-    }
-
-  } catch (err) {
-    console.error("processSegments error:", err);
-    const errMsg = typeof err === 'string' ? err : err.message || String(err);
-    if (isCancelling || errMsg.includes("canceled") || errMsg.includes("cancelled")) {
-      outputText.value += "\n\n[Transkribering avbruten]";
-    } else {
-      await message(`Transkribering misslyckades: ${errMsg}`, { title: 'Fel', kind: 'error' });
-    }
-  } finally {
-    isCancelling = false;
-    if (btnCancelTranscription) btnCancelTranscription.classList.add("hidden");
-    loadingOverlay.classList.add("hidden");
-    enableControls();
-  }
-}
-
-// Transcribe a single blob and return the text (used by processSegments)
-// blobOffsetMs: cumulative offset (ms) to add to all segment timestamps from this blob
-async function transcribeBlob(blob, label, blobOffsetMs = 0) {
-  const arrayBuffer = await blob.arrayBuffer();
-  const decodeCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
-  const audioBuffer = await decodeCtx.decodeAudioData(arrayBuffer);
-  decodeCtx.close();
-  const float32Data = audioBuffer.getChannelData(0).slice();
-  const totalSamples = float32Data.length;
-  const durationMs = Math.round(totalSamples / 16000 * 1000);
-
-  // Accumulate Float32 for WAV playback (each segment blob decoded separately)
-  // We'll combine all segments' Float32 into a single WAV in processSegments
-  if (!transcribeBlob._float32Chunks) transcribeBlob._float32Chunks = [];
-  transcribeBlob._float32Chunks.push(float32Data);
-
-  const numChunks = Math.ceil(totalSamples / CHUNK_SAMPLES);
-  totalChunks = numChunks;
-  currentChunkIdx = 0;
-
-  if (progressContainer) progressContainer.classList.remove("hidden");
-  if (progressBar) progressBar.style.width = "0%";
-
-  let result = "";
-  let contextPrefix = null;
-  const initialPrompt = personalVocabulary.length > 0 ? personalVocabulary.join(", ") : null;
-
-  for (let chunkIdx = 0; chunkIdx < numChunks; chunkIdx++) {
-    if (isCancelling) throw new Error("canceled");
-    currentChunkIdx = chunkIdx;
-    const chunkOffsetMs = blobOffsetMs + chunkIdx * CHUNK_DURATION_SECONDS * 1000;
-    const start = chunkIdx * CHUNK_SAMPLES;
-    const end = Math.min(start + CHUNK_SAMPLES, totalSamples);
-    const chunkFloat32 = float32Data.slice(start, end);
-    const chunkI16 = new Int16Array(chunkFloat32.length);
-    for (let i = 0; i < chunkFloat32.length; i++) chunkI16[i] = Math.round(chunkFloat32[i] * 32767);
-    const chunkBytesArray = Array.from(new Uint8Array(chunkI16.buffer));
-
-    try {
-      const chunkSegs = await invoke("transcribe_audio_segments", {
-        audioBytes: chunkBytesArray,
-        ...(await resolveEngine()),
-        language: transcriptionLanguage,
-        initialPrompt,
-        contextPrefix,
-        useGpu,
-        threadCount,
-        gpuDevice: gpuDeviceIndex
-      });
-      if (chunkSegs && chunkSegs.length > 0) {
-        const adjusted = chunkSegs.map(s => ({
-          startMs: s.start_ms + chunkOffsetMs,
-          endMs: s.end_ms + chunkOffsetMs,
-          text: s.text,
-          tokens: s.tokens || []
-        }));
-        transcriptSegments.push(...adjusted);
-        const chunkText = adjusted.map(s => s.text).join("\n");
-        if (result) result += "\n";
-        result += chunkText;
-        contextPrefix = lastWords(chunkText, 30);
-      }
-    } catch (chunkErr) {
-      console.error(`${label} chunk ${chunkIdx + 1} failed:`, chunkErr);
-      result += `\n[Fel i ${label}, del ${chunkIdx + 1}: ${chunkErr}]`;
-    }
-  }
-
-  return { text: result, durationMs };
 }
 
 // -------------------------------------------------------------
@@ -2081,39 +1656,6 @@ btnFile.addEventListener("click", async () => {
   }
 });
 
-// -------------------------------------------------------------
-// Audio mixing helpers (used by WASAPI hybrid mode)
-// -------------------------------------------------------------
-
-// Encode Float32Array as 16-bit PCM WAV blob (universally decodable format).
-function float32ToPCM16WavBlob(samples, sampleRate) {
-  const n = samples.length;
-  const buf = new ArrayBuffer(44 + n * 2);
-  const v = new DataView(buf);
-  const s = (off, str) => { for (let i = 0; i < str.length; i++) v.setUint8(off + i, str.charCodeAt(i)); };
-  s(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true);
-  s(8, 'WAVE'); s(12, 'fmt ');
-  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
-  v.setUint32(24, sampleRate, true); v.setUint32(28, sampleRate * 2, true);
-  v.setUint16(32, 2, true); v.setUint16(34, 16, true);
-  s(36, 'data'); v.setUint32(40, n * 2, true);
-  for (let i = 0; i < n; i++) {
-    const x = Math.max(-1, Math.min(1, samples[i]));
-    v.setInt16(44 + i * 2, x < 0 ? x * 32768 : x * 32767, true);
-  }
-  return new Blob([buf], { type: 'audio/wav' });
-}
-
-async function decodeAudioToFloat32(blob) {
-  const arrayBuffer = await blob.arrayBuffer();
-  const ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
-  const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
-  ctx.close();
-  // .slice() copies the data out of the AudioBuffer before it can be GC'd
-  return audioBuffer.getChannelData(0).slice();
-}
-
-// Normalize Float32 audio to peak ±0.95 to avoid clipping and improve whisper accuracy
 // Returns the last N words of a text string (for chunk context continuity)
 function lastWords(text, n) {
   const words = text.trim().split(/\s+/);
@@ -2327,23 +1869,6 @@ function showRawView() {
   }
 }
 
-// Setup audio player with a blob for playback
-function setupPlayer(blob) {
-  if (!blob || !audioPlayer) return;
-  if (currentPlaybackUrl) { URL.revokeObjectURL(currentPlaybackUrl); currentPlaybackUrl = null; }
-  currentPlaybackUrl = URL.createObjectURL(blob);
-  audioPlayer.src = currentPlaybackUrl;
-  audioPlayer.load();
-  const playerBar = document.getElementById("player-bar");
-  if (playerBar) playerBar.classList.remove("hidden");
-  const fill = document.getElementById("player-fill");
-  if (fill) fill.style.width = "0%";
-  const playerTime = document.getElementById("player-time");
-  if (playerTime) playerTime.textContent = "0:00";
-  const dur = document.getElementById("player-duration");
-  if (dur) dur.textContent = "0:00";
-}
-
 // v1.5.3: Sätt upp spelaren från en disk-path via Tauri asset protocol.
 // <audio> streamar filen on-demand från disk — INGEN blob i JS-minnet (undviker
 // OOM-läckan från v1.3.x). Används i Windows-flödet (processAudioFile).
@@ -2360,7 +1885,6 @@ async function setupPlayerFromPath(filePath) {
   }
   const assetUrl = window.__TAURI__.core.convertFileSrc(filePath);
   currentPlaybackUrl = null;        // ingen blob-URL att revoka
-  currentPlaybackBlob = null;
   currentPlaybackIsAsset = true;
   audioPlayer.src = assetUrl;
   audioPlayer.load();
@@ -2383,7 +1907,6 @@ function teardownPlayer() {
     audioPlayer.load();
   }
   if (currentPlaybackUrl) { URL.revokeObjectURL(currentPlaybackUrl); currentPlaybackUrl = null; }
-  currentPlaybackBlob = null;
   currentPlaybackIsAsset = false;
   const playerBar = document.getElementById("player-bar");
   if (playerBar) playerBar.classList.add("hidden");
@@ -2466,190 +1989,6 @@ function initPlayer() {
       const ratio = (e.clientX - rect.left) / rect.width;
       audioPlayer.currentTime = ratio * audioPlayer.duration;
     });
-  }
-}
-
-function normalizeAudio(float32Data) {
-  let peak = 0;
-  for (let i = 0; i < float32Data.length; i++) {
-    const abs = Math.abs(float32Data[i]);
-    if (abs > peak) peak = abs;
-  }
-  if (peak < 0.001) return float32Data;
-  const scale = 0.95 / peak;
-  // Normalize in-place to avoid doubling the memory allocation for large files
-  for (let i = 0; i < float32Data.length; i++) {
-    float32Data[i] *= scale;
-  }
-  return float32Data;
-}
-
-// Audio Processing and Transcription (chunked for large files)
-// -------------------------------------------------------------
-
-// Max chunk size: 5 minutes of audio at 16kHz mono
-const CHUNK_DURATION_SECONDS = 300; // 5 minutes
-const CHUNK_SAMPLES = 16000 * CHUNK_DURATION_SECONDS;
-
-// Decode an audio or video file to Float32Array at 16kHz.
-// Uses AudioContext.decodeAudioData (supports MP3/WAV/OGG/AAC/M4A/MP4/WebM).
-async function decodeFileToFloat32(blob) {
-  const fileSizeMB = blob.size / 1_048_576;
-
-  // Reject files that are too large to safely load into memory on Windows.
-  // An uncompressed 2-hour stereo WAV can be 1+ GB and will silently crash WebView2.
-  if (blob.size > 400 * 1_048_576) {
-    throw new Error(
-      `Filen är för stor (${fileSizeMB.toFixed(0)} MB) för att läsas in i minnet. ` +
-      `Om det är en okomprimerad WAV-inspelning, konvertera den till M4A eller MP3 och försök igen.`
-    );
-  }
-
-  const decodeCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
-  try {
-    const arrayBuffer = await blob.arrayBuffer();
-    const audioBuffer = await decodeCtx.decodeAudioData(arrayBuffer);
-    // No .slice() — the Float32Array view keeps the backing memory alive.
-    // Skipping the copy saves ~460 MB for a 2-hour file.
-    const data = audioBuffer.getChannelData(0);
-    decodeCtx.close();
-    return normalizeAudio(data);
-  } catch (err) {
-    decodeCtx.close();
-    console.error("[decode] decodeAudioData misslyckades:", err);
-    throw new Error(
-      `Kunde inte avkoda ljudfilen (${fileSizeMB.toFixed(0)} MB). ` +
-      `Kontrollera att formatet stöds (WAV, MP3, M4A, OGG) och att filen inte är skadad.` +
-      (err?.message ? ` Detaljer: ${err.message}` : "")
-    );
-  }
-}
-
-async function processAudioBlob(blob) {
-  try {
-    const fileSizeMB = blob.size / 1_048_576;
-    loadingText.innerText = fileSizeMB > 50
-      ? `Avkodar ljudfil (${fileSizeMB.toFixed(0)} MB)...`
-      : "Bearbetar ljud...";
-    loadingOverlay.classList.remove("hidden");
-    if (progressContainer) progressContainer.classList.add("hidden");
-
-    outputText.value = "";
-    transcriptSegments = [];
-    teardownPlayer();
-    showRawView();
-
-    const float32Data = await decodeFileToFloat32(blob);
-    const totalSamples = float32Data.length;
-    const totalDuration = (totalSamples / 16000).toFixed(0);
-    console.log(`Audio decoded: ${totalSamples} samples (${totalDuration}s)`);
-    // Skip the playback WAV blob for files longer than 30 minutes — creating a 230 MB
-    // ArrayBuffer on top of the already-large Float32 buffer crashes WebView2 on Windows.
-    if (totalSamples <= 16000 * 1800) {
-      currentPlaybackBlob = float32ToPCM16WavBlob(float32Data, 16000);
-    } else {
-      currentPlaybackBlob = null;
-    }
-
-    const numChunks = Math.ceil(totalSamples / CHUNK_SAMPLES);
-    totalChunks = numChunks;
-    currentChunkIdx = 0;
-
-    const durationMin = Math.floor(totalDuration / 60);
-    const durationSec = totalDuration % 60;
-    const durationStr = durationMin > 0 ? `${durationMin}m ${durationSec}s` : `${durationSec}s`;
-    loadingText.innerText = `Transkriberar ${durationStr} ljud...`;
-    if (progressContainer) progressContainer.classList.remove("hidden");
-    if (progressBar) progressBar.style.width = "0%";
-    isCancelling = false;
-    if (btnCancelTranscription) btnCancelTranscription.classList.remove("hidden");
-
-    const startTime = performance.now();
-    let fullResult = "";
-    let contextPrefix = null;
-    const initialPrompt = personalVocabulary.length > 0 ? personalVocabulary.join(", ") : null;
-
-    for (let chunkIdx = 0; chunkIdx < numChunks; chunkIdx++) {
-      if (isCancelling) break;
-      currentChunkIdx = chunkIdx;
-      const chunkOffsetMs = chunkIdx * CHUNK_DURATION_SECONDS * 1000;
-      const start = chunkIdx * CHUNK_SAMPLES;
-      const end = Math.min(start + CHUNK_SAMPLES, totalSamples);
-      const chunkFloat32 = float32Data.slice(start, end);
-      const chunkI16 = new Int16Array(chunkFloat32.length);
-      for (let i = 0; i < chunkFloat32.length; i++) chunkI16[i] = Math.round(chunkFloat32[i] * 32767);
-      const chunkBytesArray = Array.from(new Uint8Array(chunkI16.buffer));
-      console.log(`Sending chunk ${chunkIdx + 1}/${numChunks}: ${chunkFloat32.length} samples`);
-
-      try {
-        const chunkSegs = await invoke("transcribe_audio_segments", {
-          audioBytes: chunkBytesArray,
-          ...(await resolveEngine()),
-          language: transcriptionLanguage,
-          initialPrompt,
-          contextPrefix,
-          useGpu
-        });
-
-        if (chunkSegs && chunkSegs.length > 0) {
-          const adjusted = chunkSegs.map(s => ({
-            startMs: s.start_ms + chunkOffsetMs,
-            endMs: s.end_ms + chunkOffsetMs,
-            text: s.text,
-            tokens: s.tokens || []
-          }));
-          transcriptSegments.push(...adjusted);
-          const chunkText = adjusted.map(s => s.text).join("\n");
-          if (fullResult) fullResult += "\n";
-          fullResult += chunkText;
-          contextPrefix = lastWords(chunkText, 30);
-          outputText.value = fullResult;
-          outputText.scrollTop = outputText.scrollHeight;
-        }
-      } catch (chunkErr) {
-        console.error(`Chunk ${chunkIdx + 1} failed:`, chunkErr);
-        const errorMsg = typeof chunkErr === 'string' ? chunkErr : chunkErr.message || String(chunkErr);
-        outputText.value += `\n\n[Fel i del ${chunkIdx + 1}: ${errorMsg}]`;
-      }
-    }
-
-    if (progressBar) progressBar.style.width = "100%";
-    const elapsedMs = performance.now() - startTime;
-    const elapsedSec = Math.round(elapsedMs / 1000);
-    const elapsedMin = Math.floor(elapsedSec / 60);
-    const elapsedRemSec = elapsedSec % 60;
-    const elapsedStr = elapsedMin > 0 ? `${elapsedMin}m ${elapsedRemSec}s` : `${elapsedSec}s`;
-    loadingText.innerText = `Klar! (${elapsedStr})`;
-
-    outputText.value += `\n\n[Transkribering klar: ${elapsedStr}]`;
-    outputText.scrollTop = outputText.scrollHeight;
-
-    if (!outputText.value.trim()) {
-      outputText.value = fullResult || "[Ingen text transkriberad]";
-    }
-
-    // Setup segment editor and player
-    if (transcriptSegments.length > 0) {
-      renderSegmentEditor();
-      const btnSeg = document.getElementById("btn-segment-toggle");
-      showSegmentView();
-      if (btnSeg) { btnSeg.classList.remove("hidden"); btnSeg.style.display = "inline-flex"; }
-      setupPlayer(currentPlaybackBlob);
-    }
-
-  } catch (err) {
-    console.error("Transcription error:", err);
-    const errStr = typeof err === 'string' ? err : err.message || String(err);
-    if (isCancelling || errStr.includes("canceled") || errStr.includes("cancelled")) {
-      outputText.value += "\n\n[Transkribering avbruten]";
-    } else {
-      await message(`Transkribering misslyckades: ${errStr}`, { title: 'Fel', kind: 'error' });
-    }
-  } finally {
-    isCancelling = false;
-    if (btnCancelTranscription) btnCancelTranscription.classList.add("hidden");
-    loadingOverlay.classList.add("hidden");
-    enableControls();
   }
 }
 
