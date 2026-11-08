@@ -229,10 +229,11 @@ impl AudioRecorder {
     /// `base_dir`: användarens valda rotmapp där en ny `inspelning-<timestamp>/`-undermapp
     ///             skapas för streaming. Användaren ansvarar för att välja lokal path
     ///             (default = .exe-parent). Streaming + destination är samma path.
+    #[cfg_attr(not(target_os = "windows"), allow(unused_variables))]
     pub fn start_recording(
         &mut self,
         loopback_only: bool,
-        _with_loopback: bool,
+        with_loopback: bool,
         base_dir: &Path,
     ) -> Result<(), String> {
         // Skapa session-mapp med läsbart datum/tid (lokal tid)
