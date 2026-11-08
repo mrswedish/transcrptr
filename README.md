@@ -67,6 +67,16 @@ OpenAIs officiella large-v3-turbo-modell från [ggerganov/whisper.cpp](https://h
 > [!NOTE]
 > KB-whisper slår Turbo på ren svenska. Välj Turbo för blandspråkigt innehåll eller internationella möten.
 
+### Pianissimo — "Snabbast" (svenska, experimentell)
+
+[Pianissimo](https://klang.ai/pianissimo-sv/) från Klang AI är en svensk taligenkänningsmodell (finjusterad NVIDIA Parakeet TDT 0.6B) som körs via ONNX Runtime **på processorn** – inget grafikkort behövs. Avsedd att gå betydligt snabbare än Whisper på vanliga datorer. Nackdelar: bara svenska, ingen ordnivå-markering av osäkra ord, och något högre felfrekvens än KB-whisper large på Klangs egna tester. Är språket engelska eller automatiskt används i stället en nedladdad Whisper-modell.
+
+| Modell | Format | Storlek | Språk |
+|--------|--------|---------|-------|
+| **Pianissimo** | int8 (ONNX) | ~0.7 GB | Svenska |
+
+Modellvikterna licensieras under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) (Klang AI, baserad på NVIDIA Parakeet TDT 0.6B v3). Förbehandling och avkodning följer den MIT-licensierade referensimplementationen i [Avskrift](https://github.com/Pluggentipsar/avskrift). Se `NOTICE`.
+
 ### Stil (KB-whisper)
 
 | Stil | Passar för | Beskrivning |

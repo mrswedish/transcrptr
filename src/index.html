@@ -307,6 +307,9 @@
             <option value="en">Engelska</option>
             <option value="auto">Automatisk identifiering</option>
           </select>
+          <p id="engine-language-note" class="hidden text-xs text-slate-500 dark:text-slate-400">
+            Modellen "Snabbast" klarar bara svenska. För engelska eller automatiskt språk används i stället en Whisper-modell, om du har laddat ned någon.
+          </p>
         </div>
 
         <!-- Mapp för inspelningar -->
@@ -440,6 +443,14 @@
             <!-- Kvalitetsval — ersätter Stil/Storlek/format. Varje kort motsvarar
                  en färdig modellkombination; användaren slipper kombinera själv. -->
             <div class="flex flex-col gap-2" id="quality-picker">
+              <button type="button" data-quality="fast"
+                class="quality-btn flex items-start gap-3 px-3 py-2.5 border rounded-xl transition-colors text-left">
+                <span class="material-symbols-outlined text-lg shrink-0 mt-0.5">speed</span>
+                <span class="min-w-0">
+                  <span class="block text-sm font-semibold">Snabbast <span class="font-normal opacity-70">· endast svenska</span></span>
+                  <span class="block text-xs opacity-70">Pianissimo. Går på processorn, ofta mycket snabbare på vanliga datorer utan kraftigt grafikkort. Nytt och under utvärdering.</span>
+                </span>
+              </button>
               <button type="button" data-quality="balanced"
                 class="quality-btn flex items-start gap-3 px-3 py-2.5 border rounded-xl transition-colors text-left">
                 <span class="material-symbols-outlined text-lg shrink-0 mt-0.5">bolt</span>

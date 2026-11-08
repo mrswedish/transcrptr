@@ -95,7 +95,10 @@ Endast en enda domän kontaktas, och bara vid nedladdning av språkmodell:
 ```
 https://huggingface.co/KBLab/kb-whisper-{medium|large}/resolve/{main|strict}/...
 https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q8_0.bin
+https://huggingface.co/KlangAI/pianissimo-sv-onnx/resolve/<fast revision>/{encoder-model.int8.onnx,decoder_joint-model.int8.onnx,vocab.txt,config.json}
 ```
+
+Pianissimo-filerna hämtas med fast revision och verifieras med SHA-256 efter nedladdning. Modellen körs lokalt (ONNX Runtime, CPU) i katalogen `models\pianissimo-sv-int8\`; ingen ljuddata lämnar datorn.
 
 > **För brandväggsregler:** `huggingface.co` omdirigerar till sitt CDN
 > (`cdn-lfs.huggingface.co` / `cas-bridge.xethub.hf.co`) för själva filöverföringen. Båda

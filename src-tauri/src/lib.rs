@@ -13,6 +13,7 @@ use tauri_plugin_dialog::DialogExt;
 use sysinfo::Disks;
 
 mod audio;
+mod pianissimo;
 #[cfg(target_os = "windows")]
 mod application_loopback;
 use audio::AudioRecorder;
@@ -194,13 +195,74 @@ fn get_model_info(size: &str, quantized: bool, revision: &str) -> (String, Strin
 }
 
 fn get_model_path(app_handle: &AppHandle, size: &str, quantized: bool, revision: &str) -> Result<PathBuf, String> {
-    let (_, filename) = get_model_info(size, quantized, revision);
     let app_data_dir = app_handle.path().app_data_dir().map_err(|e| e.to_string())?;
     let models_dir = app_data_dir.join("models");
     if !models_dir.exists() {
         fs::create_dir_all(&models_dir).map_err(|e| e.to_string())?;
     }
+    // Pianissimo består av flera filer och lever i en egen katalog.
+    if size == pianissimo::ENGINE_ID {
+        return Ok(pianissimo::model_dir(&models_dir));
+    }
+    let (_, filename) = get_model_info(size, quantized, revision);
     Ok(models_dir.join(filename))
+}
+
+/// Ladda ned alla Pianissimo-filer (fast revision, SHA-256-kontroll) med samlad progress.
+async fn download_pianissimo(app_handle: &AppHandle, dir: PathBuf) -> Result<String, String> {
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let total_expected: u64 = pianissimo::FILES.iter().map(|f| f.2).sum();
+    let mut done_before: u64 = 0;
+    let mut last_emit_mb = 0u64;
+
+    for (name, sha, approx) in pianissimo::FILES {
+        let target = dir.join(name);
+        if target.exists() && pianissimo::file_hash(&target).map(|h| h == *sha).unwrap_or(false) {
+            done_before += approx;
+            continue;
+        }
+        let tmp = dir.join(format!("{name}.tmp"));
+        let res = reqwest::get(pianissimo::download_url(name)).await.map_err(|e| format!(
+            "Ingen kontakt med servern där modellen finns (huggingface.co).\n\n\
+             Kontrollera nätverket. På en arbetsdator kan brandvägg eller proxy blockera \
+             nedladdningen — kontakta i så fall IT-support.\n\nTeknisk information: {e}"
+        ))?;
+        if !res.status().is_success() {
+            return Err(format!(
+                "Servern nekade nedladdningen (HTTP {}).\n\n\
+                 Försök igen om en stund. Kvarstår problemet kan brandvägg eller proxy \
+                 blockera åtkomsten till huggingface.co.",
+                res.status()
+            ));
+        }
+        let mut file = std::fs::File::create(&tmp).map_err(|e| e.to_string())?;
+        let mut stream = res.bytes_stream();
+        let mut got: u64 = 0;
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|e| e.to_string())?;
+            file.write_all(&chunk).map_err(|e| e.to_string())?;
+            got += chunk.len() as u64;
+            let total_done = done_before + got;
+            let mb = total_done / 1_048_576;
+            if mb > last_emit_mb {
+                last_emit_mb = mb;
+                let progress = (total_done as f32 / total_expected as f32 * 99.0).min(99.0);
+                let _ = app_handle.emit("download_progress", ProgressPayload { progress, downloaded: total_done, total: total_expected });
+            }
+        }
+        drop(file);
+        let hash = pianissimo::file_hash(&tmp).map_err(|e| e.to_string())?;
+        if hash != *sha {
+            let _ = fs::remove_file(&tmp);
+            return Err(format!(
+                "Den nedladdade filen {name} är skadad (kontrollsumman stämmer inte). Försök ladda ned igen."
+            ));
+        }
+        fs::rename(&tmp, &target).map_err(|e| e.to_string())?;
+        done_before += approx;
+    }
+    let _ = app_handle.emit("download_progress", ProgressPayload { progress: 100.0, downloaded: total_expected, total: total_expected });
+    Ok(dir.to_string_lossy().to_string())
 }
 
 // ── Fil-loggning ─────────────────────────────────────────────────────────────
@@ -427,14 +489,20 @@ fn load_whisper_with_fallback(
 #[tauri::command]
 fn check_model_exists(app_handle: AppHandle, size: String, quantized: bool, revision: String) -> Result<bool, String> {
     let model_path = get_model_path(&app_handle, &size, quantized, &revision)?;
+    if size == pianissimo::ENGINE_ID {
+        return Ok(pianissimo::is_ready(&model_path));
+    }
     Ok(model_path.exists())
 }
 
 #[tauri::command]
 async fn download_model(app_handle: AppHandle, size: String, quantized: bool, revision: String) -> Result<String, String> {
     let model_path = get_model_path(&app_handle, &size, quantized, &revision)?;
+    if size == pianissimo::ENGINE_ID {
+        return download_pianissimo(&app_handle, model_path).await;
+    }
     let (url, _) = get_model_info(&size, quantized, &revision);
-    
+
     // If it already exists, just return path
     if model_path.exists() {
         // Emit 100% just in case
@@ -534,12 +602,36 @@ async fn get_available_models(app_handle: AppHandle) -> Result<Vec<ModelInfo>, S
         });
     }
 
+    // Pianissimo (svenska, snabb)
+    let pian_dir = get_model_path(&app_handle, pianissimo::ENGINE_ID, true, "standard")?;
+    if pianissimo::is_ready(&pian_dir) {
+        let size_bytes: u64 = pianissimo::FILES
+            .iter()
+            .filter_map(|(n, _, _)| fs::metadata(pian_dir.join(n)).ok())
+            .map(|m| m.len())
+            .sum();
+        models.push(ModelInfo {
+            name: "Pianissimo · Snabb (svenska)".to_string(),
+            size: pianissimo::ENGINE_ID.to_string(),
+            revision: "standard".to_string(),
+            quantized: true,
+            size_bytes,
+            downloaded: true,
+        });
+    }
+
     Ok(models)
 }
 
 #[tauri::command]
 async fn delete_model(app_handle: AppHandle, size: String, quantized: bool, revision: String) -> Result<(), String> {
     let model_path = get_model_path(&app_handle, &size, quantized, &revision)?;
+    if size == pianissimo::ENGINE_ID {
+        if model_path.exists() {
+            fs::remove_dir_all(&model_path).map_err(|e| e.to_string())?;
+        }
+        return Ok(());
+    }
     if model_path.exists() {
         fs::remove_file(model_path).map_err(|e| e.to_string())?;
     }
@@ -941,6 +1033,104 @@ async fn transcribe_audio(app_handle: AppHandle, state: tauri::State<'_, AppStat
     Ok(text)
 }
 
+// ── Pianissimo-motorn (svenska, ONNX, CPU) ──────────────────────────────────
+
+/// Pianissimo körs bara på CPU – använd fysiska kärnor, högst 8 (mer ger ingen vinst).
+fn pianissimo_threads() -> usize {
+    num_cpus::get_physical().clamp(1, 8)
+}
+
+fn pianissimo_to_segments(v: Vec<pianissimo::PSegment>, offset_ms: i64) -> Vec<TranscriptSegment> {
+    v.into_iter()
+        .map(|s| TranscriptSegment {
+            start_ms: s.start_ms + offset_ms,
+            end_ms: s.end_ms + offset_ms,
+            text: s.text,
+            tokens: Vec::new(), // ingen ordnivå-konfidens från Pianissimo
+        })
+        .collect()
+}
+
+fn pianissimo_panic_msg(p: Box<dyn std::any::Any + Send>) -> String {
+    let msg = if let Some(s) = p.downcast_ref::<&str>() { s.to_string() }
+        else if let Some(s) = p.downcast_ref::<String>() { s.clone() }
+        else { "okänt fel".to_string() };
+    format!("Transkriberingen kraschade: {msg}.")
+}
+
+/// PCM (i16 LE, 16 kHz mono) från JS-vägen.
+async fn transcribe_segments_pianissimo(
+    app_handle: AppHandle,
+    cancel_flag: Arc<AtomicBool>,
+    model_dir: PathBuf,
+    audio_bytes: Vec<u8>,
+) -> Result<Vec<TranscriptSegment>, String> {
+    tokio::task::spawn_blocking(move || {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<Vec<TranscriptSegment>, String> {
+            let samples: Vec<f32> = audio_bytes
+                .chunks_exact(2)
+                .map(|b| i16::from_le_bytes([b[0], b[1]]) as f32 / 32768.0)
+                .collect();
+            let mut model = pianissimo::Pianissimo::load(&model_dir, pianissimo_threads())
+                .map_err(|e| format!("Kunde inte starta Pianissimo: {e}"))?;
+            let app = app_handle.clone();
+            let segs = model
+                .transcribe(&samples, &cancel_flag, move |p| {
+                    let _ = app.emit("transcription_progress", TranscriptionProgressPayload { progress: p.min(99) });
+                })
+                .map_err(|e| format!("Transkribering med Pianissimo misslyckades: {e}"))?;
+            let _ = app_handle.emit("transcription_progress", TranscriptionProgressPayload { progress: 100 });
+            Ok(pianissimo_to_segments(segs, 0))
+        }))
+        .unwrap_or_else(|p| Err(pianissimo_panic_msg(p)))
+    })
+    .await
+    .map_err(|e| format!("Task-fel: {e}"))?
+}
+
+/// Filväg: streamar avkodning i 5-minuterschunkar, modellen laddas en gång.
+async fn transcribe_file_pianissimo(
+    app_handle: AppHandle,
+    cancel_flag: Arc<AtomicBool>,
+    model_dir: PathBuf,
+    file_path: String,
+) -> Result<Vec<TranscriptSegment>, String> {
+    const CHUNK_SAMPLES: usize = 16000 * 300;
+    let app_final = app_handle.clone();
+    let segs = tokio::task::spawn_blocking(move || {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<Vec<TranscriptSegment>, String> {
+            let mut dec = StreamingDecoder::open(&file_path)?;
+            let total_chunks = dec.estimate_total_chunks(CHUNK_SAMPLES).max(1);
+            let _ = app_handle.emit("transcription_progress", TranscriptionProgressPayload { progress: 0 });
+            let mut model = pianissimo::Pianissimo::load(&model_dir, pianissimo_threads())
+                .map_err(|e| format!("Kunde inte starta Pianissimo: {e}"))?;
+            let mut all = Vec::<TranscriptSegment>::new();
+            let (mut cum_offset, mut idx) = (0i64, 0usize);
+            while let Some(chunk) = dec.next_chunk(CHUNK_SAMPLES)? {
+                if cancel_flag.load(Ordering::Relaxed) { break; }
+                let offset = cum_offset;
+                cum_offset += (chunk.len() as i64 * 1000) / 16000;
+                let app = app_handle.clone();
+                let (i, total) = (idx as i32, total_chunks as i32);
+                let segs = model
+                    .transcribe(&chunk, &cancel_flag, move |p| {
+                        let overall = ((i * 100 + p) / total).min(99);
+                        let _ = app.emit("transcription_progress", TranscriptionProgressPayload { progress: overall });
+                    })
+                    .map_err(|e| format!("Transkribering med Pianissimo misslyckades: {e}"))?;
+                all.extend(pianissimo_to_segments(segs, offset));
+                idx += 1;
+            }
+            Ok(all)
+        }))
+        .unwrap_or_else(|p| Err(pianissimo_panic_msg(p)))
+    })
+    .await
+    .map_err(|e| format!("Task-fel: {e}"))??;
+    let _ = app_final.emit("transcription_progress", TranscriptionProgressPayload { progress: 100 });
+    Ok(segs)
+}
+
 #[tauri::command]
 async fn transcribe_audio_segments(app_handle: AppHandle, state: tauri::State<'_, AppState>, audio_bytes: Vec<u8>, size: String, quantized: bool, revision: String, language: String, initial_prompt: Option<String>, context_prefix: Option<String>, use_gpu: Option<bool>, thread_count: Option<u32>, gpu_device: Option<i32>) -> Result<Vec<TranscriptSegment>, String> {
     state.inner().cancel_flag.store(false, Ordering::Relaxed);
@@ -950,9 +1140,12 @@ async fn transcribe_audio_segments(app_handle: AppHandle, state: tauri::State<'_
     }
 
     let cancel_flag = Arc::clone(&state.inner().cancel_flag);
+    if size == pianissimo::ENGINE_ID {
+        return transcribe_segments_pianissimo(app_handle, cancel_flag, model_path, audio_bytes).await;
+    }
     let audio_len = audio_bytes.len();
 
-    let segments = tokio::task::spawn_blocking(move || {
+    let segments =tokio::task::spawn_blocking(move || {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let num_samples = audio_len / std::mem::size_of::<i16>();
             eprintln!("[transcrptr] transcribe_audio_segments {} samples, lang={}", num_samples, language);
@@ -1091,6 +1284,11 @@ async fn transcribe_file(
     let model_path = get_model_path(&app_handle, &size, quantized, &revision)?;
     if !model_path.exists() {
         return Err("Modell saknas. Ladda ned den först.".to_string());
+    }
+
+    if size == pianissimo::ENGINE_ID {
+        let cancel = Arc::clone(&state.inner().cancel_flag);
+        return transcribe_file_pianissimo(app_handle, cancel, model_path, file_path).await;
     }
 
     const CHUNK_SAMPLES: usize = 16000 * 300; // 5 min per chunk

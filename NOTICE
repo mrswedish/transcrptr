@@ -1,0 +1,11 @@
+Transkribera använder följande tredjepartsmaterial:
+
+Pianissimo (svensk taligenkänningsmodell)
+  Upphovsrätt: Klang AI AB. Licens: CC BY 4.0.
+  Källa: https://huggingface.co/KlangAI/pianissimo-sv-onnx
+  Baserad på NVIDIA Parakeet TDT 0.6B v3 (nvidia/parakeet-tdt-0.6b-v3).
+  Modellen har laddats ned i ONNX-format (int8) och används oförändrad.
+
+Avskrift (referensimplementation för förbehandling/avkodning)
+  Licens: MIT. https://github.com/Pluggentipsar/avskrift
+  src-tauri/src/pianissimo.rs följer dess upplägg (log-mel-parametrar, TDT-loop, chunkning).

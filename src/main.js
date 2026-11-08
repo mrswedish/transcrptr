@@ -288,7 +288,7 @@ function loadSettings() {
 
   // Sync pill pickers to current state
   // Spegla sparad modell i kvalitetsvalet
-  const savedQuality = modelSize === "large" ? "best" : modelSize === "turbo" ? "multi" : "balanced";
+  const savedQuality = modelSize === "pianissimo" ? "fast" : modelSize === "large" ? "best" : modelSize === "turbo" ? "multi" : "balanced";
   const verbatimEl = document.getElementById("model-verbatim");
   if (verbatimEl) verbatimEl.checked = modelRevision === "strict";
   if (typeof applyQuality === "function") applyQuality(savedQuality);
@@ -300,13 +300,16 @@ function loadSettings() {
 
 // Update the footer information bar
 function updateFooter() {
+  updateEngineLanguageNote();
   if (footerMic) {
     const micLabel = Array.from(selMic.options).find(opt => opt.value === selectedMicId)?.text || "Standardmikrofon";
     footerMic.innerText = micLabel;
   }
   if (footerModel) {
     const revLabel = modelRevision !== "standard" ? ` ${modelRevision}` : "";
-    const fmtName = modelSize === "turbo"
+    const fmtName = modelSize === "pianissimo"
+      ? "Pianissimo · Snabb (svenska)"
+      : modelSize === "turbo"
       ? "Turbo · Global · kvantiserad"
       : modelQuantized ? `${modelSize}${revLabel} · kvantiserad` : `${modelSize}${revLabel}`;
     footerModel.innerText = fmtName;
@@ -893,7 +896,7 @@ async function downloadAndActivate(size, revision, quantized) {
     localStorage.setItem("modelQuantized", modelQuantized.toString());
 
     const revLabelFmt = revision !== "standard" ? ` ${revision}` : "";
-    const fmtName = quantized ? `${size}${revLabelFmt} q5_0` : `${size}${revLabelFmt}`;
+    const fmtName = size === "pianissimo" ? "Pianissimo · Snabb (svenska)" : quantized ? `${size}${revLabelFmt} q5_0` : `${size}${revLabelFmt}`;
     updateBadge(`Redo (${fmtName})`, "ready");
     updateFooter();
     refreshModelList();
@@ -936,7 +939,9 @@ async function ensureModelReady() {
     }
 
     const revLabel = modelRevision !== "standard" ? ` ${modelRevision}` : "";
-    const fmtName = modelSize === "turbo"
+    const fmtName = modelSize === "pianissimo"
+      ? "Pianissimo · Snabb (svenska)"
+      : modelSize === "turbo"
       ? "Turbo · Global · kvantiserad"
       : modelQuantized ? `${modelSize}${revLabel} · kvantiserad` : `${modelSize}${revLabel}`;
     updateBadge(`Redo (${fmtName})`, "ready");
@@ -987,7 +992,32 @@ const MODEL_SIZES_MB = {
   "medium-true": 900,  "medium-false": 1500,
   "large-true": 2000,  "large-false": 3000,
   "turbo-true": 1500,  "turbo-false": 1500,   // turbo är alltid q8_0
+  "pianissimo-true": 700, "pianissimo-false": 700, // Pianissimo int8 (en variant)
 };
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Motorval: Pianissimo klarar bara svenska. För engelska/automatiskt språk byter
+// vi tyst till en nedladdad Whisper-modell så att användaren slipper tänka på det.
+// ─────────────────────────────────────────────────────────────────────────────
+async function resolveEngine() {
+  const current = { size: modelSize, quantized: modelQuantized, revision: modelRevision };
+  if (modelSize !== "pianissimo" || transcriptionLanguage === "sv") return current;
+  const available = await invoke("get_available_models");
+  for (const s of ["turbo", "large", "medium"]) {
+    const m = available.find(x => x.size === s);
+    if (m) return { size: m.size, quantized: m.quantized, revision: m.revision };
+  }
+  throw new Error(
+    "Modellen \"Snabbast\" (Pianissimo) klarar bara svenska. " +
+    "Välj språket Svenska, eller ladda ned en Whisper-modell (t.ex. \"Flera språk\") under Inställningar."
+  );
+}
+
+function updateEngineLanguageNote() {
+  const note = document.getElementById("engine-language-note");
+  if (note) note.classList.toggle("hidden", !(modelSize === "pianissimo" && transcriptionLanguage !== "sv"));
+}
 
 function modelSizeMb(size, quantized) {
   return MODEL_SIZES_MB[`${size}-${quantized}`] ?? 1000;
@@ -1014,6 +1044,7 @@ function updateDownloadButtonLabel() {
 // färdig kombination; "Ordagrann" är ortogonalt och ligger som egen kryssruta.
 // ─────────────────────────────────────────────────────────────────────────────
 const QUALITY_PRESETS = {
+  fast:     { size: "pianissimo", supportsVerbatim: false }, // Pianissimo: svenska, CPU
   balanced: { size: "medium", supportsVerbatim: true  },
   best:     { size: "large",  supportsVerbatim: true  },
   multi:    { size: "turbo",  supportsVerbatim: false }, // Turbo saknar KB-varianter
@@ -1137,6 +1168,7 @@ btnSaveSettings.addEventListener("click", async () => {
   }
 
   transcriptionLanguage = newLang;
+  updateEngineLanguageNote();
   selectedMicId = newMicId;
   wasapiEnabled = newWasapi;
 
@@ -1173,7 +1205,7 @@ const LARGE_DOWNLOAD_MB = 1000;
 
 if (btnDownloadModel) {
   btnDownloadModel.addEventListener("click", async () => {
-    const quantized = cbModelQuantized ? cbModelQuantized.checked : true;
+    const quantized = (dlSize === "pianissimo") ? true : (cbModelQuantized ? cbModelQuantized.checked : true);
     const sizeMb = modelSizeMb(dlSize, quantized);
     const sizeText = formatMb(sizeMb);
 
@@ -2055,9 +2087,7 @@ async function transcribeBlob(blob, label, blobOffsetMs = 0) {
     try {
       const chunkSegs = await invoke("transcribe_audio_segments", {
         audioBytes: chunkBytesArray,
-        size: modelSize,
-        quantized: modelQuantized,
-        revision: modelRevision,
+        ...(await resolveEngine()),
         language: transcriptionLanguage,
         initialPrompt,
         contextPrefix,
@@ -2244,9 +2274,7 @@ async function transcribeFloat32(rawFloat32Data) {
     try {
       const chunkSegs = await invoke("transcribe_audio_segments", {
         audioBytes: chunkBytesArray,
-        size: modelSize,
-        quantized: modelQuantized,
-        revision: modelRevision,
+        ...(await resolveEngine()),
         language: transcriptionLanguage,
         initialPrompt,
         contextPrefix,
@@ -2750,9 +2778,7 @@ async function processAudioBlob(blob) {
       try {
         const chunkSegs = await invoke("transcribe_audio_segments", {
           audioBytes: chunkBytesArray,
-          size: modelSize,
-          quantized: modelQuantized,
-          revision: modelRevision,
+          ...(await resolveEngine()),
           language: transcriptionLanguage,
           initialPrompt,
           contextPrefix,
@@ -2855,9 +2881,7 @@ async function processAudioFile(filePath) {
     logToFile(`processAudioFile: anropar invoke("transcribe_file") för ${filePath}`);
     const segs = await invoke("transcribe_file", {
       filePath,
-      size:         modelSize,
-      quantized:    modelQuantized,
-      revision:     modelRevision,
+      ...(await resolveEngine()),
       language:     transcriptionLanguage,
       initialPrompt,
       useGpu,
