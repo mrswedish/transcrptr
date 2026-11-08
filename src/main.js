@@ -138,12 +138,12 @@ let isRecording = false;
 let isPaused = false;
 let mediaRecorder = null;
 let audioChunks = [];
-let modelSize = "medium";
+let modelSize = "pianissimo";
 let modelRevision = "standard";
 let modelQuantized = true;
 
 // Download picker state (independent from active model)
-let dlSize = "medium";
+let dlSize = "pianissimo";
 let dlRevision = "standard";
 let transcriptionLanguage = "sv";
 
@@ -932,8 +932,8 @@ async function ensureModelReady() {
         updateFooter();
         refreshModelList();
       } else {
-        // First launch — download default (medium standard q5)
-        await downloadAndActivate("medium", "standard", true);
+        // First launch — download default (Pianissimo, svenska, CPU)
+        await downloadAndActivate("pianissimo", "standard", true);
         return;
       }
     }
@@ -1049,7 +1049,7 @@ const QUALITY_PRESETS = {
   best:     { size: "large",  supportsVerbatim: true  },
   multi:    { size: "turbo",  supportsVerbatim: false }, // Turbo saknar KB-varianter
 };
-let dlQuality = "balanced";
+let dlQuality = "fast";
 
 const QUALITY_ACTIVE = "quality-btn flex items-start gap-3 px-3 py-2.5 border rounded-xl transition-colors text-left bg-primary/5 border-primary/40 text-slate-800 dark:text-white";
 const QUALITY_IDLE   = "quality-btn flex items-start gap-3 px-3 py-2.5 border rounded-xl transition-colors text-left bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:border-primary/30";

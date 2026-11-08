@@ -4,7 +4,7 @@ Underlag för IT-avdelning, förvaltare och utvecklingsenhet. Beskriver var data
 vilken nätverkstrafik som förekommer, vad som händer vid avinstallation och hur systemet är
 byggt.
 
-Avser **version 1.7.1** och **enbart Windows**. Uppgifterna är verifierade mot källkoden;
+Avser **version 1.8.0** och **enbart Windows**. Uppgifterna är verifierade mot källkoden;
 där en sökväg härleds ur Tauris API i stället för att vara hårdkodad anges det.
 
 - **Identifier:** `com.patriksvensk.transcrptr`
@@ -315,7 +315,7 @@ behövs** på klientdatorerna.
 | **Rust- och Tauri-versioner är inte låsta** | Ett bygge om sex månader kan ge annan verktygskedja. Överväg `rust-toolchain.toml`. |
 | **Utvecklarverktyg aktiverade i release** | WebView2:s devtools kan gå att öppna i produktionsbygget. Bör läggas bakom en felsökningsflagga. |
 | **Ingen Content Security Policy** | Låg risk eftersom allt innehåll är lokalt, men avviker från rekommendationen. |
-| **Versionsnummer ur synk** | `package.json` säger 1.1.75 medan programmet är 1.7.1. Kosmetiskt — `package.json`-versionen används inte vid paketering — men förvirrande. |
+| **Versionsnummer ur synk** | `package.json` säger 1.1.75 medan programmet är 1.8.0. Kosmetiskt — `package.json`-versionen används inte vid paketering — men förvirrande. |
 
 ---
 
