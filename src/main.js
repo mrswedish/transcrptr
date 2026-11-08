@@ -1357,9 +1357,11 @@ async function startRecording() {
       wasapiProcessor.onaudioprocess = (e) => {
         if (!isRecording || isPaused) return;
         const inputBuffer = e.inputBuffer.getChannelData(0);
-        // Klona — inputBuffer kan invalideras efter callback
-        const samples = Array.from(inputBuffer);
-        invoke("append_mic_chunk", { samples, sampleRate: wasapiSampleRate })
+        // Rå binär payload (f32 LE) — ingen JSON-array av tal. Kopiera: inputBuffer kan
+        // invalideras efter callbacken.
+        const bytes = new Uint8Array(inputBuffer.buffer.slice(
+          inputBuffer.byteOffset, inputBuffer.byteOffset + inputBuffer.byteLength));
+        invoke("append_mic_chunk", bytes, { headers: { "x-sample-rate": String(wasapiSampleRate) } })
           .catch(err => console.warn("append_mic_chunk:", err));
       };
       wasapiSource.connect(wasapiProcessor);
@@ -2037,12 +2039,8 @@ async function processAudioFile(filePath) {
     logToFile(`processAudioFile: transcribe_file returnerade ${segs ? segs.length : 0} segment`);
 
     if (segs && segs.length > 0) {
-      transcriptSegments = segs.map(s => ({
-        startMs: s.start_ms,
-        endMs:   s.end_ms,
-        text:    s.text,
-        tokens:  s.tokens || []
-      }));
+      // Rust serialiserar camelCase (startMs, endMs, text, tokens) — används som det är.
+      transcriptSegments = segs.map(s => ({ ...s, tokens: s.tokens || [] }));
       logToFile(`processAudioFile: mapped till transcriptSegments (${transcriptSegments.length} st)`);
       outputText.value = transcriptSegments.map(s => s.text).join("\n");
       logToFile(`processAudioFile: outputText.value satt (${outputText.value.length} tecken)`);

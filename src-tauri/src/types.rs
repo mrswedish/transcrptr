@@ -22,6 +22,7 @@ pub(crate) struct TokenInfo {
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct TranscriptSegment {
     pub(crate) start_ms: i64,
     pub(crate) end_ms: i64,

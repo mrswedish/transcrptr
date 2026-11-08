@@ -283,13 +283,33 @@ fn allow_asset_path(app_handle: AppHandle, path: String) -> Result<(), String> {
 /// JS streamar mic-PCM hit under inspelning (Windows-WASAPI). Eliminerar
 /// JS-side mic-blob-allokation som tidigare gjorde 1 GB Float32-arrays vid stop
 /// av lång inspelning → OOM-krasch på WebView2.
+/// Rå binär payload: f32 little-endian PCM i body, samplingsfrekvens i headern
+/// `x-sample-rate`. (Tidigare skickades `Vec<f32>` som JSON-array av tal.)
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn parse_mic_payload(request: &tauri::ipc::Request<'_>) -> Result<(Vec<f32>, u32), String> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("append_mic_chunk förväntar rå binär data".to_string());
+    };
+    let sample_rate: u32 = request
+        .headers()
+        .get("x-sample-rate")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse().ok())
+        .ok_or("Saknar giltig x-sample-rate")?;
+    let samples = bytes
+        .chunks_exact(4)
+        .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+        .collect();
+    Ok((samples, sample_rate))
+}
+
 #[cfg(target_os = "windows")]
 #[tauri::command]
 async fn append_mic_chunk(
     state: tauri::State<'_, AppState>,
-    samples: Vec<f32>,
-    sample_rate: u32,
+    request: tauri::ipc::Request<'_>,
 ) -> Result<(), String> {
+    let (samples, sample_rate) = parse_mic_payload(&request)?;
     let recorder = state.inner().audio_recorder.lock()
         .map_err(|e| format!("Recorder-lås: {e}"))?;
     recorder.append_mic_pcm(&samples, sample_rate)
@@ -297,12 +317,8 @@ async fn append_mic_chunk(
 
 #[cfg(not(target_os = "windows"))]
 #[tauri::command]
-async fn append_mic_chunk(
-    _state: tauri::State<'_, AppState>,
-    _samples: Vec<f32>,
-    _sample_rate: u32,
-) -> Result<(), String> {
-    // No-op på Mac — mic går via cpal direkt i Rust
+async fn append_mic_chunk(_request: tauri::ipc::Request<'_>) -> Result<(), String> {
+    // Mac pausat: ingen mikrofoninspelning via webbläsaren.
     Ok(())
 }
 
