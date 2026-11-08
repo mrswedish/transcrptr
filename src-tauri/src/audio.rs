@@ -232,7 +232,7 @@ impl AudioRecorder {
     pub fn start_recording(
         &mut self,
         loopback_only: bool,
-        with_loopback: bool,
+        _with_loopback: bool,
         base_dir: &Path,
     ) -> Result<(), String> {
         // Skapa session-mapp med läsbart datum/tid (lokal tid)
