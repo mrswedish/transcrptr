@@ -52,6 +52,21 @@ jobs:
       - name: Build CSS
         run: npm run build:css
 
+      # onnxruntime.dll (Microsofts officiella CPU-build) bäddas in i exe:n.
+      # ort:s färdiga statiska bibliotek är byggda med /MD och krockar med appens
+      # statiska CRT (/MT), så ort laddar DLL:en dynamiskt (feature embedded-ort).
+      - name: Hämta onnxruntime.dll
+        shell: pwsh
+        run: |
+          $ver = "1.24.2"
+          $sha = "8e3e9c826375352e29cb2614fe44f3d7a4b0ff7b8028ad7a456af9d949a7e8b0"
+          Invoke-WebRequest "https://github.com/microsoft/onnxruntime/releases/download/v$ver/onnxruntime-win-x64-$ver.zip" -OutFile ort.zip
+          if ((Get-FileHash ort.zip -Algorithm SHA256).Hash.ToLower() -ne $sha) { throw "Fel kontrollsumma för onnxruntime" }
+          Expand-Archive ort.zip -DestinationPath ort-extract
+          New-Item -ItemType Directory -Force src-tauri/embedded | Out-Null
+          Copy-Item "ort-extract/onnxruntime-win-x64-$ver/lib/onnxruntime.dll" src-tauri/embedded/onnxruntime.dll
+          (Get-Item src-tauri/embedded/onnxruntime.dll).Length
+
       - name: Build and Release Tauri App
         uses: tauri-apps/tauri-action@v0
         env:
@@ -70,6 +85,7 @@ jobs:
           releaseDraft: false
           prerelease: ${{ contains(github.ref, '-beta') || contains(github.ref, '-alpha') }}
           includeRelease: true
+          args: --features embedded-ort
 
       - name: Extract Project Version
         run: |

@@ -25,3 +25,6 @@ src/app.css
 *.njsproj
 *.sln
 *.sw?
+
+# onnxruntime.dll som hämtas av CI och bäddas in (feature embedded-ort)
+src-tauri/embedded/

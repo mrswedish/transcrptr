@@ -96,6 +96,53 @@ pub struct Pianissimo {
     clean: Regex,
 }
 
+/// onnxruntime.dll (Microsoft, version måste matcha ort) är inbäddad i Windows-bygget.
+#[cfg(feature = "embedded-ort")]
+static ORT_DLL: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/embedded/onnxruntime.dll"));
+#[cfg(feature = "embedded-ort")]
+const ORT_VERSION: &str = "1.24.2";
+
+/// Packa upp och initiera onnxruntime en gång per process.
+#[cfg(feature = "embedded-ort")]
+fn init_runtime(model_dir: &Path) -> Result<()> {
+    use std::sync::OnceLock;
+    static INIT: OnceLock<std::result::Result<(), String>> = OnceLock::new();
+    INIT.get_or_init(|| {
+        let run = || -> Result<()> {
+            let dir = model_dir
+                .parent()
+                .context("Ogiltig modellkatalog")?
+                .join("runtime");
+            std::fs::create_dir_all(&dir)?;
+            let dll = dir.join(format!("onnxruntime-{ORT_VERSION}.dll"));
+            let ok = std::fs::metadata(&dll).map(|m| m.len() == ORT_DLL.len() as u64).unwrap_or(false);
+            if !ok {
+                let tmp = dir.join("onnxruntime.tmp");
+                std::fs::write(&tmp, ORT_DLL)?;
+                std::fs::rename(&tmp, &dll)?;
+            }
+            let committed = ort::init_from(&dll)
+                .map_err(|e| anyhow::anyhow!(e.to_string()))?
+                .commit();
+            let _ = committed; // ort 2.0.0-rc.12 returnerar bool
+            Ok(())
+        };
+        run().map_err(|e| {
+            format!(
+                "Kunde inte starta ONNX Runtime ({e}). Pianissimo kräver \"Microsoft Visual C++ \
+                 Redistributable (x64)\" på datorn. Installera den eller välj en annan modell."
+            )
+        })
+    })
+    .clone()
+    .map_err(anyhow::Error::msg)
+}
+
+#[cfg(not(feature = "embedded-ort"))]
+fn init_runtime(_model_dir: &Path) -> Result<()> {
+    Ok(())
+}
+
 fn session(path: &Path, threads: usize) -> Result<Session> {
     use ort::session::builder::GraphOptimizationLevel;
     // Builder-fel bär med sig buildern (inte Send/Sync) – gör om till vanliga strängfel.
@@ -123,6 +170,7 @@ fn argmax(v: &[f32]) -> usize {
 
 impl Pianissimo {
     pub fn load(dir: &Path, threads: usize) -> Result<Self> {
+        init_runtime(dir)?;
         let cfg: serde_json::Value =
             serde_json::from_slice(&std::fs::read(dir.join("config.json"))?)?;
         ensure!(
