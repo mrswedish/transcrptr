@@ -5,17 +5,17 @@ use futures_util::StreamExt;
 use std::io::Write;
 use tauri::{AppHandle, Manager, Emitter};
 use serde::Serialize;
-use whisper_rs::{WhisperContext, WhisperContextParameters, FullParams, SamplingStrategy};
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 use tauri_plugin_dialog::DialogExt;
 use sysinfo::Disks;
 
 mod audio;
 mod decode;
+mod engine;
 mod pianissimo;
 mod types;
+mod whisper;
 use decode::StreamingDecoder;
 use types::*;
 #[cfg(target_os = "windows")]
@@ -35,20 +35,6 @@ fn cancel_transcription(state: tauri::State<AppState>) {
 #[tauri::command]
 fn get_app_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
-}
-
-/// Strip whisper special tokens like <|nospeech|>, <|en|> etc. and replacement chars from text.
-fn clean_whisper_text(s: &str) -> String {
-    let mut result = s.to_string();
-    while let Some(start) = result.find("<|") {
-        if let Some(rel_end) = result[start..].find("|>") {
-            result.replace_range(start..start + rel_end + 2, "");
-        } else {
-            break;
-        }
-    }
-    result.retain(|c| c != '\u{FFFD}');
-    result.trim().to_string()
 }
 
 fn get_model_info(size: &str, quantized: bool, revision: &str) -> (String, String) {
@@ -170,19 +156,6 @@ pub(crate) fn log_line(msg: &str) {
             let _ = writeln!(f, "[{now}] {msg}");
         }
     }
-}
-
-// Cap n_threads till ett säkert värde. Default = 4 (whisper.cpp:s original-default).
-// På Intel-laptops med 20+ logiska kärnor kan whisper.cpp kraschra; vi cap:ar vid 16.
-fn whisper_thread_count(user_pref: Option<u32>) -> i32 {
-    let detected = num_cpus::get() as u32;
-    let chosen = user_pref
-        .unwrap_or(4)
-        .clamp(1, detected.min(16));
-    log_line(&format!(
-        "thread_count: requested={user_pref:?}, detected_cpus={detected}, chosen={chosen}"
-    ));
-    chosen as i32
 }
 
 #[tauri::command]
@@ -336,35 +309,6 @@ async fn append_mic_chunk(
 // Försök ladda WhisperContext med begärt GPU-läge. Om GPU-init misslyckas
 // (vanligt på multi-GPU/NPU-Windows pga Vulkan-konflikt), faller vi tillbaka
 // till CPU automatiskt så användaren slipper krasch.
-fn load_whisper_with_fallback(
-    model_path: &PathBuf,
-    use_gpu_requested: bool,
-    gpu_device: Option<i32>,
-) -> Result<WhisperContext, String> {
-    let chosen_device = gpu_device.unwrap_or(0);
-    log_line(&format!(
-        "WhisperContext init: use_gpu={use_gpu_requested}, gpu_device={chosen_device}, model={}",
-        model_path.display()
-    ));
-    let mut params = WhisperContextParameters::default();
-    params.use_gpu = use_gpu_requested;
-    params.gpu_device = chosen_device;
-    match WhisperContext::new_with_params(model_path.as_path(), params) {
-        Ok(ctx) => {
-            log_line(&format!("WhisperContext OK (gpu={use_gpu_requested}, device={chosen_device})"));
-            Ok(ctx)
-        }
-        Err(e) if use_gpu_requested => {
-            log_line(&format!("GPU-init misslyckades ({e}) — faller tillbaka till CPU"));
-            let mut cpu = WhisperContextParameters::default();
-            cpu.use_gpu = false;
-            WhisperContext::new_with_params(model_path.as_path(), cpu)
-                .map_err(|e| format!("Kunde inte ladda modell (CPU-fallback): {e}"))
-        }
-        Err(e) => Err(format!("Kunde inte ladda modell: {e}")),
-    }
-}
-
 #[tauri::command]
 fn check_model_exists(app_handle: AppHandle, size: String, quantized: bool, revision: String) -> Result<bool, String> {
     let model_path = get_model_path(&app_handle, &size, quantized, &revision)?;
@@ -743,74 +687,6 @@ async fn get_disk_info(app_handle: AppHandle) -> Result<DiskInfo, String> {
     }
 }
 
-// ── Pianissimo-motorn (svenska, ONNX, CPU) ──────────────────────────────────
-
-/// Pianissimo körs bara på CPU – använd fysiska kärnor, högst 8 (mer ger ingen vinst).
-fn pianissimo_threads() -> usize {
-    num_cpus::get_physical().clamp(1, 8)
-}
-
-fn pianissimo_to_segments(v: Vec<pianissimo::PSegment>, offset_ms: i64) -> Vec<TranscriptSegment> {
-    v.into_iter()
-        .map(|s| TranscriptSegment {
-            start_ms: s.start_ms + offset_ms,
-            end_ms: s.end_ms + offset_ms,
-            text: s.text,
-            tokens: Vec::new(), // ingen ordnivå-konfidens från Pianissimo
-        })
-        .collect()
-}
-
-fn pianissimo_panic_msg(p: Box<dyn std::any::Any + Send>) -> String {
-    let msg = if let Some(s) = p.downcast_ref::<&str>() { s.to_string() }
-        else if let Some(s) = p.downcast_ref::<String>() { s.clone() }
-        else { "okänt fel".to_string() };
-    format!("Transkriberingen kraschade: {msg}.")
-}
-
-/// Filväg: streamar avkodning i 5-minuterschunkar, modellen laddas en gång.
-async fn transcribe_file_pianissimo(
-    app_handle: AppHandle,
-    cancel_flag: Arc<AtomicBool>,
-    model_dir: PathBuf,
-    file_path: String,
-) -> Result<Vec<TranscriptSegment>, String> {
-    const CHUNK_SAMPLES: usize = 16000 * 300;
-    let app_final = app_handle.clone();
-    let segs = tokio::task::spawn_blocking(move || {
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<Vec<TranscriptSegment>, String> {
-            let mut dec = StreamingDecoder::open(&file_path)?;
-            let total_chunks = dec.estimate_total_chunks(CHUNK_SAMPLES).max(1);
-            let _ = app_handle.emit("transcription_progress", TranscriptionProgressPayload { progress: 0 });
-            let mut model = pianissimo::Pianissimo::load(&model_dir, pianissimo_threads())
-                .map_err(|e| format!("Kunde inte starta Pianissimo: {e}"))?;
-            let mut all = Vec::<TranscriptSegment>::new();
-            let (mut cum_offset, mut idx) = (0i64, 0usize);
-            while let Some(chunk) = dec.next_chunk(CHUNK_SAMPLES)? {
-                if cancel_flag.load(Ordering::Relaxed) { break; }
-                let offset = cum_offset;
-                cum_offset += (chunk.len() as i64 * 1000) / 16000;
-                let app = app_handle.clone();
-                let (i, total) = (idx as i32, total_chunks as i32);
-                let segs = model
-                    .transcribe(&chunk, &cancel_flag, move |p| {
-                        let overall = ((i * 100 + p) / total).min(99);
-                        let _ = app.emit("transcription_progress", TranscriptionProgressPayload { progress: overall });
-                    })
-                    .map_err(|e| format!("Transkribering med Pianissimo misslyckades: {e}"))?;
-                all.extend(pianissimo_to_segments(segs, offset));
-                idx += 1;
-            }
-            Ok(all)
-        }))
-        .unwrap_or_else(|p| Err(pianissimo_panic_msg(p)))
-    })
-    .await
-    .map_err(|e| format!("Task-fel: {e}"))??;
-    let _ = app_final.emit("transcription_progress", TranscriptionProgressPayload { progress: 100 });
-    Ok(segs)
-}
-
 #[tauri::command]
 async fn transcribe_file(
     app_handle: AppHandle,
@@ -830,173 +706,43 @@ async fn transcribe_file(
     if !model_path.exists() {
         return Err("Modell saknas. Ladda ned den först.".to_string());
     }
+    let cancel = Arc::clone(&state.inner().cancel_flag);
+    let app = app_handle.clone();
 
-    if size == pianissimo::ENGINE_ID {
-        let cancel = Arc::clone(&state.inner().cancel_flag);
-        return transcribe_file_pianissimo(app_handle, cancel, model_path, file_path).await;
-    }
-
-    const CHUNK_SAMPLES: usize = 16000 * 300; // 5 min per chunk
-    let cancel_flag  = Arc::clone(&state.inner().cancel_flag);
-    let use_gpu_val  = use_gpu.unwrap_or(true);
-    let app_for_task = app_handle.clone();
-
-    // Kör allt i en enda spawn_blocking — StreamingDecoder öppnas där och
-    // hålls levande hela vägen; ett chunk avkodas, transkriberas och kastas
-    // bort innan nästa börjar. Peak-minne: ~19 MB oavsett fillängd.
-    let all_segments = tokio::task::spawn_blocking(move || -> Result<Vec<TranscriptSegment>, String> {
-        let mut dec          = StreamingDecoder::open(&file_path)?;
-        let total_chunks     = dec.estimate_total_chunks(CHUNK_SAMPLES).max(1);
-        let mut all_segs     = Vec::<TranscriptSegment>::new();
-        let mut ctx_prefix   = Option::<String>::None;
-        let mut cum_offset   = 0i64;
-        let mut chunk_idx    = 0usize;
-
-        // Ladda modellen EN gång — återanvänds över alla chunks.
-        // För en 2h-fil sparar detta ~23 onödiga modell-laddningar (varje ~1.5 GB från disk + GPU-init).
-        let ctx = load_whisper_with_fallback(&model_path, use_gpu_val, gpu_device)?;
-        let n_threads = whisper_thread_count(thread_count);
-
-        while let Some(chunk_samples) = dec.next_chunk(CHUNK_SAMPLES)? {
-            if cancel_flag.load(Ordering::Relaxed) { break; }
-
-            let chunk_offset  = cum_offset;
-            cum_offset       += (chunk_samples.len() as i64 * 1000) / 16000;
-
-            let lang_hint = match language.as_str() {
-                "sv" => "Följande är en transkribering på svenska.",
-                "en" => "The following is a transcription in English.",
-                _    => "",
+    // Allt i en enda spawn_blocking: avkodaren hålls öppen hela vägen, ett chunk
+    // avkodas, transkriberas och kastas bort innan nästa börjar.
+    let segments = tokio::task::spawn_blocking(move || -> Result<Vec<TranscriptSegment>, String> {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<Vec<TranscriptSegment>, String> {
+            // Öppna filen först så att ett läsfel visas innan den långsamma modellen laddas.
+            let mut dec = StreamingDecoder::open(&file_path)?;
+            let mut engine: Box<dyn engine::Engine> = if size == pianissimo::ENGINE_ID {
+                Box::new(
+                    pianissimo::Pianissimo::load(&model_path, pianissimo::default_threads())
+                        .map_err(|e| format!("Kunde inte starta Pianissimo: {e}"))?,
+                )
+            } else {
+                Box::new(whisper::WhisperEngine::load(
+                    &model_path,
+                    use_gpu.unwrap_or(true),
+                    gpu_device,
+                    language,
+                    initial_prompt,
+                    thread_count,
+                )?)
             };
-            let mut composed = lang_hint.to_string();
-            if let Some(ctx) = &ctx_prefix {
-                let ctx = ctx.trim();
-                if !ctx.is_empty() { if !composed.is_empty() { composed.push(' '); } composed.push_str(ctx); }
-            }
-            if let Some(vocab) = &initial_prompt {
-                let vocab = vocab.trim();
-                if !vocab.is_empty() { if !composed.is_empty() { composed.push(' '); } composed.push_str(vocab); }
-            }
-
-            // Skicka ett tidigt progress-event så JS direkt byter från "Avkodar..." till "Transkriberar..."
-            let chunk_start_progress = ((chunk_idx * 100) / total_chunks) as i32;
-            let _ = app_for_task.emit("transcription_progress",
-                TranscriptionProgressPayload { progress: chunk_start_progress });
-
-            let composed_cln = composed.clone();
-            let language_cln = language.clone();
-            let progress     = Arc::new(AtomicI32::new(0));
-            let prog_cb      = Arc::clone(&progress);
-            let prog_poll    = Arc::clone(&progress);
-            let app_poll     = app_for_task.clone();
-            let cancel_poll  = Arc::clone(&cancel_flag);
-
-            eprintln!("[transcrptr] chunk {}/{}: {} samples ({:.1}s), n_threads={}",
-                chunk_idx + 1, total_chunks, chunk_samples.len(),
-                chunk_samples.len() as f32 / 16000.0, n_threads);
-
-            let segs: Result<Vec<TranscriptSegment>, String> = {
-                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    log_line(&format!("transcribe_file chunk {}: anropar ctx.create_state...", chunk_idx + 1));
-                    let mut wstate = match ctx.create_state() {
-                        Ok(s) => { log_line(&format!("transcribe_file chunk {}: create_state OK", chunk_idx + 1)); s }
-                        Err(e) => { log_line(&format!("transcribe_file chunk {}: create_state FAIL: {e}", chunk_idx + 1)); return Err(format!("Kunde inte skapa state: {e}")); }
-                    };
-                    let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
-                    params.set_n_threads(n_threads);
-
-                    match language_cln.as_str() {
-                        "sv" => params.set_language(Some("sv")),
-                        "en" => params.set_language(Some("en")),
-                        _    => params.set_language(None),
-                    }
-                    if !composed_cln.is_empty() { params.set_initial_prompt(&composed_cln); }
-                    params.set_print_progress(false);
-                    params.set_print_special(false);
-                    params.set_print_realtime(false);
-                    params.set_print_timestamps(false);
-
-                    params.set_temperature(0.0);
-                    params.set_no_speech_thold(0.6);
-                    params.set_suppress_blank(true);
-                    params.set_split_on_word(true);
-
-                    params.set_progress_callback_safe(move |p| { prog_cb.store(p, Ordering::Relaxed); });
-
-                    let poller = tokio::spawn(async move {
-                        let mut last = -1i32;
-                        loop {
-                            if cancel_poll.load(Ordering::Relaxed) { break; }
-                            let p = prog_poll.load(Ordering::Relaxed);
-                            if p != last {
-                                let overall = ((chunk_idx as i32 * 100 + p) / total_chunks as i32).min(99);
-                                let _ = app_poll.emit("transcription_progress",
-                                    TranscriptionProgressPayload { progress: overall });
-                                last = p;
-                            }
-                            if p >= 100 { break; }
-                            tokio::time::sleep(Duration::from_millis(500)).await;
-                        }
-                    });
-
-                    log_line(&format!("calling wstate.full chunk {}/{}: {} samples", chunk_idx + 1, total_chunks, chunk_samples.len()));
-                    let res = wstate.full(params, &chunk_samples);
-                    poller.abort();
-                    if let Err(e) = res {
-                        log_line(&format!("wstate.full FAIL chunk {}: {e:?}", chunk_idx + 1));
-                        return Err(format!("Transkribering misslyckades: {e:?}"));
-                    }
-                    log_line(&format!("wstate.full OK chunk {}", chunk_idx + 1));
-
-                    let n = wstate.full_n_segments();
-                    let mut out = Vec::new();
-                    for i in 0..n {
-                        let seg     = wstate.get_segment(i).ok_or("Segment saknas")?;
-                        let text    = seg.to_str_lossy().map_err(|e| format!("Texthämtning: {e:?}"))?;
-                        let trimmed = clean_whisper_text(text.as_ref());
-                        if trimmed.is_empty() { continue; }
-                        let t0 = seg.start_timestamp() * 10 + chunk_offset;
-                        let t1 = seg.end_timestamp()   * 10 + chunk_offset;
-                        let mut tokens = Vec::new();
-                        for t in 0..seg.n_tokens() {
-                            if let Some(tok) = seg.get_token(t) {
-                                if let Ok(tt) = tok.to_str_lossy() {
-                                    let s = tt.into_owned();
-                                    if s.starts_with("[_") || s.starts_with("<|") { continue; }
-                                    tokens.push(TokenInfo { text: s, prob: tok.token_probability() });
-                                }
-                            }
-                        }
-                        out.push(TranscriptSegment { start_ms: t0, end_ms: t1, text: trimmed, tokens });
-                    }
-                    Ok::<Vec<TranscriptSegment>, String>(out)
-                }));
-                match result {
-                    Ok(inner) => inner,
-                    Err(p) => {
-                        let msg = if let Some(s) = p.downcast_ref::<&str>() { s.to_string() }
-                                  else if let Some(s) = p.downcast_ref::<String>() { s.clone() }
-                                  else { "Unknown panic".to_string() };
-                        Err(format!("Krasch i del {}: {msg}", chunk_idx + 1))
-                    }
-                }
+            let emit = |p: i32| {
+                let _ = app.emit("transcription_progress", TranscriptionProgressPayload { progress: p });
             };
-            let segs = segs?;
-
-            if !segs.is_empty() {
-                let chunk_text = segs.iter().map(|s| s.text.as_str()).collect::<Vec<_>>().join(" ");
-                let words: Vec<&str> = chunk_text.split_whitespace().collect();
-                ctx_prefix = Some(words.iter().rev().take(30).rev().cloned().collect::<Vec<_>>().join(" "));
-            }
-            all_segs.extend(segs);
-            chunk_idx += 1;
-        }
-
-        Ok(all_segs)
-    }).await.map_err(|e| format!("Task-fel: {e}"))??;
+            emit(0);
+            engine::run_file(engine.as_mut(), &mut dec, &cancel, &emit)
+        }))
+        .unwrap_or_else(|p| Err(format!("Transkriberingen kraschade: {}.", engine::panic_msg(p))))
+    })
+    .await
+    .map_err(|e| format!("Task-fel: {e}"))??;
 
     let _ = app_handle.emit("transcription_progress", TranscriptionProgressPayload { progress: 100 });
-    Ok(all_segments)
+    Ok(segments)
 }
 
 #[derive(Serialize)]

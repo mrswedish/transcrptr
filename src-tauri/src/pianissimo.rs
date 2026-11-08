@@ -511,3 +511,32 @@ mod tests {
         assert_eq!(re.replace_all(" Åsa är här .", "$1"), "Åsa är här.");
     }
 }
+
+/// Pianissimo körs bara på CPU — använd fysiska kärnor, högst 8 (mer ger ingen vinst).
+pub fn default_threads() -> usize {
+    num_cpus::get_physical().clamp(1, 8)
+}
+
+impl crate::engine::Engine for Pianissimo {
+    fn transcribe_chunk(
+        &mut self,
+        samples: &[f32],
+        offset_ms: i64,
+        _prev_text: Option<&str>,
+        cancel: &AtomicBool,
+        on_progress: &(dyn Fn(i32) + Sync),
+    ) -> std::result::Result<Vec<crate::types::TranscriptSegment>, String> {
+        let segs = self
+            .transcribe(samples, cancel, |p| on_progress(p))
+            .map_err(|e| format!("Transkribering med Pianissimo misslyckades: {e}"))?;
+        Ok(segs
+            .into_iter()
+            .map(|s| crate::types::TranscriptSegment {
+                start_ms: s.start_ms + offset_ms,
+                end_ms: s.end_ms + offset_ms,
+                text: s.text,
+                tokens: Vec::new(), // ingen ordnivå-konfidens från Pianissimo
+            })
+            .collect())
+    }
+}
