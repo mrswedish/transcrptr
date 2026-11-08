@@ -38,6 +38,10 @@ Transkribera använder [KB-whisper](https://huggingface.co/KBLab/kb-whisper-smal
 - **📊 Modellhantering:** Se, ladda ner och ta bort modeller i inställningarna.
 - **💿 Diskhantering:** Inställningarna visar hur mycket plats dina inspelningar tar, och appen varnar om diskutrymmet är lågt innan du startar en lång inspelning.
 
+## 🖥️ Plattformsstöd
+
+Windows är det stödda målet. Inspelning och mötesljud fungerar bara i Windows-versionen; på Mac pausas utvecklingen tills vidare (filimport och transkribering finns kvar i koden men testas inte).
+
 ## 📦 Välj rätt modell
 
 Byt modell via **kugghjulet** (⚙️) i appen. Välj storlek, stil och format — ladda ner flera och byt med ett klick.

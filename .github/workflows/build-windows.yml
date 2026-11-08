@@ -83,7 +83,8 @@ jobs:
           releaseName: 'Transkribera v__VERSION__'
           releaseBody: 'See the assets to download this version and install.'
           releaseDraft: false
-          prerelease: ${{ contains(github.ref, '-beta') || contains(github.ref, '-alpha') }}
+          # Bygge från annan gren än main blir en förhandsversion (inte "latest") så att den kan testas först.
+          prerelease: ${{ github.ref_name != 'main' || contains(github.ref, '-beta') || contains(github.ref, '-alpha') }}
           includeRelease: true
           args: --features embedded-ort
 
@@ -153,4 +154,5 @@ jobs:
           files: |
             Transkribera-portable.exe
             Transkribera_x64-setup.exe
-          make_latest: true
+          make_latest: ${{ github.ref_name == 'main' }}
+          prerelease: ${{ github.ref_name != 'main' }}
