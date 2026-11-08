@@ -165,9 +165,8 @@ let selectedMicId = "default";
 let wasapiEnabled = false;
 let useGpu = true;
 let isCancelling = false;
-let pendingRecording = null; // { type:'float32', data:Float32Array } | { type:'segments', segments:[] }
+let pendingRecording = null; // { type:'wav-file', filePath } | { type:'segments', segments:[] }
 let wasapiRecordingReady = false; // Rust har recording.wav på disk — save_audio_file kan anropas direkt
-let wasapiDecodePromise  = null;  // Promise<Float32Array> för JS-mix, behövs vid transkribering
 let recordingDir         = "";    // Mapp där sessions sparas; tom = default från Rust
 let threadCount          = 4;     // Antal CPU-trådar för whisper.cpp (1-16); cap för att undvika krasch på multi-core
 let gpuDeviceIndex       = null;  // GPU-index (0-7) eller null = auto. Multi-GPU-stöd via WhisperContextParameters.gpu_device
@@ -390,18 +389,6 @@ async function setupEventListeners() {
     const dlMb = (downloaded / 1048576).toFixed(1);
     const totMb = (total / 1048576).toFixed(1);
     loadingText.innerText = `Laddar ner modell... ${dlMb}MB / ${totMb}MB`;
-  });
-
-  await listen("transcription_segment", (event) => {
-    const { text } = event.payload;
-    // Append the newly transcribed chunk immediately with a newline
-    if (outputText.value) {
-      outputText.value += '\n' + text;
-    } else {
-      outputText.value += text;
-    }
-    // Auto-scroll
-    outputText.scrollTop = outputText.scrollHeight;
   });
 
   await listen("transcription_progress", (event) => {
@@ -1390,7 +1377,6 @@ async function startRecording() {
   if (btnSaveAudio) btnSaveAudio.classList.add("hidden");
   document.getElementById("btn-segment-toggle")?.classList.add("hidden");
   wasapiRecordingReady = false;
-  wasapiDecodePromise  = null;
   try {
     let recordingStatusMsg = "Spelar in...";
     // v1.4.6: På Windows använder vi ALLTID Rust-backend för tempfiler/krasch-skydd.
@@ -1675,23 +1661,6 @@ async function saveRecordedAudio() {
   let overlayWasShown = false;
   try {
     if (wasapiRecordingReady) {
-      // recorded_samples i Rust har bara loopback — mic går via JS MediaRecorder i WASAPI-läget.
-      // Vänta in JS-mixen som har båda spår, konvertera till WAV och spara via save_audio_data.
-      loadingText.innerText = "Förbereder ljud för sparande...";
-      loadingOverlay.classList.remove("hidden");
-      overlayWasShown = true;
-
-      let mixed = null;
-      if (wasapiDecodePromise) mixed = await wasapiDecodePromise;
-      if (mixed && mixed.length > 0) {
-        loadingText.innerText = "Kodar WAV-fil...";
-        const wavBlob  = float32ToPCM16WavBlob(mixed, 16000);
-        loadingText.innerText = "Sparar fil...";
-        const wavBytes = Array.from(new Uint8Array(await wavBlob.arrayBuffer()));
-        await invoke("save_audio_data", { audioData: wavBytes });
-        return;
-      }
-      // Fallback om mix saknas (t.ex. ingen mic-stream): använd Rusts loopback-only
       await invoke("save_audio_file");
       return;
     }
@@ -1746,35 +1715,7 @@ async function startPendingTranscription() {
     return;
   }
 
-  if (rec.type === "float32") {
-    disableControls();
-    loadingOverlay.classList.remove("hidden");
-    try {
-      // Om WASAPI-avkodning fortfarande pågår i bakgrunden — invänta den
-      if (!rec.data && wasapiDecodePromise) {
-        loadingText.innerText = "Förbereder ljud...";
-        rec.data = await wasapiDecodePromise;
-      }
-      if (!rec.data) {
-        outputText.value = "[Ingen ljuddata tillgänglig]";
-        return;
-      }
-      transcriptSegments = [];
-      showRawView();
-      const text = await transcribeFloat32(rec.data);
-      if (!text || !text.trim()) outputText.value = "[Ingen text hittades i inspelningen]";
-      if (transcriptSegments.length > 0) {
-        renderSegmentEditor();
-        showSegmentView();
-        const btnSeg = document.getElementById("btn-segment-toggle");
-        if (btnSeg) { btnSeg.classList.remove("hidden"); btnSeg.style.display = "inline-flex"; }
-        setupPlayer(currentPlaybackBlob);
-      }
-    } finally {
-      loadingOverlay.classList.add("hidden");
-      enableControls();
-    }
-  } else if (rec.type === "segments") {
+  if (rec.type === "segments") {
     if (rec.segments.length > 1) {
       await processSegments(rec.segments);
     } else {
@@ -1900,57 +1841,6 @@ async function stopSession() {
     enableControls();
   } else {
     enableControls();
-  }
-}
-
-// Avkodar och mixar WASAPI mic + loopback till en Float32Array.
-// Körs asynkront i bakgrunden direkt efter stop — resultatet behövs
-// bara om användaren väljer att transkribera.
-async function decodeWasapiMix(micBlobs, loopbackBytes) {
-  const hasMic = micBlobs && micBlobs.length > 0;
-  const hasLoopback = loopbackBytes && loopbackBytes.length > 44;
-
-  let micFloat32 = null;
-  let loopbackFloat32 = null;
-
-  if (hasMic) {
-    try {
-      const micBlob = new Blob(micBlobs, { type: micBlobs[0].type });
-      micFloat32 = await decodeAudioToFloat32(micBlob);
-      console.log(`[wasapi] Mic decoded: ${micFloat32.length} samples (${(micFloat32.length/16000).toFixed(1)}s)`);
-    } catch (e) {
-      console.warn('[wasapi] Mic decode failed:', e);
-    }
-  }
-
-  if (hasLoopback) {
-    try {
-      const loopbackBlob = new Blob([new Uint8Array(loopbackBytes)], { type: 'audio/wav' });
-      loopbackFloat32 = await decodeAudioToFloat32(loopbackBlob);
-      console.log(`[wasapi] Loopback decoded: ${loopbackFloat32.length} samples (${(loopbackFloat32.length/16000).toFixed(1)}s)`);
-    } catch (e) {
-      console.warn('[wasapi] Loopback decode failed:', e);
-    }
-  }
-
-  if (micFloat32 && loopbackFloat32) {
-    const len = Math.max(micFloat32.length, loopbackFloat32.length);
-    const mixed = new Float32Array(len);
-    for (let i = 0; i < len; i++) {
-      const a = i < micFloat32.length ? micFloat32[i] : 0;
-      const b = i < loopbackFloat32.length ? loopbackFloat32[i] : 0;
-      mixed[i] = Math.max(-1, Math.min(1, a + b));
-    }
-    console.log(`[wasapi] Mixed: ${mixed.length} samples (${(mixed.length/16000).toFixed(1)}s)`);
-    return mixed;
-  } else if (micFloat32) {
-    console.log('[wasapi] Mic only (loopback unavailable)');
-    return micFloat32;
-  } else if (loopbackFloat32) {
-    console.log('[wasapi] Loopback only (mic unavailable)');
-    return loopbackFloat32;
-  } else {
-    throw new Error('Kunde inte avkoda varken mikrofon eller systemljud.');
   }
 }
 
@@ -2216,95 +2106,6 @@ async function decodeAudioToFloat32(blob) {
   ctx.close();
   // .slice() copies the data out of the AudioBuffer before it can be GC'd
   return audioBuffer.getChannelData(0).slice();
-}
-
-// Mix two audio blobs and return the combined Float32Array (no WAV encode step).
-// Avoids the float32 WAV format compatibility issue with WebView2's decodeAudioData.
-async function mixAudioToFloat32(blobA, blobB) {
-  const [dataA, dataB] = await Promise.all([
-    decodeAudioToFloat32(blobA),
-    decodeAudioToFloat32(blobB)
-  ]);
-  const len = Math.max(dataA.length, dataB.length);
-  const mixed = new Float32Array(len);
-  for (let i = 0; i < len; i++) {
-    const a = i < dataA.length ? dataA[i] : 0;
-    const b = i < dataB.length ? dataB[i] : 0;
-    mixed[i] = Math.max(-1, Math.min(1, a + b));
-  }
-  return mixed;
-}
-
-// Transcribe a pre-decoded Float32Array at 16kHz directly (no blob/decode roundtrip).
-async function transcribeFloat32(rawFloat32Data) {
-  const float32Data = normalizeAudio(rawFloat32Data);
-  const totalSamples = float32Data.length;
-  if (totalSamples === 0) { console.warn('[wasapi] transcribeFloat32: empty audio'); return ''; }
-
-  const totalDuration = (totalSamples / 16000).toFixed(0);
-  const numChunks = Math.ceil(totalSamples / CHUNK_SAMPLES);
-  totalChunks = numChunks;
-  currentChunkIdx = 0;
-
-  const durationMin = Math.floor(totalDuration / 60);
-  const durationSec = totalDuration % 60;
-  const durationStr = durationMin > 0 ? `${durationMin}m ${durationSec}s` : `${durationSec}s`;
-  loadingText.innerText = `Transkriberar ${durationStr} ljud...`;
-  if (progressContainer) progressContainer.classList.remove("hidden");
-  if (progressBar) progressBar.style.width = "0%";
-
-  const startTime = performance.now();
-  let fullResult = "";
-  let contextPrefix = null;
-  const initialPrompt = personalVocabulary.length > 0 ? personalVocabulary.join(", ") : null;
-
-  // Store WAV blob for playback
-  currentPlaybackBlob = float32ToPCM16WavBlob(float32Data, 16000);
-
-  for (let chunkIdx = 0; chunkIdx < numChunks; chunkIdx++) {
-    currentChunkIdx = chunkIdx;
-    const chunkOffsetMs = chunkIdx * CHUNK_DURATION_SECONDS * 1000;
-    const start = chunkIdx * CHUNK_SAMPLES;
-    const end = Math.min(start + CHUNK_SAMPLES, totalSamples);
-    const chunkFloat32 = float32Data.slice(start, end);
-    const chunkI16 = new Int16Array(chunkFloat32.length);
-    for (let i = 0; i < chunkFloat32.length; i++) chunkI16[i] = Math.round(chunkFloat32[i] * 32767);
-    const chunkBytesArray = Array.from(new Uint8Array(chunkI16.buffer));
-    console.log(`[wasapi] Chunk ${chunkIdx + 1}/${numChunks}: ${chunkFloat32.length} samples`);
-    try {
-      const chunkSegs = await invoke("transcribe_audio_segments", {
-        audioBytes: chunkBytesArray,
-        ...(await resolveEngine()),
-        language: transcriptionLanguage,
-        initialPrompt,
-        contextPrefix,
-        useGpu,
-        threadCount,
-        gpuDevice: gpuDeviceIndex
-      });
-      if (chunkSegs && chunkSegs.length > 0) {
-        const adjusted = chunkSegs.map(s => ({
-          startMs: s.start_ms + chunkOffsetMs,
-          endMs: s.end_ms + chunkOffsetMs,
-          text: s.text,
-          tokens: s.tokens || []
-        }));
-        transcriptSegments.push(...adjusted);
-        const chunkText = adjusted.map(s => s.text).join("\n");
-        if (fullResult) fullResult += "\n";
-        fullResult += chunkText;
-        contextPrefix = lastWords(chunkText, 30);
-        outputText.value = fullResult;
-        outputText.scrollTop = outputText.scrollHeight;
-      }
-    } catch (chunkErr) {
-      console.error(`[wasapi] Chunk ${chunkIdx + 1} failed:`, chunkErr);
-    }
-  }
-
-  const elapsed = ((performance.now() - startTime) / 1000).toFixed(1);
-  console.log(`[wasapi] Transcription done in ${elapsed}s, result length: ${fullResult.length}`);
-  return fullResult;
 }
 
 // Normalize Float32 audio to peak ±0.95 to avoid clipping and improve whisper accuracy
@@ -2979,59 +2780,6 @@ btnSave.addEventListener("click", async () => {
 window.addEventListener("DOMContentLoaded", initialize);
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Search & Replace
-// ─────────────────────────────────────────────────────────────────────────────
-const searchBar = document.getElementById("search-bar");
-const searchInput = document.getElementById("search-input");
-const replaceInput = document.getElementById("replace-input");
-const btnSearch = document.getElementById("btn-search");
-const btnReplaceOne = document.getElementById("btn-replace-one");
-const btnReplaceAll = document.getElementById("btn-replace-all");
-const btnCloseSearch = document.getElementById("btn-close-search");
-
-function openSearch() {
-  searchBar.classList.remove("hidden");
-  searchInput.focus();
-  searchInput.select();
-}
-function closeSearch() {
-  searchBar.classList.add("hidden");
-  searchInput.value = "";
-  replaceInput.value = "";
-}
-
-btnSearch && btnSearch.addEventListener("click", openSearch);
-btnCloseSearch && btnCloseSearch.addEventListener("click", closeSearch);
-
-document.addEventListener("keydown", (e) => {
-  if ((e.ctrlKey || e.metaKey) && e.key === "f") {
-    e.preventDefault();
-    openSearch();
-  }
-  if (e.key === "Escape" && !searchBar.classList.contains("hidden")) {
-    closeSearch();
-  }
-});
-
-btnReplaceOne && btnReplaceOne.addEventListener("click", () => {
-  const needle = searchInput.value;
-  if (!needle) return;
-  const text = outputText.value;
-  const idx = text.indexOf(needle);
-  if (idx === -1) { searchInput.style.color = "red"; setTimeout(() => searchInput.style.color = "", 800); return; }
-  outputText.value = text.slice(0, idx) + (replaceInput.value || "") + text.slice(idx + needle.length);
-});
-
-btnReplaceAll && btnReplaceAll.addEventListener("click", () => {
-  const needle = searchInput.value;
-  if (!needle || !outputText.value) return;
-  const count = (outputText.value.split(needle).length - 1);
-  outputText.value = outputText.value.split(needle).join(replaceInput.value || "");
-  searchInput.placeholder = `Ersatte ${count} förekomster`;
-  setTimeout(() => { searchInput.placeholder = "Sök..."; }, 2000);
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Save Audio File
 // Decodes lastRecordedSegments to Float32, encodes as 16-bit PCM WAV, saves via dialog.
 // Works for both regular mic mode (WebM blobs) and WASAPI mode (PCM WAV blob).
@@ -3039,13 +2787,6 @@ btnReplaceAll && btnReplaceAll.addEventListener("click", () => {
 const btnSaveAudio = document.getElementById("btn-save-audio");
 
 btnSaveAudio && btnSaveAudio.addEventListener("click", () => saveRecordedAudio());
-
-// Show Save Audio button after recording completes (hooked into existing flow)
-// We patch the existing transcription end so the button shows
-const _origShowRedo = () => {
-  btnRedo && btnRedo.classList.remove("hidden");
-  btnRedo && (btnRedo.style.display = "inline-flex");
-};
 
 // -------------------------------------------------------------
 // Segment view toggle
