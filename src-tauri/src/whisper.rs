@@ -171,7 +171,7 @@ impl Engine for WhisperEngine {
                     }
                 }
             }
-            out.push(TranscriptSegment { start_ms: t0, end_ms: t1, text: trimmed, tokens });
+            out.push(TranscriptSegment { start_ms: t0, end_ms: t1, text: trimmed, tokens, speaker_id: None });
         }
         Ok(out)
     }

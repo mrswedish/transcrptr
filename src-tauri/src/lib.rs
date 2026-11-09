@@ -9,6 +9,7 @@ use tauri_plugin_dialog::DialogExt;
 
 mod audio;
 mod decode;
+mod diarization;
 mod engine;
 mod logging;
 mod models;
@@ -112,6 +113,7 @@ async fn transcribe_file(
     use_gpu: Option<bool>,
     thread_count: Option<u32>,
     gpu_device: Option<i32>,
+    identify_speakers: Option<bool>,
 ) -> Result<Vec<TranscriptSegment>, String> {
     state.inner().cancel_flag.store(false, Ordering::Relaxed);
     let model_path = get_model_path(&app_handle, &size, quantized, &revision)?;
@@ -120,6 +122,16 @@ async fn transcribe_file(
     }
     let cancel = Arc::clone(&state.inner().cancel_flag);
     let app = app_handle.clone();
+    // Talaridentifiering är valfri och körs bara om modellerna redan är nedladdade.
+    let diar_dir = if identify_speakers.unwrap_or(false) {
+        let d = models::diarization_dir(&app_handle)?;
+        if !diarization::is_ready(&d) {
+            return Err("Talarmodellerna saknas. Ladda ned dem först.".to_string());
+        }
+        Some(d)
+    } else {
+        None
+    };
 
     // Allt i en enda spawn_blocking: avkodaren hålls öppen hela vägen, ett chunk
     // avkodas, transkriberas och kastas bort innan nästa börjar.
@@ -146,7 +158,31 @@ async fn transcribe_file(
                 let _ = app.emit("transcription_progress", TranscriptionProgressPayload { progress: p });
             };
             emit(0);
-            engine::run_file(engine.as_mut(), &mut dec, &cancel, &emit)
+            let mut segs = engine::run_file(engine.as_mut(), &mut dec, &cancel, &emit)?;
+            drop(engine);
+            drop(dec);
+
+            if let Some(dir) = diar_dir {
+                if !cancel.load(Ordering::Relaxed) && !segs.is_empty() {
+                    let phase = |phase: &'static str, speakers: i32, message: Option<String>| {
+                        let _ = app.emit("diarization_phase", DiarizationPhasePayload { phase, speakers, message });
+                    };
+                    phase("start", 0, None);
+                    let started = std::time::Instant::now();
+                    match diarization::identify(&dir, &file_path, &mut segs, &cancel) {
+                        Ok(n) => {
+                            log_line(&format!("diarization: {n} talare på {:.1} s", started.elapsed().as_secs_f64()));
+                            phase("done", n, None);
+                        }
+                        Err(e) => {
+                            // Transkriptet är intakt; bara talarna saknas.
+                            log_line(&format!("diarization: misslyckades efter {:.1} s: {e}", started.elapsed().as_secs_f64()));
+                            phase("failed", 0, Some(e));
+                        }
+                    }
+                }
+            }
+            Ok(segs)
         }))
         .unwrap_or_else(|p| Err(format!("Transkriberingen kraschade: {}.", engine::panic_msg(p))))
     })
@@ -270,6 +306,8 @@ pub fn run() {
             models::download_model,
             models::get_available_models,
             models::delete_model,
+            models::check_diarization_models,
+            models::download_diarization_models,
             session::get_disk_info,
             start_backend_recording,
             stop_backend_recording,

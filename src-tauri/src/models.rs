@@ -7,7 +7,7 @@ use futures_util::StreamExt;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::types::*;
-use crate::pianissimo;
+use crate::{diarization, pianissimo};
 
 pub(crate) fn get_model_info(size: &str, quantized: bool, revision: &str) -> (String, String) {
     // Turbo: ggerganov/whisper.cpp large-v3-turbo — always q8_0, no revision
@@ -47,19 +47,50 @@ pub(crate) fn get_model_path(app_handle: &AppHandle, size: &str, quantized: bool
 
 /// Ladda ned alla Pianissimo-filer (fast revision, SHA-256-kontroll) med samlad progress.
 pub(crate) async fn download_pianissimo(app_handle: &AppHandle, dir: PathBuf) -> Result<String, String> {
+    download_files(app_handle, dir, pianissimo::FILES, pianissimo::download_url).await
+}
+
+/// Ladda ned modellerna för talaridentifiering (en gång, ~33 MB).
+pub(crate) async fn download_diarization(app_handle: &AppHandle) -> Result<String, String> {
+    let dir = diarization_dir(app_handle)?;
+    download_files(app_handle, dir, diarization::FILES, diarization::download_url).await
+}
+
+pub(crate) fn diarization_dir(app_handle: &AppHandle) -> Result<PathBuf, String> {
+    let root = app_handle.path().app_data_dir().map_err(|e| e.to_string())?.join("models");
+    Ok(diarization::model_dir(&root))
+}
+
+#[tauri::command]
+pub(crate) fn check_diarization_models(app_handle: AppHandle) -> Result<bool, String> {
+    Ok(diarization::is_ready(&diarization_dir(&app_handle)?))
+}
+
+#[tauri::command]
+pub(crate) async fn download_diarization_models(app_handle: AppHandle) -> Result<String, String> {
+    download_diarization(&app_handle).await
+}
+
+/// Flerfilsnedladdning med fast revision, SHA-256-kontroll och samlad progress.
+async fn download_files(
+    app_handle: &AppHandle,
+    dir: PathBuf,
+    files: &[(&str, &str, u64)],
+    url_of: fn(&str) -> String,
+) -> Result<String, String> {
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let total_expected: u64 = pianissimo::FILES.iter().map(|f| f.2).sum();
+    let total_expected: u64 = files.iter().map(|f| f.2).sum();
     let mut done_before: u64 = 0;
     let mut last_emit_mb = 0u64;
 
-    for (name, sha, approx) in pianissimo::FILES {
+    for (name, sha, approx) in files {
         let target = dir.join(name);
         if target.exists() && pianissimo::file_hash(&target).map(|h| h == *sha).unwrap_or(false) {
             done_before += approx;
             continue;
         }
         let tmp = dir.join(format!("{name}.tmp"));
-        let res = reqwest::get(pianissimo::download_url(name)).await.map_err(|e| format!(
+        let res = reqwest::get(url_of(name)).await.map_err(|e| format!(
             "Ingen kontakt med servern där modellen finns (huggingface.co).\n\n\
              Kontrollera nätverket. På en arbetsdator kan brandvägg eller proxy blockera \
              nedladdningen — kontakta i så fall IT-support.\n\nTeknisk information: {e}"

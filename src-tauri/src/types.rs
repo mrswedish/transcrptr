@@ -28,6 +28,16 @@ pub(crate) struct TranscriptSegment {
     pub(crate) end_ms: i64,
     pub(crate) text: String,
     pub(crate) tokens: Vec<TokenInfo>,
+    /// 1, 2, … i den ordning talarna först hörs. None = talaridentifiering av eller osäker.
+    pub(crate) speaker_id: Option<i32>,
+}
+
+#[derive(Serialize, Clone)]
+pub(crate) struct DiarizationPhasePayload {
+    /// "start" | "done" | "failed"
+    pub(crate) phase: &'static str,
+    pub(crate) speakers: i32,
+    pub(crate) message: Option<String>,
 }
 
 #[derive(Serialize)]

@@ -536,6 +536,7 @@ impl crate::engine::Engine for Pianissimo {
                 end_ms: s.end_ms + offset_ms,
                 text: s.text,
                 tokens: Vec::new(), // ingen ordnivå-konfidens från Pianissimo
+                speaker_id: None,
             })
             .collect())
     }
