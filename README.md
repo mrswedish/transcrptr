@@ -71,6 +71,10 @@ OpenAIs officiella large-v3-turbo-modell från [ggerganov/whisper.cpp](https://h
 > [!NOTE]
 > KB-whisper slår Turbo på ren svenska. Välj Turbo för blandspråkigt innehåll eller internationella möten.
 
+### Identifiera talare (valfritt)
+
+Kryssrutan **Identifiera talare** märker vem som säger vad ("Talare 1", "Talare 2", …). Talarna kan döpas om genom att klicka på rubriken, och namnen följer med vid kopiering och sparande. Funktionen använder [speakrs](https://github.com/avencera/speakrs), en Rust-version av pyannotes community-1-pipeline, och körs på processorn utan grafikkort. Två små modeller (ca 33 MB) hämtas från huggingface.co första gången kryssrutan används; därefter fungerar den helt utan internet. Det tar några minuter extra per timme ljud.
+
 ### Pianissimo — "Snabbast" (svenska, standardval)
 
 [Pianissimo](https://klang.ai/pianissimo-sv/) från Klang AI är en svensk taligenkänningsmodell (finjusterad NVIDIA Parakeet TDT 0.6B) som körs via ONNX Runtime **på processorn** – inget grafikkort behövs. Standardmodell från och med v1.8.0 och avsedd att gå snabbare än Whisper på vanliga datorer. Nackdelar: bara svenska, ingen ordnivå-markering av osäkra ord, och något högre felfrekvens än KB-whisper large på Klangs egna tester. Är språket engelska eller automatiskt används i stället en nedladdad Whisper-modell.

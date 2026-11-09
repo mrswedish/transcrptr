@@ -18,6 +18,9 @@
   --c-primary-hover: 36 74 78;   /* #244A4E */
   --c-rec: 179 69 58;            /* #B3453A */
   --c-warn: 122 82 0;            /* #7A5200 */
+  /* Talare: sex dämpade nyanser som skiljs åt av ton, inte av mättnad. */
+  --spk-1: 47 93 98;  --spk-2: 138 90 43;  --spk-3: 77 95 140;
+  --spk-4: 122 78 109; --spk-5: 94 122 58; --spk-6: 107 111 118;
 }
 
 .dark {
@@ -31,6 +34,8 @@
   --c-primary-hover: 160 200 202;/* #A0C8CA */
   --c-rec: 226 125 114;          /* #E27D72 */
   --c-warn: 229 185 106;         /* #E5B96A */
+  --spk-1: 134 183 185; --spk-2: 210 160 106; --spk-3: 157 177 224;
+  --spk-4: 201 154 187; --spk-5: 169 199 126; --spk-6: 176 181 188;
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
@@ -91,6 +96,9 @@
   font-feature-settings: 'liga';
   -webkit-font-smoothing: antialiased;
 }
+
+/* @tailwindcss/forms färgar markerade kryssrutor med currentColor — sätt den till accenten. */
+input[type='checkbox'], input[type='radio'] { color: rgb(var(--c-primary)); }
 
 body {
   font-family: 'IBM Plex Sans', 'Segoe UI', system-ui, sans-serif;
@@ -266,3 +274,19 @@ body {
 .tok { padding: 0 1px; }
 .tok-low { border-bottom: 1.5px dotted rgb(var(--c-warn)); }
 .tok-very-low { border-bottom: 2px dotted rgb(var(--c-rec)); }
+
+/* Talarrubrik i segmentvyn */
+.segment-spk { padding: 14px 8px 2px 12px; }
+.spk-tag {
+  display: inline-flex; align-items: center;
+  height: 24px; padding: 0 8px 0 8px;
+  font-family: 'IBM Plex Sans', sans-serif; font-size: 13px; font-weight: 600;
+  color: rgb(var(--c-ink));
+  background: transparent;
+  border: 1px solid rgb(var(--c-line)); border-left: 3px solid rgb(var(--spk, var(--c-primary)));
+  border-radius: 2px; cursor: pointer;
+}
+.spk-tag:hover { background: rgb(var(--c-tone)); }
+.spk-1 { --spk: var(--spk-1); } .spk-2 { --spk: var(--spk-2); } .spk-3 { --spk: var(--spk-3); }
+.spk-4 { --spk: var(--spk-4); } .spk-5 { --spk: var(--spk-5); } .spk-6 { --spk: var(--spk-6); }
+.spk-input { height: 24px; width: 12rem; padding: 0 8px; font-size: 13px; font-weight: 600; }

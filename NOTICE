@@ -9,3 +9,15 @@ Pianissimo (svensk taligenkänningsmodell)
 Avskrift (referensimplementation för förbehandling/avkodning)
   Licens: MIT. https://github.com/Pluggentipsar/avskrift
   src-tauri/src/pianissimo.rs följer dess upplägg (log-mel-parametrar, TDT-loop, chunkning).
+
+Talaridentifiering (valfri funktion "Identifiera talare")
+  speakrs — Rust-implementation av pyannote community-1-pipelinen. Licens: Apache-2.0.
+    https://github.com/avencera/speakrs
+  Modeller (konverterade av speakrs, ej omtränade), hämtas från
+  https://huggingface.co/avencera/speakrs-models (fast revision, SHA-256-kontroll):
+    - pyannote/segmentation-3.0. Licens: MIT. Upphovsrätt: CNRS.
+    - pyannote/wespeaker-voxceleb-resnet34-LM (WeSpeaker). Licens: CC BY 4.0.
+    - pyannote/speaker-diarization-community-1 (PLDA-parametrar). Licens: CC BY 4.0.
+  OBS: WeSpeaker-modellen är tränad på VoxCeleb, vars datavillkor bör bedömas av
+  den som driftsätter appen i en organisation.
+

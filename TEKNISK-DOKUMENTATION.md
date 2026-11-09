@@ -18,7 +18,7 @@ där en sökväg härleds ur Tauris API i stället för att vara hårdkodad ange
 | Fråga | Svar |
 |---|---|
 | Skickas ljud eller text till någon server? | **Nej.** All transkribering sker lokalt. |
-| Utgående nätverkstrafik? | **Endast `huggingface.co`**, och bara vid nedladdning av språkmodell. |
+| Utgående nätverkstrafik? | **Endast `huggingface.co`**, och bara vid nedladdning av språkmodell eller (valfritt) talarmodeller. |
 | Telemetri, analys, felrapportering? | **Nej, inget.** Verifierat genom sökning i hela kodbasen. |
 | Automatisk uppdatering? | **Nej.** Appen kontrollerar aldrig efter nya versioner. |
 | Kräver administratörsrättigheter? | **Nej** för appen. Installationsformatet avgör (se §6). |
@@ -96,6 +96,7 @@ Endast en enda domän kontaktas, och bara vid nedladdning av språkmodell:
 https://huggingface.co/KBLab/kb-whisper-{medium|large}/resolve/{main|strict}/...
 https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q8_0.bin
 https://huggingface.co/KlangAI/pianissimo-sv-onnx/resolve/<fast revision>/{encoder-model.int8.onnx,decoder_joint-model.int8.onnx,vocab.txt,config.json}
+https://huggingface.co/avencera/speakrs-models/resolve/<fast revision>/{segmentation-3.0.safetensors,wespeaker-multimask-tail.safetensors,plda_*.npy,…}  (valfri talaridentifiering, ca 33 MB)
 ```
 
 Pianissimo-filerna hämtas med fast revision och verifieras med SHA-256 efter nedladdning. Modellen körs lokalt (ONNX Runtime, CPU) i katalogen `models\pianissimo-sv-int8\`; ingen ljuddata lämnar datorn.

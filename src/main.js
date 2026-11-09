@@ -137,6 +137,9 @@ let audioPlayer = null;
 let selectedMicId = "default";
 let wasapiEnabled = false;
 let useGpu = true;
+let identifySpeakers = false;
+let speakerNotice = null;   // sätts om talaridentifieringen misslyckas
+let speakerNames = {};   // { 1: "Anna" } — egna namn på talare, per transkribering
 let isCancelling = false;
 let pendingRecording = null; // { type:'wav-file', filePath } | { type:'segments', segments:[] }
 let wasapiRecordingReady = false; // Rust har recording.wav på disk — save_audio_file kan anropas direkt
@@ -170,6 +173,7 @@ function loadSettings() {
   const micId = localStorage.getItem("selectedMicId");
   const wasapi = localStorage.getItem("wasapiEnabled");
   const gpu = localStorage.getItem("useGpu");
+  identifySpeakers = localStorage.getItem("identifySpeakers") === "true";
   const vocab = localStorage.getItem("personalVocabulary");
   const confThresh = localStorage.getItem("confidenceThreshold");
 
@@ -187,6 +191,8 @@ function loadSettings() {
 
   const wasapiToggle = document.getElementById("wasapi-toggle");
   if (wasapiToggle) wasapiToggle.checked = wasapiEnabled;
+  const speakersToggle = document.getElementById("speakers-toggle");
+  if (speakersToggle) speakersToggle.checked = identifySpeakers;
 
   // Hjälptexten visas bara när mötesljud är av, och bara där växeln finns (Windows).
   const wasapiQuickEl = document.getElementById("wasapi-quick");
@@ -331,6 +337,17 @@ async function setupEventListeners() {
     const dlMb = (downloaded / 1048576).toFixed(1);
     const totMb = (total / 1048576).toFixed(1);
     loadingText.innerText = `Laddar ner modell... ${dlMb}MB / ${totMb}MB`;
+  });
+
+  await listen("diarization_phase", (event) => {
+    const { phase, message } = event.payload;
+    if (phase === "start") {
+      if (progressBar) progressBar.style.width = "99%";
+      loadingText.innerText = "Identifierar talare…";
+    } else if (phase === "failed") {
+      logToFile(`diarization: ${message}`);
+      speakerNotice = message || "Talarna kunde inte identifieras.";
+    }
   });
 
   await listen("transcription_progress", (event) => {
@@ -1633,8 +1650,69 @@ function formatMs(ms) {
 }
 
 // Rebuild plain text from the segment array (used by copy/save/search)
+function speakerLabel(id) {
+  return speakerNames[id] || `Talare ${id}`;
+}
+
+// Text för kopiera/spara. Med talare: en rubrik "Talare N:" varje gång talaren byter.
 function buildPlainText() {
-  return transcriptSegments.map(s => s.text).join("\n");
+  if (!transcriptSegments.some(s => s.speakerId)) {
+    return transcriptSegments.map(s => s.text).join("\n");
+  }
+  const out = [];
+  let prev = null;
+  for (const s of transcriptSegments) {
+    if (s.speakerId !== prev) {
+      if (out.length) out.push("");
+      if (s.speakerId) out.push(`${speakerLabel(s.speakerId)}:`);
+      prev = s.speakerId;
+    }
+    out.push(s.text);
+  }
+  return out.join("\n");
+}
+
+// Talarrubrik i segmentvyn. Klick byter namn (Enter sparar, Esc avbryter).
+function buildSpeakerHeader(id) {
+  const h = document.createElement("div");
+  h.className = "segment-spk";
+  h.dataset.speaker = String(id);
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = `spk-tag spk-${((id - 1) % 6) + 1}`;
+  btn.textContent = speakerLabel(id);
+  btn.title = "Klicka för att byta namn på talaren";
+  btn.addEventListener("click", () => {
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "field spk-input";
+    input.maxLength = 30;
+    input.value = speakerNames[id] || "";
+    input.placeholder = `Talare ${id}`;
+    input.setAttribute("aria-label", `Namn på talare ${id}`);
+    let done = false;
+    const finish = (save) => {
+      if (done) return; done = true;
+      if (save) {
+        const v = input.value.trim();
+        if (v) speakerNames[id] = v; else delete speakerNames[id];
+        document.querySelectorAll(`.segment-spk[data-speaker="${id}"] .spk-tag`)
+          .forEach(t => { t.textContent = speakerLabel(id); });
+        outputText.value = buildPlainText();
+      }
+      if (input.parentNode) input.replaceWith(btn);
+      btn.textContent = speakerLabel(id);
+    };
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") finish(true);
+      else if (e.key === "Escape") finish(false);
+    });
+    input.addEventListener("blur", () => finish(true));
+    btn.replaceWith(input);
+    input.focus();
+  });
+  h.appendChild(btn);
+  return h;
 }
 
 // Render the segment editor from transcriptSegments
@@ -1763,6 +1841,7 @@ function renderSegmentEditor() {
 
   const CHUNK = 50;
   let i = 0;
+  let lastSpeakerRendered = null;
   const total = transcriptSegments.length;
 
   function renderBatch(deadline) {
@@ -1770,7 +1849,12 @@ function renderSegmentEditor() {
     let added = 0;
     const hasDeadline = deadline && typeof deadline.timeRemaining === "function";
     while (i < total && added < CHUNK && (!hasDeadline || deadline.timeRemaining() > 4 || deadline.didTimeout)) {
-      const row = buildSegmentRow(transcriptSegments[i], i);
+      const seg = transcriptSegments[i];
+      if (seg.speakerId && seg.speakerId !== lastSpeakerRendered) {
+        frag.appendChild(buildSpeakerHeader(seg.speakerId));
+      }
+      lastSpeakerRendered = seg.speakerId || null;
+      const row = buildSegmentRow(seg, i);
       frag.appendChild(row);
       segmentRowsCache.push(row);
       i++;
@@ -1970,6 +2054,8 @@ async function processAudioFile(filePath) {
 
     outputText.value = "";
     transcriptSegments = [];
+    speakerNames = {};
+    speakerNotice = null;
     teardownPlayer();
     showRawView();
 
@@ -1990,7 +2076,8 @@ async function processAudioFile(filePath) {
       initialPrompt,
       useGpu,
       threadCount,
-      gpuDevice: gpuDeviceIndex
+      gpuDevice: gpuDeviceIndex,
+      identifySpeakers
     });
     logToFile(`processAudioFile: transcribe_file returnerade ${segs ? segs.length : 0} segment`);
 
@@ -1998,7 +2085,7 @@ async function processAudioFile(filePath) {
       // Rust serialiserar camelCase (startMs, endMs, text, tokens) — används som det är.
       transcriptSegments = segs.map(s => ({ ...s, tokens: s.tokens || [] }));
       logToFile(`processAudioFile: mapped till transcriptSegments (${transcriptSegments.length} st)`);
-      outputText.value = transcriptSegments.map(s => s.text).join("\n");
+      outputText.value = buildPlainText();
       logToFile(`processAudioFile: outputText.value satt (${outputText.value.length} tecken)`);
     }
 
@@ -2008,6 +2095,10 @@ async function processAudioFile(filePath) {
     const elSec   = elapsed % 60;
     loadingText.innerText = `Klar! (${elMin > 0 ? `${elMin}m ` : ""}${elSec}s)`;
     outputText.value += `\n\n[Transkribering klar]`;
+    if (speakerNotice) {
+      outputText.value += `\n[Talarna kunde inte identifieras: ${speakerNotice}]`;
+      speakerNotice = null;
+    }
     outputText.scrollTop = outputText.scrollHeight;
 
     if (transcriptSegments.length > 0) {
@@ -2188,6 +2279,44 @@ const gpuToggleEl = document.getElementById("gpu-toggle");
 gpuToggleEl && gpuToggleEl.addEventListener("change", () => {
   useGpu = gpuToggleEl.checked;
   localStorage.setItem("useGpu", useGpu.toString());
+});
+
+// Identifiera talare: kryssa i → hämta modellerna (en gång) om de saknas.
+const speakersToggleEl = document.getElementById("speakers-toggle");
+speakersToggleEl && speakersToggleEl.addEventListener("change", async () => {
+  if (!speakersToggleEl.checked) {
+    identifySpeakers = false;
+    localStorage.setItem("identifySpeakers", "false");
+    return;
+  }
+  try {
+    const ready = await invoke("check_diarization_models");
+    if (!ready) {
+      const ok = await showConfirm(
+        "För att skilja talare åt hämtas två små modeller (ca 33 MB) från huggingface.co. " +
+        "Det görs bara en gång; därefter fungerar det helt utan internet.",
+        "Hämta talarmodeller");
+      if (!ok) { speakersToggleEl.checked = false; return; }
+      loadingOverlay.classList.remove("hidden");
+      loadingText.innerText = "Hämtar talarmodeller…";
+      if (progressContainer) progressContainer.classList.remove("hidden");
+      if (progressBar) progressBar.style.width = "0%";
+      try {
+        await invoke("download_diarization_models");
+      } finally {
+        loadingOverlay.classList.add("hidden");
+        if (progressContainer) progressContainer.classList.add("hidden");
+      }
+    }
+    identifySpeakers = true;
+    localStorage.setItem("identifySpeakers", "true");
+  } catch (err) {
+    speakersToggleEl.checked = false;
+    identifySpeakers = false;
+    localStorage.setItem("identifySpeakers", "false");
+    const msg = typeof err === "string" ? err : err.message || String(err);
+    await message(`Kunde inte hämta talarmodellerna: ${msg}`, { title: "Fel", kind: "error" });
+  }
 });
 
 // Temaknapp i headern — växlar ljust/mörkt
