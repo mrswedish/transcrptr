@@ -1316,7 +1316,7 @@ async function startRecording() {
     let recordingStatusMsg = "Spelar in...";
     // v1.4.6: På Windows använder vi ALLTID Rust-backend för tempfiler/krasch-skydd.
     // wasapiEnabled styr bara om systemljud (loopback) ska fångas eller inte —
-    // mic-flödet via ScriptProcessorNode + append_mic_chunk är konstant.
+    // mic-flödet via AudioWorklet + append_mic_chunk är konstant.
     // Mac pausat: ingen inspelning där tills vidare (se guard överst).
     if (isWindows) {
       logToFile(`startRecording: Windows Rust-backend (with_loopback=${wasapiEnabled})`);
@@ -1351,21 +1351,41 @@ async function startRecording() {
 
       // v1.4.0: Streama mic-PCM direkt till Rust istället för att samla MediaRecorder-blobs.
       // Eliminerar JS-side mic-blob-buffring (~150 MB för 1.5h) och OOM-krasch vid stop.
-      // ScriptProcessorNode är deprecated men fungerar i alla moderna webviews; PCM via callback.
+      // AudioWorklet: samlar 128-sampleblock till 4096 i ljudtråden och skickar dem hit.
+      const workletSrc = `
+        class MicCapture extends AudioWorkletProcessor {
+          constructor() { super(); this.buf = new Float32Array(4096); this.n = 0; }
+          process(inputs) {
+            const ch = inputs[0] && inputs[0][0];
+            if (ch) {
+              for (let i = 0; i < ch.length; i++) {
+                this.buf[this.n++] = ch[i];
+                if (this.n === this.buf.length) {
+                  this.port.postMessage(this.buf.buffer, [this.buf.buffer]);
+                  this.buf = new Float32Array(4096);
+                  this.n = 0;
+                }
+              }
+            }
+            return true;
+          }
+        }
+        registerProcessor("mic-capture", MicCapture);`;
+      const workletUrl = URL.createObjectURL(new Blob([workletSrc], { type: "text/javascript" }));
       const wasapiSampleRate = audioContext.sampleRate;  // typiskt 48000 eller 44100
-      const wasapiProcessor = audioContext.createScriptProcessor(4096, 1, 1);
-      wasapiProcessor.onaudioprocess = (e) => {
+      await audioContext.audioWorklet.addModule(workletUrl);
+      URL.revokeObjectURL(workletUrl);
+      const wasapiProcessor = new AudioWorkletNode(audioContext, "mic-capture", {
+        numberOfInputs: 1, numberOfOutputs: 1, channelCount: 1,
+      });
+      wasapiProcessor.port.onmessage = (e) => {
         if (!isRecording || isPaused) return;
-        const inputBuffer = e.inputBuffer.getChannelData(0);
-        // Rå binär payload (f32 LE) — ingen JSON-array av tal. Kopiera: inputBuffer kan
-        // invalideras efter callbacken.
-        const bytes = new Uint8Array(inputBuffer.buffer.slice(
-          inputBuffer.byteOffset, inputBuffer.byteOffset + inputBuffer.byteLength));
-        invoke("append_mic_chunk", bytes, { headers: { "x-sample-rate": String(wasapiSampleRate) } })
+        // Rå binär payload (f32 LE) — ingen JSON-array av tal.
+        invoke("append_mic_chunk", new Uint8Array(e.data), { headers: { "x-sample-rate": String(wasapiSampleRate) } })
           .catch(err => console.warn("append_mic_chunk:", err));
       };
       wasapiSource.connect(wasapiProcessor);
-      // ScriptProcessor måste anslutas till destination för att onaudioprocess ska fyra
+      // Noden måste vara ansluten för att köras; den skriver inget till utgången (tystnad).
       wasapiProcessor.connect(audioContext.destination);
       // Spara så vi kan stänga ner vid stop
       window.__wasapiProcessor = wasapiProcessor;
@@ -1533,7 +1553,7 @@ async function stopSession() {
     document.getElementById("loopback-indicator")?.classList.add("hidden");
     disableControls();
 
-    // v1.4.0: Stoppa ScriptProcessorNode istället för MediaRecorder
+    // Stoppa mikrofonnoden
     if (window.__wasapiProcessor) {
       try { window.__wasapiProcessor.disconnect(); } catch (_) {}
       window.__wasapiProcessor = null;
@@ -2279,20 +2299,3 @@ vocabExport && vocabExport.addEventListener("click", async () => {
   }
 });
 
-// -------------------------------------------------------------
-// Window sizing: 50% screen width, full available height
-// -------------------------------------------------------------
-(async () => {
-  try {
-    const { getCurrentWindow, LogicalSize, LogicalPosition } = window.__TAURI__.window;
-    const win = getCurrentWindow();
-    const sw = window.screen.availWidth;
-    const sh = window.screen.availHeight;
-    const w = Math.round(sw * 0.5);
-    const x = Math.round((sw - w) / 2); // horizontally centered
-    await win.setSize(new LogicalSize(w, sh));
-    await win.setPosition(new LogicalPosition(x, 0));
-  } catch (e) {
-    console.warn("Window resize failed:", e);
-  }
-})();

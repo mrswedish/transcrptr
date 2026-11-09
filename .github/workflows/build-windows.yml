@@ -60,7 +60,7 @@ jobs:
         run: |
           $ver = "1.24.2"
           $sha = "8e3e9c826375352e29cb2614fe44f3d7a4b0ff7b8028ad7a456af9d949a7e8b0"
-          Invoke-WebRequest "https://github.com/microsoft/onnxruntime/releases/download/v$ver/onnxruntime-win-x64-$ver.zip" -OutFile ort.zip
+          Invoke-WebRequest "https://github.com/microsoft/onnxruntime/releases/download/v$ver/onnxruntime-win-x64-$ver.zip" -OutFile ort.zip -MaximumRetryCount 5 -RetryIntervalSec 10
           if ((Get-FileHash ort.zip -Algorithm SHA256).Hash.ToLower() -ne $sha) { throw "Fel kontrollsumma för onnxruntime" }
           Expand-Archive ort.zip -DestinationPath ort-extract
           New-Item -ItemType Directory -Force src-tauri/embedded | Out-Null
