@@ -36,7 +36,7 @@ const idleHint = document.getElementById("idle-hint");
 // Pill-knappens klasser för de två lägena (v1.5)
 // Alternativ A: profilrödan används i viloläge; under inspelning blir knappen mörk
 // så att den pulserande röda punkten ensam signalerar "spelar in".
-const REC_PILL_IDLE = "btn-record-pill shrink-0 flex items-center gap-2.5 pl-3 pr-5 h-12 bg-primary hover:bg-primary-hover active:scale-95 transition-all rounded-full shadow-md shadow-primary/25 text-white font-semibold text-sm";
+const REC_PILL_IDLE = "btn-record-pill shrink-0 flex items-center gap-2.5 pl-3 pr-5 h-12 bg-primary hover:bg-primary-hover active:scale-95 transition-all rounded-full shadow-md text-white font-semibold text-sm";
 const REC_PILL_ACTIVE = "btn-record-pill shrink-0 flex items-center gap-2.5 pl-3 pr-5 h-12 bg-slate-800 hover:bg-slate-900 dark:bg-slate-600 dark:hover:bg-slate-500 active:scale-95 transition-all rounded-full shadow-md text-white font-semibold text-sm";
 
 // Central UI-state-växling för inspelningskontrollerna
@@ -226,7 +226,7 @@ function loadSettings() {
     }
     if (!wasapiQuickEl) return;
     if (on) {
-      wasapiQuickEl.classList.add("bg-primary", "border-primary", "shadow-md", "shadow-primary/20");
+      wasapiQuickEl.classList.add("bg-primary", "border-primary", "shadow-md", "");
       wasapiQuickEl.classList.remove("bg-slate-50", "dark:bg-slate-900", "border-slate-200", "dark:border-slate-700");
       wasapiQuickEl.querySelectorAll(".wasapi-icon, .wasapi-label").forEach(s => {
         s.classList.add("text-white");
@@ -238,7 +238,7 @@ function loadSettings() {
         wasapiStatusEl.classList.remove("bg-slate-200", "dark:bg-slate-700", "text-slate-500", "dark:text-slate-400");
       }
     } else {
-      wasapiQuickEl.classList.remove("bg-primary", "border-primary", "shadow-md", "shadow-primary/20");
+      wasapiQuickEl.classList.remove("bg-primary", "border-primary", "shadow-md", "");
       wasapiQuickEl.classList.add("bg-slate-50", "dark:bg-slate-900", "border-slate-200", "dark:border-slate-700");
       wasapiQuickEl.querySelectorAll(".wasapi-icon, .wasapi-label").forEach(s => {
         s.classList.remove("text-white");
@@ -754,7 +754,7 @@ async function refreshModelList() {
       nameEl.innerText = m.name + (isActive ? " ✓" : "");
 
       const sizeEl = document.createElement("span");
-      sizeEl.className = "text-[10px] text-slate-500";
+      sizeEl.className = "text-xs text-slate-500";
       sizeEl.innerText = formatSize(m.size_bytes);
 
       info.appendChild(nameEl);
@@ -942,7 +942,7 @@ async function ensureModelReady() {
 function updateBadge(text, className) {
   if (!badge) return;
   badge.textContent = text;
-  badge.className = "text-[10px] font-bold uppercase tracking-wider";
+  badge.className = "text-xs font-bold uppercase tracking-wider";
   if (className === "ready") {
     badge.classList.add("text-slate-500", "dark:text-slate-400");
   } else if (className === "error") {

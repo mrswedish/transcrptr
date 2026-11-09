@@ -22,8 +22,8 @@
           <h1 class="text-2xl font-bold tracking-tight text-slate-800 dark:text-white">Transkribera</h1>
         </div>
         <div id="status-badge" class="flex items-center gap-1.5 px-2 py-0.5 w-fit">
-          <div class="w-1.5 h-1.5 rounded-full bg-primary animate-pulse"></div>
-          <span class="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Redo</span>
+          <div class="w-1.5 h-1.5 rounded-full bg-primary"></div>
+          <span class="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Redo</span>
         </div>
       </div>
       <div class="flex items-center gap-1">
@@ -31,19 +31,19 @@
           title="Öppna en ljud- eller videofil, eller en sessionsmapp med inspelat material"
           class="flex flex-col items-center justify-center gap-0.5 px-3 py-1.5 text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300 transition-colors">
           <span class="material-symbols-outlined">folder_open</span>
-          <span class="text-[10px] font-medium">Öppna fil/mapp</span>
+          <span class="text-xs font-medium">Öppna fil/mapp</span>
         </button>
         <button id="btn-theme"
           title="Växla mellan ljust och mörkt tema"
           class="flex flex-col items-center justify-center gap-0.5 px-3 py-1.5 text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300 transition-colors">
           <span id="theme-icon" class="material-symbols-outlined">dark_mode</span>
-          <span class="text-[10px] font-medium">Tema</span>
+          <span class="text-xs font-medium">Tema</span>
         </button>
         <button id="btn-settings"
           title="Inställningar"
           class="flex flex-col items-center justify-center gap-0.5 px-3 py-1.5 text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300 transition-colors">
           <span class="material-symbols-outlined">settings</span>
-          <span class="text-[10px] font-medium">Inställningar</span>
+          <span class="text-xs font-medium">Inställningar</span>
         </button>
       </div>
     </header>
@@ -62,7 +62,7 @@
           <input type="checkbox" id="wasapi-toggle" class="sr-only">
           <span class="wasapi-icon material-symbols-outlined text-slate-400 text-lg">volume_up</span>
           <span class="wasapi-label text-xs font-medium text-slate-500 dark:text-slate-400">Mötesljud</span>
-          <span id="wasapi-status" class="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-400">AV</span>
+          <span id="wasapi-status" class="text-xs font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-400">AV</span>
         </label>
       </div>
 
@@ -80,7 +80,7 @@
         <!-- Rec/Stop — bred pill med ikon + text -->
         <button id="btn-record"
           aria-label="Spela in"
-          class="btn-record-pill shrink-0 flex items-center gap-2.5 pl-3 pr-5 h-12 bg-primary hover:bg-primary-hover active:scale-95 transition-all rounded-full shadow-md shadow-primary/25 text-white font-semibold text-sm">
+          class="btn-record-pill shrink-0 flex items-center gap-2.5 pl-3 pr-5 h-12 bg-primary hover:bg-primary-hover active:scale-95 transition-all rounded-full shadow-md text-white font-semibold text-sm">
           <span class="btn-icon block w-4 h-4 rounded-full bg-white shrink-0"></span>
           <span class="btn-record-label">Spela in</span>
         </button>
@@ -112,7 +112,7 @@
           <span class="font-mono text-xs text-slate-400 dark:text-slate-500 tabular-nums" id="recording-timer">00:00:00</span>
           <span class="text-slate-300 dark:text-slate-600 text-xs select-none">·</span>
           <span class="font-mono text-xs text-slate-400 dark:text-slate-500" id="recording-size">0 MB</span>
-          <span id="segment-badge" class="hidden px-1.5 py-0.5 bg-primary/20 text-primary text-[10px] font-bold rounded-full ml-1"></span>
+          <span id="segment-badge" class="hidden px-1.5 py-0.5 bg-primary/20 text-primary text-xs font-bold rounded-full ml-1"></span>
           <span id="disk-forecast" class="hidden"></span>
         </div>
       </div>
@@ -205,7 +205,7 @@
 
         <!-- Post-recording choice overlay -->
         <div id="post-recording-actions"
-          class="hidden absolute inset-0 bg-white/90 dark:bg-slate-900/90 backdrop-blur-sm flex flex-col justify-center items-center z-10 rounded-3xl gap-5 px-8">
+          class="hidden absolute inset-0 bg-white/90 dark:bg-slate-900/90 flex flex-col justify-center items-center z-10 rounded-3xl gap-5 px-8">
           <span class="material-symbols-outlined text-4xl text-primary">mic_off</span>
           <p class="text-slate-700 dark:text-slate-200 font-semibold text-center">Inspelningen är klar</p>
           <button id="post-recording-path"
@@ -245,7 +245,7 @@
 
         <!-- Loading overlay -->
         <div id="loading-overlay"
-          class="hidden absolute inset-0 bg-white/80 dark:bg-slate-900/80 backdrop-blur-sm flex flex-col justify-center items-center z-10 rounded-3xl">
+          class="hidden absolute inset-0 bg-white/80 dark:bg-slate-900/80 flex flex-col justify-center items-center z-10 rounded-3xl">
           <div class="w-10 h-10 border-4 border-primary/30 border-t-primary rounded-full animate-spin mb-4"></div>
           <span id="loading-text" class="text-primary font-medium mb-4 text-center px-4">Transkriberar...</span>
           <div id="progress-container"
@@ -264,7 +264,7 @@
   <!-- Hidden audio element for playback (must be in DOM for WKWebView) -->
   <audio id="audio-player" preload="metadata" style="display:none"></audio>
 
-  <footer class="px-6 py-4 bg-white/50 dark:bg-slate-900/50 border-t border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-4 text-[11px] font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+  <footer class="px-6 py-4 bg-white/50 dark:bg-slate-900/50 border-t border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-4 text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">
     <div class="flex items-center gap-2">
       <span class="material-symbols-outlined text-base">mic</span>
       <span id="footer-mic">Standardmikrofon</span>
@@ -281,7 +281,7 @@
 
   <!-- Settings Modal -->
   <div id="settings-modal"
-    class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex justify-center items-center">
+    class="hidden fixed inset-0 bg-slate-900/60 z-[100] flex justify-center items-center">
     <div class="bg-white dark:bg-slate-800 w-11/12 max-w-lg rounded-3xl shadow-xl flex flex-col overflow-hidden max-h-[90dvh]">
       <div class="flex items-center justify-between p-6 border-b border-slate-200 dark:border-slate-700">
         <h2 class="text-xl font-bold text-slate-800 dark:text-white">Inställningar</h2>
@@ -373,7 +373,7 @@
           <div class="flex items-center gap-3 pt-2 border-t border-slate-200 dark:border-slate-700">
             <div class="flex-1">
               <p class="text-xs font-medium text-slate-600 dark:text-slate-400">GPU-index (avancerat)</p>
-              <p class="text-[11px] text-slate-400 dark:text-slate-500">Vid multi-GPU-system: testa 0, 1, 2 osv för att tvinga ett specifikt grafikkort. Lämna tomt för automatiskt val.</p>
+              <p class="text-xs text-slate-400 dark:text-slate-500">Vid multi-GPU-system: testa 0, 1, 2 osv för att tvinga ett specifikt grafikkort. Lämna tomt för automatiskt val.</p>
             </div>
             <input type="number" id="gpu-device-index" min="0" max="7" placeholder="auto"
               class="w-20 px-2 py-1 text-sm bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-700 dark:text-slate-300 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary">
@@ -499,7 +499,7 @@
       </div>
       <div class="p-6 bg-slate-50 dark:bg-slate-900/50 border-t border-slate-200 dark:border-slate-700">
         <button id="btn-save-settings"
-          class="w-full py-4 bg-primary hover:bg-primary-hover text-white font-semibold rounded-xl transition-colors shadow-lg shadow-primary/20">
+          class="w-full py-4 bg-primary hover:bg-primary-hover text-white font-semibold rounded-xl transition-colors shadow-lg">
           Spara inställningar
         </button>
         <p class="text-center text-xs text-slate-400 dark:text-slate-500 mt-3">
@@ -511,7 +511,7 @@
 
   <!-- Confirm Modal (new recording warning) -->
   <div id="confirm-modal"
-    class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[200] flex justify-center items-center">
+    class="hidden fixed inset-0 bg-slate-900/60 z-[200] flex justify-center items-center">
     <div class="bg-white dark:bg-slate-800 w-11/12 max-w-sm rounded-3xl shadow-xl overflow-hidden">
       <div class="p-6">
         <div class="flex items-center gap-3 mb-3">
@@ -537,7 +537,7 @@
 
   <!-- Import-val: fil eller sessionsmapp -->
   <div id="import-choice-modal"
-    class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[200] flex justify-center items-center">
+    class="hidden fixed inset-0 bg-slate-900/60 z-[200] flex justify-center items-center">
     <div class="bg-white dark:bg-slate-800 w-11/12 max-w-sm rounded-3xl shadow-xl overflow-hidden">
       <div class="p-6">
         <h3 class="text-lg font-bold text-slate-800 dark:text-white mb-1">Importera</h3>
@@ -572,7 +572,7 @@
 
   <!-- Stereo Mix Guide Modal -->
   <div id="stereo-mix-modal"
-    class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[300] flex justify-center items-center">
+    class="hidden fixed inset-0 bg-slate-900/60 z-[300] flex justify-center items-center">
     <div class="bg-white dark:bg-slate-800 w-11/12 max-w-lg rounded-3xl shadow-2xl flex flex-col overflow-hidden max-h-[90dvh]">
       <div class="flex items-center justify-between p-6 border-b border-slate-200 dark:border-slate-700">
         <div class="flex items-center gap-3">
@@ -643,7 +643,7 @@
         </div>
       </div>
       <div class="p-6 bg-slate-50 dark:bg-slate-900/50 border-t border-slate-200 dark:border-slate-700">
-        <button id="btn-close-stereo-mix-ok" class="w-full py-4 bg-primary hover:bg-primary-hover text-white font-bold rounded-xl transition-all shadow-lg shadow-primary/20">
+        <button id="btn-close-stereo-mix-ok" class="w-full py-4 bg-primary hover:bg-primary-hover text-white font-bold rounded-xl transition-all shadow-lg">
           Jag förstår
         </button>
       </div>
