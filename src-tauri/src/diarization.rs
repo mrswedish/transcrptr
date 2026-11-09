@@ -8,7 +8,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use speakrs::{ExecutionMode, OwnedDiarizationPipeline};
+use speakrs::inference::{EmbeddingModel, SegmentationModel};
+use speakrs::pipeline::DiarizationPipeline;
+use speakrs::{ExecutionMode, ModelBundle};
 
 use crate::decode::StreamingDecoder;
 use crate::engine::{panic_msg, CHUNK_SAMPLES};
@@ -51,13 +53,64 @@ pub(crate) struct Turn {
     pub(crate) speaker: i32,
 }
 
+/// Segmenteringssteg i sekunder. speakrs standard på CPU är 1 s (varje sekund bearbetas i
+/// ~10 överlappande fönster); 2 s halverar arbetet och gav samma talare och >99 % samma
+/// tidsgränser på referensfiler med känt antal talare. (3 s tappade en talare på en kort fil.)
+const STEP_SECONDS: f32 = 2.0;
+/// Så mycket av ljudet körs först för att mäta hastigheten (och ge en tidsuppskattning).
+const CALIBRATION_SECONDS: usize = 30;
+
+/// Förlopp: (procent 0–97, uppskattad tid kvar i sekunder).
+pub(crate) type OnProgress<'a> = &'a (dyn Fn(i32, i64) + Sync);
+
 /// Kör diariseringen på hela ljudet (16 kHz mono f32).
-pub(crate) fn diarize(model_dir: &Path, samples: &[f32]) -> Result<Vec<Turn>, String> {
-    let mut pipeline = OwnedDiarizationPipeline::from_dir(model_dir, ExecutionMode::Cpu)
-        .map_err(|e| format!("Kunde inte läsa talarmodellerna: {e}"))?;
-    let result = pipeline
-        .run(samples)
-        .map_err(|e| format!("Talaridentifieringen misslyckades: {e}"))?;
+///
+/// speakrs har ingen förloppsrapportering, så vi mäter hastigheten på de första sekunderna
+/// och räknar ut en uppskattning; en bakgrundstråd rapporterar sedan procent och tid kvar.
+pub(crate) fn diarize(model_dir: &Path, samples: &[f32], on_progress: OnProgress) -> Result<Vec<Turn>, String> {
+    let load = |e: &dyn std::fmt::Display| format!("Kunde inte läsa talarmodellerna: {e}");
+    let bundle = ModelBundle::from_dir(model_dir).map_err(|e| load(&e))?;
+    let mut seg = SegmentationModel::with_mode(bundle.segmentation_path(), STEP_SECONDS, ExecutionMode::Cpu)
+        .map_err(|e| load(&e))?;
+    let mut emb = EmbeddingModel::with_mode(bundle.embedding_path(), ExecutionMode::Cpu)
+        .map_err(|e| load(&e))?;
+    let mut pipeline = DiarizationPipeline::new(&mut seg, &mut emb, model_dir).map_err(|e| load(&e))?;
+
+    let total_secs = samples.len() as f64 / 16_000.0;
+
+    // Hastighetsmätning på början av ljudet (hoppas över för korta filer).
+    let mut estimate_secs = total_secs / 4.0; // försiktig gissning om mätningen inte görs
+    if samples.len() > 16_000 * CALIBRATION_SECONDS * 3 {
+        let slice = &samples[..16_000 * CALIBRATION_SECONDS];
+        let t = std::time::Instant::now();
+        if pipeline.run(slice).is_ok() {
+            let dt = t.elapsed().as_secs_f64().max(0.05);
+            estimate_secs = total_secs / (CALIBRATION_SECONDS as f64 / dt) * 1.35;
+            crate::log_line(&format!(
+                "diarization: mätning {CALIBRATION_SECONDS} s på {dt:.1} s ({:.1}× realtid) → uppskattad tid {:.0} s för {:.0} s ljud",
+                CALIBRATION_SECONDS as f64 / dt, estimate_secs, total_secs
+            ));
+        }
+    }
+
+    let done = AtomicBool::new(false);
+    let started = std::time::Instant::now();
+    let result = std::thread::scope(|scope| {
+        scope.spawn(|| {
+            while !done.load(Ordering::Relaxed) {
+                let el = started.elapsed().as_secs_f64();
+                let pct = ((el / estimate_secs) * 100.0).clamp(0.0, 97.0) as i32;
+                let eta = (estimate_secs - el).max(0.0) as i64;
+                on_progress(pct, eta);
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
+        });
+        let r = pipeline
+            .run(samples)
+            .map_err(|e| format!("Talaridentifieringen misslyckades: {e}"));
+        done.store(true, Ordering::Relaxed);
+        r
+    })?;
     Ok(turns_from_segments(
         result.exclusive_segments.iter().map(|s| (s.start, s.end, s.speaker.as_str())),
     ))
@@ -158,13 +211,14 @@ pub(crate) fn identify(
     audio_path: &str,
     segments: &mut [TranscriptSegment],
     cancel: &AtomicBool,
+    on_progress: OnProgress,
 ) -> Result<i32, String> {
     let samples = load_samples(audio_path, cancel)?;
     // speakrs kräver en viss minsta längd; för korta filer finns ingenting att skilja åt.
     if samples.len() < 16_000 * 5 {
         return Err("Ljudet är för kort för att skilja talare åt.".into());
     }
-    let turns = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| diarize(model_dir, &samples)))
+    let turns = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| diarize(model_dir, &samples, on_progress)))
         .unwrap_or_else(|p| Err(format!("Talaridentifieringen kraschade: {}.", panic_msg(p))))?;
     drop(samples);
     Ok(assign_speakers(segments, &turns))
@@ -247,7 +301,7 @@ mod tests {
         let mut segs: Vec<TranscriptSegment> = (0..secs / 5).map(|i| seg(i * 5000, i * 5000 + 4500)).collect();
         let cancel = AtomicBool::new(false);
         let t = std::time::Instant::now();
-        let n = identify(Path::new(&dir), &wav, &mut segs, &cancel).unwrap();
+        let n = identify(Path::new(&dir), &wav, &mut segs, &cancel, &|p, eta| println!("  {p} % (ca {eta} s kvar)")).unwrap();
         println!("{secs} s ljud, {n} talare, {:.1} s", t.elapsed().as_secs_f64());
         let line: String = segs.iter().map(|s| s.speaker_id.map(|x| x.to_string()).unwrap_or("?".into())).collect();
         println!("talare per 5 s: {line}");

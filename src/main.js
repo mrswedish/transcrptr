@@ -340,10 +340,17 @@ async function setupEventListeners() {
   });
 
   await listen("diarization_phase", (event) => {
-    const { phase, message } = event.payload;
+    const { phase, message, percent, etaSeconds } = event.payload;
     if (phase === "start") {
-      if (progressBar) progressBar.style.width = "99%";
+      if (progressContainer) progressContainer.classList.remove("hidden");
+      if (progressBar) progressBar.style.width = "0%";
       loadingText.innerText = "Identifierar talare…";
+    } else if (phase === "progress") {
+      if (progressBar) progressBar.style.width = `${percent}%`;
+      const left = etaSeconds >= 90 ? `ca ${Math.round(etaSeconds / 60)} min kvar`
+                 : etaSeconds > 5 ? `ca ${etaSeconds} s kvar`
+                 : "snart klart";
+      loadingText.innerText = `Identifierar talare… ${percent}% (uppskattning: ${left})`;
     } else if (phase === "failed") {
       logToFile(`diarization: ${message}`);
       speakerNotice = message || "Talarna kunde inte identifieras.";

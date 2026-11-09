@@ -34,9 +34,13 @@ pub(crate) struct TranscriptSegment {
 
 #[derive(Serialize, Clone)]
 pub(crate) struct DiarizationPhasePayload {
-    /// "start" | "done" | "failed"
+    /// "start" | "progress" | "done" | "failed"
     pub(crate) phase: &'static str,
     pub(crate) speakers: i32,
+    /// Uppskattat förlopp 0–97 (bara vid "progress").
+    pub(crate) percent: i32,
+    /// Uppskattad tid kvar i sekunder (bara vid "progress").
+    pub(crate) eta_seconds: i64,
     pub(crate) message: Option<String>,
 }
 

@@ -165,11 +165,15 @@ async fn transcribe_file(
             if let Some(dir) = diar_dir {
                 if !cancel.load(Ordering::Relaxed) && !segs.is_empty() {
                     let phase = |phase: &'static str, speakers: i32, message: Option<String>| {
-                        let _ = app.emit("diarization_phase", DiarizationPhasePayload { phase, speakers, message });
+                        let _ = app.emit("diarization_phase", DiarizationPhasePayload { phase, speakers, percent: 0, eta_seconds: 0, message });
+                    };
+                    let on_progress = |percent: i32, eta_seconds: i64| {
+                        let _ = app.emit("diarization_phase", DiarizationPhasePayload { phase: "progress", speakers: 0, percent, eta_seconds, message: None });
                     };
                     phase("start", 0, None);
+                    log_line("diarization: startar");
                     let started = std::time::Instant::now();
-                    match diarization::identify(&dir, &file_path, &mut segs, &cancel) {
+                    match diarization::identify(&dir, &file_path, &mut segs, &cancel, &on_progress) {
                         Ok(n) => {
                             log_line(&format!("diarization: {n} talare på {:.1} s", started.elapsed().as_secs_f64()));
                             phase("done", n, None);
