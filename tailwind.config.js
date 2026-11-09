@@ -2,41 +2,36 @@ import forms from "@tailwindcss/forms";
 
 /** @type {import('tailwindcss').Config} */
 export default {
-  // Skanna BÅDE html och js — main.js bygger klasser dynamiskt (REC_PILL-konstanterna,
-  // syncWasapiVisual, modellistan, syncPickButtons m.fl.). Utan js här purgas de bort.
+  // Skanna BÅDE html och js — main.js bygger klasser dynamiskt (modellistan, kvalitetsvalen m.fl.).
   content: ["./src/**/*.{html,js}"],
   darkMode: "class",
   theme: {
     extend: {
       colors: {
-        // Region Jönköpings läns profilfärg, via CSS-variabler (definierade i
-        // input.css). Variabeln byter värde i mörkt läge — därför behöver de ~77
-        // primary-användningarna i markup INGEN egen dark:-variant.
+        // Semantiska färger via CSS-variabler (input.css). Variabeln byter värde i mörkt
+        // läge, så markupen behöver inga dark:-varianter.
+        paper: "rgb(var(--c-paper) / <alpha-value>)",     // skrivbordet bakom pappret
+        sheet: "rgb(var(--c-sheet) / <alpha-value>)",     // pappret: paneler, fält, text
+        ink: "rgb(var(--c-ink) / <alpha-value>)",         // brödtext
+        muted: "rgb(var(--c-muted) / <alpha-value>)",     // hjälptext, ≥ 4,5:1
+        line: "rgb(var(--c-line) / <alpha-value>)",       // 1 px linjer i stället för skuggor
+        tone: "rgb(var(--c-tone) / <alpha-value>)",       // markerad rad, hover
         primary: "rgb(var(--c-primary) / <alpha-value>)",
         "primary-hover": "rgb(var(--c-primary-hover) / <alpha-value>)",
-        "background-light": "#F6F5F2",
-        "background-dark": "#14181B",
-        surface: "#FFFFFF",
-        "surface-dark": "#1C2125",
-        // Varm neutral skala (ersätter Tailwinds blåaktiga slate): linje 200, dämpad text 500.
-        slate: {
-          50: "#F6F5F2", 100: "#EFEDE8", 200: "#DEDCD6", 300: "#C4C1BA",
-          400: "#6B7177", 500: "#5A6067", 600: "#484E54", 700: "#343A40",
-          800: "#2C3338", 900: "#1C2125", 950: "#14181B",
-        },
-        // Semantisk inspelningsfärg — skild från accenten så "spelar in" förblir
-        // entydigt även när profilrödan används i knappar och länkar.
+        // Röd används bara för inspelning/stopp och för destruktiva val.
         rec: "rgb(var(--c-rec) / <alpha-value>)",
+        warn: "rgb(var(--c-warn) / <alpha-value>)",
       },
       fontFamily: {
-        display: ["Inter", "sans-serif"],
+        sans: ['"IBM Plex Sans"', '"Segoe UI"', "system-ui", "sans-serif"],
+        serif: ['"IBM Plex Serif"', "Georgia", "serif"],
+        mono: ['"IBM Plex Mono"', "Consolas", "monospace"],
       },
-      // 8 px på kontroller, 12 px på paneler — inget annat.
+      // Rektangulärt: 3 px på kontroller, 4 px på paneler. Inget runt.
       borderRadius: {
-        DEFAULT: "0.5rem", md: "0.5rem", lg: "0.5rem",
-        xl: "0.75rem", "2xl": "0.75rem", "3xl": "0.75rem",
+        DEFAULT: "3px", sm: "2px", md: "3px", lg: "4px",
+        xl: "4px", "2xl": "4px", "3xl": "4px",
       },
-      // Skillnad med linje och ton, inte skugga eller oskärpa.
       boxShadow: {
         DEFAULT: "none", sm: "none", md: "none", lg: "none", xl: "none", "2xl": "none",
       },

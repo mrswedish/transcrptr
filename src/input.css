@@ -3,168 +3,266 @@
 @tailwind utilities;
 
 /* ─────────────────────────────────────────────────────────────────────────
-   Profilfärger — Region Jönköpings län.
-   Som RGB-kanaler så Tailwinds <alpha-value> fungerar (bg-primary/20 osv).
-   Mörkt läge byter variabelvärde, vilket gör att alla ~77 primary-
-   användningar i markup följer med automatiskt utan egna dark:-varianter.
+   Färger — som RGB-kanaler så Tailwinds <alpha-value> fungerar.
+   Ett skrivbord (paper), ett papper (sheet), tunna linjer (line). Accenten är
+   skiffer-grönblå; röd används bara för inspelning, stopp och radering.
    ───────────────────────────────────────────────────────────────────────── */
 :root {
-  --c-primary: 47 93 98;         /* #2F5D62 — skiffer-grönblå accent */
+  --c-paper: 244 245 246;        /* #F4F5F6 */
+  --c-sheet: 255 255 255;        /* #FFFFFF */
+  --c-ink: 23 32 43;             /* #17202B */
+  --c-muted: 86 96 105;          /* #566069  — 6,5:1 mot papper */
+  --c-line: 213 218 222;         /* #D5DADE */
+  --c-tone: 230 238 238;         /* #E6EEEE  — markering, hover */
+  --c-primary: 47 93 98;         /* #2F5D62 */
   --c-primary-hover: 36 74 78;   /* #244A4E */
-  --c-rec: 179 69 58;            /* #B3453A — endast inspelning/stopp/varning */
+  --c-rec: 179 69 58;            /* #B3453A */
   --c-warn: 122 82 0;            /* #7A5200 */
 }
 
 .dark {
+  --c-paper: 17 21 24;           /* #111518 */
+  --c-sheet: 24 29 33;           /* #181D21 */
+  --c-ink: 230 233 235;          /* #E6E9EB */
+  --c-muted: 159 169 176;        /* #9FA9B0 */
+  --c-line: 42 50 56;            /* #2A3238 */
+  --c-tone: 34 50 52;            /* #223234 */
   --c-primary: 134 183 185;      /* #86B7B9 */
   --c-primary-hover: 160 200 202;/* #A0C8CA */
   --c-rec: 226 125 114;          /* #E27D72 */
   --c-warn: 229 185 106;         /* #E5B96A */
 }
 
-/* Mörkt läge: ljus accent kräver mörk text, och dämpad text behöver ≥4,5:1. */
-.dark .bg-primary.text-white { color: #14181B; }
-.dark .text-slate-400 { color: #A0A8AE; }
-.dark .text-slate-500 { color: #A0A8AE; }
-
 /* ─────────────────────────────────────────────────────────────────────────
-   Lokala typsnitt — appen ska fungera helt utan internet.
-   Tidigare hämtades dessa från Google Fonts vid varje appstart.
+   Typsnitt — IBM Plex, lokalt (appen fungerar helt utan internet).
+   Sans för gränssnittet, Serif för transkriptet, Mono för tidsstämplar.
    ───────────────────────────────────────────────────────────────────────── */
-
-/* Inter — variabelt (400-700). latin täcker svenska; latin-ext för övrigt. */
 @font-face {
-  font-family: 'Inter';
+  font-family: 'IBM Plex Sans';
   font-style: normal;
-  font-weight: 400 700;
+  font-weight: 100 700;
   font-display: swap;
-  src: url('./fonts/inter-latin-ext.woff2') format('woff2');
-  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF,
-    U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020,
-    U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+  src: url('./fonts/plex-sans.woff2') format('woff2');
 }
 @font-face {
-  font-family: 'Inter';
+  font-family: 'IBM Plex Serif';
   font-style: normal;
-  font-weight: 400 700;
+  font-weight: 400;
   font-display: swap;
-  src: url('./fonts/inter-latin.woff2') format('woff2');
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
-    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
-    U+2212, U+2215, U+FEFF, U+FFFD;
+  src: url('./fonts/plex-serif-400.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'IBM Plex Serif';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('./fonts/plex-serif-500.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./fonts/plex-mono-400.woff2') format('woff2');
 }
 
-/* Material Symbols Outlined — statisk instans (FILL 1, wght 400, GRAD 0, opsz 24),
-   samma utseende som CDN-versionen men 383 kB i stället för 3,8 MB. */
+/* Ikoner: Material Symbols Outlined, tunn (wght 300, ofylld), bara de glyfer som används. */
 @font-face {
   font-family: 'Material Symbols Outlined';
   font-style: normal;
-  font-weight: 400;
+  font-weight: 300;
   font-display: block;
-  src: url('./fonts/material-symbols.woff2') format('woff2');
+  src: url('./fonts/icons.woff2') format('woff2');
 }
-
 .material-symbols-outlined {
   font-family: 'Material Symbols Outlined';
   font-weight: normal;
   font-style: normal;
-  font-size: 24px;
+  font-size: 20px;
   line-height: 1;
   letter-spacing: normal;
   text-transform: none;
   display: inline-block;
+  flex-shrink: 0;
   white-space: nowrap;
   word-wrap: normal;
   direction: ltr;
   -webkit-font-feature-settings: 'liga';
+  font-feature-settings: 'liga';
   -webkit-font-smoothing: antialiased;
-  font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+}
+
+body {
+  font-family: 'IBM Plex Sans', 'Segoe UI', system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.hidden { display: none !important; }
+
+:focus-visible {
+  outline: 2px solid rgb(var(--c-primary));
+  outline-offset: 2px;
+}
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
-   Appens egna stilar (flyttade från <style type="text/tailwindcss">)
+   Komponenter
    ───────────────────────────────────────────────────────────────────────── */
+@layer components {
+  /* Knapp: rektangulär, 36 px hög. En primär per vy, resten tysta. */
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    height: 36px; padding: 0 14px;
+    font-size: 14px; font-weight: 500; line-height: 1; white-space: nowrap;
+    color: rgb(var(--c-ink));
+    background: rgb(var(--c-sheet));
+    border: 1px solid rgb(var(--c-line));
+    border-radius: 3px;
+    cursor: pointer;
+    transition: background-color 120ms, border-color 120ms, color 120ms;
+  }
+  .btn:hover { background: rgb(var(--c-tone)); border-color: rgb(var(--c-primary) / 0.5); }
+  .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+  .btn-sm { height: 32px; padding: 0 10px; font-size: 13px; }
+  .btn-icon-only { width: 32px; padding: 0; }
+  .btn-primary {
+    color: #fff; background: rgb(var(--c-primary)); border-color: rgb(var(--c-primary));
+  }
+  .btn-primary:hover { background: rgb(var(--c-primary-hover)); border-color: rgb(var(--c-primary-hover)); }
+  .dark .btn-primary { color: #111518; }
+  .btn-ghost { background: transparent; border-color: transparent; color: rgb(var(--c-muted)); }
+  .btn-ghost:hover { background: rgb(var(--c-tone)); border-color: transparent; color: rgb(var(--c-ink)); }
+  .btn-danger { color: rgb(var(--c-rec)); }
+  .btn-danger:hover { border-color: rgb(var(--c-rec) / 0.6); background: rgb(var(--c-rec) / 0.08); }
 
-body {
-  font-family: 'Inter', sans-serif;
-  -webkit-tap-highlight-color: transparent;
-  /* Ingen min-height här: body har h-screen + flex-col i markup och ska fylla
-     fönstret exakt. Tidigare min-height:884px sköt ut footern utanför fönstret
-     när det öppnades 700px högt. */
+  /* Inspelningsknappen: ljus accent i vila, röd när den stoppar. */
+  .btn-record { min-width: 148px; height: 40px; }
+  .btn-record .rec-glyph { display: block; width: 10px; height: 10px; border-radius: 50%; background: currentColor; }
+  .btn-record.is-recording { background: rgb(var(--c-rec)); border-color: rgb(var(--c-rec)); color: #fff; }
+  .btn-record.is-recording:hover { background: rgb(var(--c-rec)); filter: brightness(0.92); }
+  .dark .btn-record.is-recording { color: #111518; }
+  .btn-record.is-recording .rec-glyph { border-radius: 1px; }
+
+  /* Fält */
+  .field {
+    height: 36px; padding: 0 10px; width: 100%;
+    font-size: 14px; color: rgb(var(--c-ink));
+    background: rgb(var(--c-sheet));
+    border: 1px solid rgb(var(--c-line));
+    border-radius: 3px;
+  }
+  textarea.field { height: auto; padding: 8px 10px; }
+  .field:focus { outline: 2px solid rgb(var(--c-primary)); outline-offset: -1px; border-color: rgb(var(--c-primary)); box-shadow: none; }
+  .field::placeholder { color: rgb(var(--c-muted) / 0.75); }
+
+  /* Rubriker och hjälptext i inställningar */
+  .section { padding: 20px 24px; border-bottom: 1px solid rgb(var(--c-line)); }
+  .section-title { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+  .hint { font-size: 13px; line-height: 1.5; color: rgb(var(--c-muted)); }
+
+  /* Val (kvalitetsval): en markerad rad, inga ikoner */
+  .choice {
+    display: block; width: 100%; text-align: left; padding: 10px 12px;
+    border: 1px solid rgb(var(--c-line)); border-left-width: 3px;
+    border-radius: 3px; background: rgb(var(--c-sheet));
+    color: rgb(var(--c-muted));
+    cursor: pointer; transition: background-color 120ms, border-color 120ms;
+  }
+  .choice:hover { background: rgb(var(--c-tone)); }
+  .choice.is-selected {
+    background: rgb(var(--c-tone));
+    border-color: rgb(var(--c-primary));
+    color: rgb(var(--c-ink));
+  }
+  .choice-title { display: block; font-size: 14px; font-weight: 600; color: rgb(var(--c-ink)); }
+  .choice-desc { display: block; font-size: 13px; }
+
+  /* Rad i modelllistan */
+  .model-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 8px 12px; border: 1px solid rgb(var(--c-line)); border-left-width: 3px;
+    border-radius: 3px; background: rgb(var(--c-sheet));
+  }
+  .model-row.is-active { border-color: rgb(var(--c-primary)); background: rgb(var(--c-tone)); }
+  .model-row.is-clickable { cursor: pointer; }
+  .model-row.is-clickable:hover { background: rgb(var(--c-tone)); }
+
+  /* Dialog */
+  .dialog {
+    background: rgb(var(--c-sheet)); border: 1px solid rgb(var(--c-line)); border-radius: 4px;
+  }
+  .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 14px 20px; border-top: 1px solid rgb(var(--c-line)); }
+
+  /* Fyrkantigt stegnummer (guiden är en sekvens) */
+  .step-no {
+    flex-shrink: 0; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center;
+    font-family: 'IBM Plex Mono', monospace; font-size: 13px;
+    border: 1px solid rgb(var(--c-line)); border-radius: 2px; color: rgb(var(--c-muted));
+  }
+
+  /* Nivåmätare under inspelning: en enda stapel */
+  .meter { position: relative; width: 96px; height: 6px; background: rgb(var(--c-line)); border-radius: 1px; overflow: hidden; }
+  .meter > .eq-col { height: 100%; width: 0; background: rgb(var(--c-primary)); transition: width 80ms linear, background-color 150ms; }
 }
 
-.hidden {
-  display: none !important;
+/* ─────────────────────────────────────────────────────────────────────────
+   Transkriptet — det enda stället med större typografi.
+   ───────────────────────────────────────────────────────────────────────── */
+.transcript-text {
+  font-family: 'IBM Plex Serif', Georgia, serif;
+  font-size: 17px;
+  line-height: 1.7;
+  color: rgb(var(--c-ink));
 }
 
-.eq-col {
-  transition: height 80ms ease-out, background-color 150ms ease;
-  min-height: 8%;
-  border-radius: 2px;
-}
-
-@keyframes lb-glow {
-  0%, 100% { opacity: 0.35; transform: scale(1); }
-  50%      { opacity: 1;    transform: scale(1.25); }
-}
-.lb-dot {
-  animation: lb-glow 1.4s ease-in-out infinite;
-}
-
-/* Segment editor */
 #segment-editor { min-height: 100%; }
 
 .segment-row {
   display: flex;
-  gap: 10px;
+  gap: 16px;
   align-items: flex-start;
-  padding: 5px 4px;
-  border-radius: 8px;
-  transition: background-color 150ms;
-  border-bottom: 1px solid transparent;
+  padding: 4px 8px 4px 12px;
+  border-left: 2px solid transparent;
+  transition: background-color 120ms;
 }
-.segment-row:hover { background-color: rgba(148, 163, 184, 0.07); }
-/* Aktivt segment under uppspelning — profilfärg med låg opacitet. */
-.segment-row.segment-active { background-color: rgb(var(--c-primary) / 0.10); }
+.segment-row:hover { background-color: rgb(var(--c-tone) / 0.6); }
+/* Aktivt segment under uppspelning — stapel i marginalen. */
+.segment-row.segment-active { background-color: rgb(var(--c-tone)); border-left-color: rgb(var(--c-primary)); }
+.segment-row:focus-within { border-left-color: rgb(var(--c-primary) / 0.6); }
 
 .segment-ts {
   font-size: 13px;
   font-variant-numeric: tabular-nums;
-  font-family: monospace;
-  color: #6B7177;
+  font-family: 'IBM Plex Mono', Consolas, monospace;
+  color: rgb(var(--c-muted));
   cursor: pointer;
-  width: 52px;
+  width: 56px;
   flex-shrink: 0;
-  padding-top: 7px;
+  padding-top: 6px;
   user-select: none;
 }
-.segment-ts:hover { color: rgb(var(--c-primary)); }
-.dark .segment-ts { color: #A0A8AE; }
+.segment-ts:hover { color: rgb(var(--c-primary)); text-decoration: underline; }
 
-.segment-input {
-  flex: 1;
-  background: transparent;
-  border: none;
-  outline: none;
-  resize: none;
-  font-size: 14px;
-  line-height: 1.65;
-  color: inherit;
-  overflow: hidden;
-  min-height: 24px;
-  padding: 0;
-}
-
+.segment-input,
 .segment-view {
   flex: 1;
-  font-size: 14px;
-  line-height: 1.65;
-  cursor: text;
-  word-break: break-word;
-  min-height: 24px;
+  font-family: 'IBM Plex Serif', Georgia, serif;
+  font-size: 17px;
+  line-height: 1.7;
+  color: rgb(var(--c-ink));
+  min-height: 29px;
   padding: 0;
 }
+.segment-input {
+  background: transparent; border: none; outline: none; resize: none; overflow: hidden;
+}
+.segment-view { cursor: text; word-break: break-word; }
 
-.tok { border-radius: 3px; padding: 0 1px; }
+/* Osäkra ord: prickad understrykning, ingen bakgrundsfärg. */
+.tok { padding: 0 1px; }
 .tok-low { border-bottom: 1.5px dotted rgb(var(--c-warn)); }
 .tok-very-low { border-bottom: 2px dotted rgb(var(--c-rec)); }

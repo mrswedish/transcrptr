@@ -33,29 +33,20 @@ const recordingIndicator = document.getElementById("recording-status");
 const recordingStatusText = document.getElementById("recording-status-text");
 const idleHint = document.getElementById("idle-hint");
 
-// Pill-knappens klasser för de två lägena (v1.5)
-// Alternativ A: profilrödan används i viloläge; under inspelning blir knappen mörk
-// så att den pulserande röda punkten ensam signalerar "spelar in".
-const REC_PILL_IDLE = "btn-record-pill shrink-0 flex items-center gap-2.5 pl-3 pr-5 h-12 bg-primary hover:bg-primary-hover active:scale-95 transition-all rounded-full shadow-md text-white font-semibold text-sm";
-const REC_PILL_ACTIVE = "btn-record-pill shrink-0 flex items-center gap-2.5 pl-3 pr-5 h-12 bg-slate-800 hover:bg-slate-900 dark:bg-slate-600 dark:hover:bg-slate-500 active:scale-95 transition-all rounded-full shadow-md text-white font-semibold text-sm";
-
 // Central UI-state-växling för inspelningskontrollerna
 function setRecordingUI(state) {                // "idle" | "recording" | "paused"
-  const recIcon  = btnRecord && btnRecord.querySelector(".btn-icon");
   const recLabel = btnRecord && btnRecord.querySelector(".btn-record-label");
   if (state === "idle") {
-    if (recIcon) recIcon.className = "btn-icon block w-4 h-4 rounded-full bg-white shrink-0";
     if (recLabel) recLabel.textContent = "Spela in";
-    if (btnRecord) btnRecord.className = REC_PILL_IDLE;
+    if (btnRecord) btnRecord.classList.remove("is-recording");
     if (idleHint) idleHint.classList.remove("hidden");
     if (recordingIndicator) recordingIndicator.classList.add("hidden");
     if (btnPause) btnPause.classList.add("hidden");
     if (btnRecord) btnRecord.setAttribute("aria-label", "Spela in");
   } else {
-    // Mörk/neutral pill med stopp-fyrkant — tydligt att knappen nu STOPPAR
-    if (recIcon) recIcon.className = "btn-icon block w-3.5 h-3.5 rounded-sm bg-white shrink-0";
-    if (recLabel) recLabel.textContent = "Stoppa inspelning";
-    if (btnRecord) btnRecord.className = REC_PILL_ACTIVE;
+    // Röd knapp med stopp-fyrkant — tydligt att knappen nu STOPPAR
+    if (recLabel) recLabel.textContent = "Stoppa";
+    if (btnRecord) btnRecord.classList.add("is-recording");
     if (idleHint) idleHint.classList.add("hidden");
     if (recordingIndicator) recordingIndicator.classList.remove("hidden");
     if (btnPause) btnPause.classList.remove("hidden");
@@ -90,36 +81,21 @@ const selLanguage = document.getElementById("transcription-language");
 const selMic = document.getElementById("mic-select");
 const eqBar = document.getElementById("eq-bar");
 
-// Profilfärgen läses från CSS-variabeln så EQ-baren följer temat (ljust/mörkt)
-// utan hårdkodad hex. Variabeln är RGB-kanaler: "226 0 26".
-function primaryColor() {
-  const v = getComputedStyle(document.documentElement)
-    .getPropertyValue("--c-primary").trim();
-  return v ? `rgb(${v})` : "#e2001a";
-}
-
 // Animate the EQ-bar columns based on audio level (average 0–128)
 function animateEq(average) {
   if (!eqBar) return;
-  const cols = eqBar.querySelectorAll(".eq-col");
+  const col = eqBar.querySelector(".eq-col");
+  if (!col) return;
   const norm = Math.min(average / 70, 1); // 0–1
-  const shape = [0.3, 0.55, 0.85, 1.0, 0.85, 0.55, 0.3]; // bell curve base
-  // Nivåfärgning: hög nivå = varning (rött/amber), normal = profilfärg.
-  const color = norm > 0.85 ? "#ef4444" : norm > 0.6 ? "#f59e0b" : primaryColor();
-  cols.forEach((col, i) => {
-    const jitter = (Math.random() * 0.35 - 0.175) * norm;
-    const h = Math.max(0.08, Math.min(1, shape[i] * norm + jitter));
-    col.style.height = `${Math.round(h * 100)}%`;
-    col.style.backgroundColor = color;
-  });
+  // Hög nivå (risk för klippning) får varningsfärg, annars accent.
+  col.style.width = `${Math.round(norm * 100)}%`;
+  col.style.backgroundColor = norm > 0.85 ? "rgb(var(--c-rec))" : "";
 }
 
 function resetEq() {
   if (!eqBar) return;
-  eqBar.querySelectorAll(".eq-col").forEach((col, i) => {
-    col.style.height = ["25%","45%","75%","100%","75%","45%","25%"][i];
-    col.style.backgroundColor = primaryColor();
-  });
+  const col = eqBar.querySelector(".eq-col");
+  if (col) { col.style.width = "0"; col.style.backgroundColor = ""; }
 }
 
 // Confirm modal elements
@@ -212,43 +188,14 @@ function loadSettings() {
   const wasapiToggle = document.getElementById("wasapi-toggle");
   if (wasapiToggle) wasapiToggle.checked = wasapiEnabled;
 
-  // Visuell sync av systemljud-växeln (huvud-UI) — bg/text/badge skiftar mellan AV och PÅ
-  const wasapiQuickEl  = document.getElementById("wasapi-quick");
-  const wasapiStatusEl = document.getElementById("wasapi-status");
+  // Hjälptexten visas bara när mötesljud är av, och bara där växeln finns (Windows).
+  const wasapiQuickEl = document.getElementById("wasapi-quick");
   const syncWasapiVisual = () => {
     const on = !!(wasapiToggle && wasapiToggle.checked);
-    // Hjälptexten visas bara när mötesljud är AV, och bara där växeln finns
-    // (dvs. Windows — på Mac är wasapi-quick dold och hjälptexten irrelevant).
     const hint = document.getElementById("wasapi-hint");
     if (hint) {
       const togglePresent = wasapiQuickEl && !wasapiQuickEl.classList.contains("hidden");
       hint.classList.toggle("hidden", on || !togglePresent);
-    }
-    if (!wasapiQuickEl) return;
-    if (on) {
-      wasapiQuickEl.classList.add("bg-primary", "border-primary", "shadow-md", "");
-      wasapiQuickEl.classList.remove("bg-slate-50", "dark:bg-slate-900", "border-slate-200", "dark:border-slate-700");
-      wasapiQuickEl.querySelectorAll(".wasapi-icon, .wasapi-label").forEach(s => {
-        s.classList.add("text-white");
-        s.classList.remove("text-slate-400", "text-slate-500", "dark:text-slate-400");
-      });
-      if (wasapiStatusEl) {
-        wasapiStatusEl.textContent = "PÅ";
-        wasapiStatusEl.classList.add("bg-white/20", "text-white");
-        wasapiStatusEl.classList.remove("bg-slate-200", "dark:bg-slate-700", "text-slate-500", "dark:text-slate-400");
-      }
-    } else {
-      wasapiQuickEl.classList.remove("bg-primary", "border-primary", "shadow-md", "");
-      wasapiQuickEl.classList.add("bg-slate-50", "dark:bg-slate-900", "border-slate-200", "dark:border-slate-700");
-      wasapiQuickEl.querySelectorAll(".wasapi-icon, .wasapi-label").forEach(s => {
-        s.classList.remove("text-white");
-        s.classList.add("text-slate-400");
-      });
-      if (wasapiStatusEl) {
-        wasapiStatusEl.textContent = "AV";
-        wasapiStatusEl.classList.remove("bg-white/20", "text-white");
-        wasapiStatusEl.classList.add("bg-slate-200", "dark:bg-slate-700", "text-slate-500", "dark:text-slate-400");
-      }
     }
   };
   if (wasapiToggle) {
@@ -718,7 +665,7 @@ async function refreshModelList() {
     modelList.innerHTML = "";
 
     if (models.length === 0) {
-      modelList.innerHTML = '<p class="text-xs text-slate-400 italic">Inga modeller nedladdade ännu.</p>';
+      modelList.innerHTML = '<p class="hint">Inga modeller nedladdade ännu.</p>';
       return;
     }
 
@@ -739,22 +686,18 @@ async function refreshModelList() {
       }
 
       const div = document.createElement("div");
-      div.className = `flex items-center justify-between p-2 rounded-lg border transition-colors ${
-        isActive
-          ? "bg-primary/5 border-primary/30 dark:border-primary/30"
-          : "bg-slate-50 dark:bg-slate-900/80 border-slate-200 dark:border-slate-700/50 cursor-pointer hover:border-primary/40 hover:bg-primary/5"
-      }`;
+      div.className = `model-row ${isActive ? "is-active" : "is-clickable"}`;
       if (!isActive) div.onclick = activateModel;
 
       const info = document.createElement("div");
       info.className = "flex flex-col min-w-0";
 
       const nameEl = document.createElement("span");
-      nameEl.className = `text-xs font-semibold ${isActive ? "text-primary" : "text-slate-700 dark:text-slate-300"}`;
-      nameEl.innerText = m.name + (isActive ? " ✓" : "");
+      nameEl.className = "text-sm font-semibold";
+      nameEl.innerText = m.name + (isActive ? " (används)" : "");
 
       const sizeEl = document.createElement("span");
-      sizeEl.className = "text-xs text-slate-500";
+      sizeEl.className = "text-xs text-muted";
       sizeEl.innerText = formatSize(m.size_bytes);
 
       info.appendChild(nameEl);
@@ -765,8 +708,9 @@ async function refreshModelList() {
       actions.className = "flex items-center gap-1 shrink-0";
 
       const delBtn = document.createElement("button");
-      delBtn.className = "p-1.5 text-slate-400 hover:text-red-500 transition-colors";
-      delBtn.innerHTML = '<span class="material-symbols-outlined text-sm">delete</span>';
+      delBtn.className = "btn btn-ghost btn-sm btn-icon-only btn-danger";
+      delBtn.setAttribute("aria-label", `Ta bort ${m.name}`);
+      delBtn.innerHTML = '<span class="material-symbols-outlined">delete</span>';
       delBtn.onclick = async (e) => {
         e.stopPropagation();
         if (confirm(`Ta bort ${m.name}?`)) {
@@ -942,14 +886,8 @@ async function ensureModelReady() {
 function updateBadge(text, className) {
   if (!badge) return;
   badge.textContent = text;
-  badge.className = "text-xs font-bold uppercase tracking-wider";
-  if (className === "ready") {
-    badge.classList.add("text-slate-500", "dark:text-slate-400");
-  } else if (className === "error") {
-    badge.classList.add("text-red-500");
-  } else {
-    badge.classList.add("text-primary");
-  }
+  // Varning/fel i klartext med färg; "redo" är dämpat.
+  badge.className = className === "error" ? "text-rec" : "";
 }
 
 function enableControls() {
@@ -1033,8 +971,8 @@ const QUALITY_PRESETS = {
 };
 let dlQuality = "fast";
 
-const QUALITY_ACTIVE = "quality-btn flex items-start gap-3 px-3 py-2.5 border rounded-xl transition-colors text-left bg-primary/5 border-primary/40 text-slate-800 dark:text-white";
-const QUALITY_IDLE   = "quality-btn flex items-start gap-3 px-3 py-2.5 border rounded-xl transition-colors text-left bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:border-primary/30";
+const QUALITY_ACTIVE = "quality-btn choice is-selected";
+const QUALITY_IDLE   = "quality-btn choice";
 
 function applyQuality(quality) {
   const preset = QUALITY_PRESETS[quality] ?? QUALITY_PRESETS.balanced;
@@ -1773,9 +1711,7 @@ function buildSegmentRow(seg, idx) {
     outputText.value = buildPlainText();
     autoGrow();
   });
-  ta.addEventListener("focus", () => row.classList.add("ring-1", "ring-primary/30", "rounded-lg"));
   ta.addEventListener("blur", () => {
-    row.classList.remove("ring-1", "ring-primary/30", "rounded-lg");
     const newView = buildConfidenceView(transcriptSegments[idx]);
     newView.title = "Klicka för att redigera";
     newView.addEventListener("click", () => { newView.classList.add("hidden"); ta.classList.remove("hidden"); requestAnimationFrame(autoGrow); ta.focus(); });
@@ -2114,7 +2050,7 @@ btnCopy.addEventListener("click", () => {
       // Behåll ikonspråket (Material Symbols) i stället för en emoji.
       const prevIcon = btnCopy.innerHTML;
       btnCopy.innerHTML =
-        `<span class="material-symbols-outlined text-lg">check</span><span>Kopierad!</span>`;
+        `<span class="material-symbols-outlined">check</span><span>Kopierad</span>`;
       setTimeout(() => { btnCopy.innerHTML = prevIcon; }, 2000);
     });
   }

@@ -6,646 +6,486 @@
   <meta content="width=device-width, initial-scale=1.0" name="viewport" />
   <title>Transkribera</title>
   <!-- Byggd Tailwind + lokala typsnitt — appen fungerar helt utan internet.
-       Tidigare hämtades CSS och typsnitt från CDN vid varje start.
        CSS byggs av `npm run build:css` (körs automatiskt via beforeBuildCommand). -->
   <link href="/app.css" rel="stylesheet" />
   <script type="module" src="/main.js" defer></script>
 </head>
 
-<body class="bg-background-light dark:bg-background-dark text-slate-900 dark:text-slate-100 h-screen overflow-hidden flex flex-col">
-  <div class="h-6 w-full bg-transparent"></div>
-  <main class="flex-1 flex flex-col px-6 pb-4 overflow-hidden">
-    <header class="flex items-center justify-between mb-8">
-      <div class="flex flex-col gap-0.5">
-        <div class="flex items-center gap-2">
-          <span class="text-primary text-2xl material-symbols-outlined">auto_fix_high</span>
-          <h1 class="text-2xl font-bold tracking-tight text-slate-800 dark:text-white">Transkribera</h1>
-        </div>
-        <div id="status-badge" class="flex items-center gap-1.5 px-2 py-0.5 w-fit">
-          <div class="w-1.5 h-1.5 rounded-full bg-primary"></div>
-          <span class="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Redo</span>
-        </div>
-      </div>
-      <div class="flex items-center gap-1">
-        <button id="btn-file"
-          title="Öppna en ljud- eller videofil, eller en sessionsmapp med inspelat material"
-          class="flex flex-col items-center justify-center gap-0.5 px-3 py-1.5 text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300 transition-colors">
-          <span class="material-symbols-outlined">folder_open</span>
-          <span class="text-xs font-medium">Öppna fil/mapp</span>
-        </button>
-        <button id="btn-theme"
-          title="Växla mellan ljust och mörkt tema"
-          class="flex flex-col items-center justify-center gap-0.5 px-3 py-1.5 text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300 transition-colors">
-          <span id="theme-icon" class="material-symbols-outlined">dark_mode</span>
-          <span class="text-xs font-medium">Tema</span>
-        </button>
-        <button id="btn-settings"
-          title="Inställningar"
-          class="flex flex-col items-center justify-center gap-0.5 px-3 py-1.5 text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300 transition-colors">
-          <span class="material-symbols-outlined">settings</span>
-          <span class="text-xs font-medium">Inställningar</span>
-        </button>
-      </div>
-    </header>
-    <div class="bg-white dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/50 rounded-3xl px-4 py-3 mb-4 shadow-sm">
+<body class="bg-paper text-ink h-screen overflow-hidden flex flex-col">
 
-      <!-- Mic + systemljud — alltid synliga för snabb växling före inspelning -->
-      <div class="flex items-center gap-3 mb-3">
-        <span class="material-symbols-outlined text-slate-400 dark:text-slate-500 text-lg shrink-0">mic</span>
-        <select id="mic-select"
-          class="flex-1 min-w-0 px-3 py-2 text-sm bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-700 dark:text-slate-300 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary truncate">
-          <option value="default">Systemets standardmikrofon</option>
-        </select>
+  <!-- Rad 1: namn och verktyg -->
+  <header class="flex items-center justify-between h-12 px-5 bg-sheet border-b border-line shrink-0">
+    <h1 class="text-[15px] font-semibold tracking-tight">Transkribera</h1>
+    <div class="flex items-center gap-1">
+      <button id="btn-file" class="btn btn-ghost btn-sm"
+        title="Öppna en ljud- eller videofil, eller en sessionsmapp med inspelat material">
+        <span class="material-symbols-outlined">folder_open</span>
+        <span>Öppna</span>
+      </button>
+      <button id="btn-theme" class="btn btn-ghost btn-sm btn-icon-only" aria-label="Byt tema"
+        title="Växla mellan ljust och mörkt tema">
+        <span id="theme-icon" class="material-symbols-outlined">dark_mode</span>
+      </button>
+      <button id="btn-settings" class="btn btn-ghost btn-sm" title="Inställningar">
+        <span class="material-symbols-outlined">settings</span>
+        <span>Inställningar</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Rad 2: källa — spela in eller öppna fil. Blir inspelningsrad under inspelning. -->
+  <div class="bg-sheet border-b border-line px-5 py-3 shrink-0">
+    <div class="flex items-center gap-4">
+      <button id="btn-record" aria-label="Spela in" class="btn btn-primary btn-record">
+        <span class="btn-icon rec-glyph"></span>
+        <span class="btn-record-label">Spela in</span>
+      </button>
+      <button id="btn-pause" aria-label="Pausa" class="hidden btn">
+        <span class="material-symbols-outlined">pause</span>
+        <span>Pausa</span>
+      </button>
+
+      <!-- Vila: mikrofon och mötesljud. Döljs under inspelning. -->
+      <div id="idle-hint" class="flex-1 min-w-0 flex flex-wrap items-center gap-x-4 gap-y-2">
+        <div class="flex items-center gap-2 min-w-0 flex-1 max-w-sm">
+          <label for="mic-select" class="text-sm text-muted shrink-0">Mikrofon</label>
+          <select id="mic-select" class="field truncate">
+            <option value="default">Systemets standardmikrofon</option>
+          </select>
+        </div>
         <label id="wasapi-quick"
           title="Slå på för möten i Teams, Zoom m.fl. — annars spelas bara din egen mikrofon in"
-          class="hidden items-center gap-2 cursor-pointer px-3 py-2 rounded-lg shrink-0 transition-colors bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700">
-          <input type="checkbox" id="wasapi-toggle" class="sr-only">
-          <span class="wasapi-icon material-symbols-outlined text-slate-400 text-lg">volume_up</span>
-          <span class="wasapi-label text-xs font-medium text-slate-500 dark:text-slate-400">Mötesljud</span>
-          <span id="wasapi-status" class="text-xs font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-400">AV</span>
+          class="hidden items-center gap-2 cursor-pointer text-sm select-none">
+          <input type="checkbox" id="wasapi-toggle" class="w-4 h-4 accent-primary cursor-pointer">
+          <span>Spela in mötesljud</span>
         </label>
+        <!-- Syns bara när mötesljud är av. Det enda valet som kan förstöra en hel
+             inspelning — glömmer man det får man bara sin egen röst. -->
+        <p id="wasapi-hint" class="hidden w-full text-sm text-muted">
+          Bara din mikrofon spelas in. Slå på mötesljud för att även få med vad andra säger i Teams eller Zoom.
+        </p>
       </div>
 
-      <!-- Syns bara när mötesljud är AV. Det enda valet som kan förstöra en hel
-           inspelning — glömmer man det får man bara sin egen röst, och märker det
-           först efter transkriberingen. -->
-      <p id="wasapi-hint" class="hidden text-xs text-slate-400 dark:text-slate-500 mb-3 -mt-1 flex items-start gap-1.5">
-        <span class="material-symbols-outlined text-sm shrink-0 mt-px">info</span>
-        <span>Bara din mikrofon spelas in. Slå på <strong class="font-semibold">Mötesljud</strong> för att även få med vad andra säger i Teams eller Zoom.</span>
-      </p>
-
-      <!-- Control row: rec/stop, pausa, idle-hint eller live status -->
-      <div class="flex items-center gap-3">
-
-        <!-- Rec/Stop — bred pill med ikon + text -->
-        <button id="btn-record"
-          aria-label="Spela in"
-          class="btn-record-pill shrink-0 flex items-center gap-2.5 pl-3 pr-5 h-12 bg-primary hover:bg-primary-hover active:scale-95 transition-all rounded-full shadow-md text-white font-semibold text-sm">
-          <span class="btn-icon block w-4 h-4 rounded-full bg-white shrink-0"></span>
-          <span class="btn-record-label">Spela in</span>
-        </button>
-
-        <!-- Pause — cirkulär, dolt vid idle -->
-        <button id="btn-pause"
-          aria-label="Pausa"
-          class="hidden shrink-0 w-12 h-12 flex items-center justify-center bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 active:scale-95 transition-all rounded-full">
-          <span class="material-symbols-outlined text-slate-600 dark:text-slate-200 text-xl">pause</span>
-        </button>
-
-        <!-- Idle-spacer — fyller raden när inspelning inte pågår (knappens text ersätter idle-hint) -->
-        <span id="idle-hint" class="flex-1"></span>
-
-        <!-- Inspelningsstatus — dolt vid idle, fyller raden vid inspelning -->
-        <div id="recording-status" class="hidden flex items-center gap-2.5 flex-1 min-w-0">
-          <div id="eq-bar" class="flex items-end gap-[3px] h-5 shrink-0">
-            <div class="eq-col w-[5px] bg-primary" style="height:25%"></div>
-            <div class="eq-col w-[5px] bg-primary" style="height:45%"></div>
-            <div class="eq-col w-[5px] bg-primary" style="height:75%"></div>
-            <div class="eq-col w-[5px] bg-primary" style="height:100%"></div>
-            <div class="eq-col w-[5px] bg-primary" style="height:75%"></div>
-            <div class="eq-col w-[5px] bg-primary" style="height:45%"></div>
-            <div class="eq-col w-[5px] bg-primary" style="height:25%"></div>
-          </div>
-          <span id="recording-status-text" class="text-sm font-medium text-slate-600 dark:text-slate-300">Spelar in</span>
-          <span id="loopback-indicator" class="hidden lb-dot w-2.5 h-2.5 rounded-full bg-rec shrink-0"></span>
-          <div class="flex-1"></div>
-          <span class="font-mono text-xs text-slate-400 dark:text-slate-500 tabular-nums" id="recording-timer">00:00:00</span>
-          <span class="text-slate-300 dark:text-slate-600 text-xs select-none">·</span>
-          <span class="font-mono text-xs text-slate-400 dark:text-slate-500" id="recording-size">0 MB</span>
-          <span id="segment-badge" class="hidden px-1.5 py-0.5 bg-primary/20 text-primary text-xs font-bold rounded-full ml-1"></span>
-          <span id="disk-forecast" class="hidden"></span>
-        </div>
+      <!-- Inspelning pågår -->
+      <div id="recording-status" class="hidden flex items-center gap-4 flex-1 min-w-0">
+        <div id="eq-bar" class="meter" role="presentation"><div class="eq-col"></div></div>
+        <span id="recording-status-text" class="text-sm font-medium">Spelar in</span>
+        <span id="loopback-indicator" class="hidden text-sm text-muted">Mötesljud med</span>
+        <div class="flex-1"></div>
+        <span class="font-mono text-sm tabular-nums" id="recording-timer">00:00:00</span>
+        <span class="font-mono text-sm text-muted tabular-nums" id="recording-size">0 MB</span>
+        <span id="segment-badge" class="hidden text-xs font-mono text-muted"></span>
+        <span id="disk-forecast" class="hidden"></span>
       </div>
-
-      <input type="file" id="file-input" accept="audio/*,video/mp4,video/webm,video/quicktime,video/x-matroska" class="hidden" />
     </div>
-    <section class="flex flex-col flex-1 overflow-hidden">
-      <div class="flex items-center justify-between mb-4 px-1">
-        <h2 class="text-lg font-bold text-slate-800 dark:text-slate-200">Transkribering</h2>
-        <div class="flex items-center gap-3">
-          <button id="btn-save"
-            class="flex items-center gap-1.5 text-sm font-medium text-slate-500 dark:text-slate-400 hover:text-primary transition-colors">
-            <span class="material-symbols-outlined text-lg">save</span>
-            <span>Spara text</span>
-          </button>
-          <button id="btn-save-audio"
-            title="Spara inspelad ljudfil"
-            class="hidden items-center gap-1.5 text-sm font-medium text-slate-500 dark:text-slate-400 hover:text-primary transition-colors">
-            <span class="material-symbols-outlined text-sm">audio_file</span>
-            <span>Spara ljud</span>
-          </button>
-          <button id="btn-search"
-            title="Sök och ersätt (Ctrl+F)"
-            class="flex items-center gap-1.5 text-sm font-medium text-slate-500 dark:text-slate-400 hover:text-primary transition-colors">
-            <span class="material-symbols-outlined text-lg">search</span>
-          </button>
-          <button id="btn-copy"
-            class="flex items-center gap-1.5 text-sm font-medium text-slate-500 dark:text-slate-400 hover:text-primary transition-colors">
-            <span class="material-symbols-outlined text-lg">content_copy</span>
-            <span>Kopiera</span>
-          </button>
-          <button id="btn-segment-toggle"
-            title="Växla segmentvy / råtext"
-            class="hidden items-center gap-1.5 text-sm font-medium text-slate-500 dark:text-slate-400 hover:text-primary transition-colors">
-            <span class="material-symbols-outlined text-lg">view_list</span>
-            <span id="segment-toggle-label">Segmentvy</span>
-          </button>
-          <button id="btn-redo"
-            title="Gör om transkriberingen med en annan modell"
-            class="hidden items-center gap-1.5 text-sm font-medium text-slate-500 dark:text-slate-400 hover:text-primary transition-colors">
-            <span class="material-symbols-outlined text-sm">refresh</span>
-            <span>Gör om</span>
-          </button>
-        </div>
-      </div>
-      <!-- Search/Replace Toolbar -->
-      <div id="search-bar" class="hidden mb-3 flex items-center gap-2 p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl">
-        <span class="material-symbols-outlined text-slate-400 text-base">search</span>
-        <input id="search-input" type="text" placeholder="Sök..."
-          class="flex-1 bg-transparent border-none focus:ring-0 text-sm text-slate-700 dark:text-slate-300 placeholder:text-slate-400" />
-        <span class="text-slate-300 dark:text-slate-600 text-xs">|</span>
-        <input id="replace-input" type="text" placeholder="Ersätt med..."
-          class="flex-1 bg-transparent border-none focus:ring-0 text-sm text-slate-700 dark:text-slate-300 placeholder:text-slate-400" />
-        <button id="btn-replace-one"
-          class="text-xs font-semibold text-primary hover:text-primary-hover px-2 py-1 border border-primary/40 rounded-lg transition-colors">Ersätt</button>
-        <button id="btn-replace-all"
-          class="text-xs font-semibold text-slate-500 hover:text-primary px-2 py-1 border border-slate-200 dark:border-slate-600 rounded-lg transition-colors">Alla</button>
-        <button id="btn-close-search" class="text-slate-400 hover:text-slate-600 ml-1">
-          <span class="material-symbols-outlined text-base">close</span>
+    <input type="file" id="file-input" accept="audio/*,video/mp4,video/webm,video/quicktime,video/x-matroska" class="hidden" />
+  </div>
+
+  <!-- Transkriptet -->
+  <main class="flex-1 flex flex-col px-5 pt-4 pb-4 overflow-hidden min-h-0">
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="text-[15px] font-semibold">Transkribering</h2>
+      <div class="flex items-center gap-1">
+        <button id="btn-search" class="btn btn-ghost btn-sm" title="Sök och ersätt (Ctrl+F)">
+          <span class="material-symbols-outlined">search</span>
+          <span>Sök</span>
+        </button>
+        <button id="btn-segment-toggle" class="hidden btn btn-ghost btn-sm" title="Växla segmentvy / råtext">
+          <span class="material-symbols-outlined">view_list</span>
+          <span id="segment-toggle-label">Segmentvy</span>
+        </button>
+        <button id="btn-redo" class="hidden btn btn-ghost btn-sm" title="Gör om transkriberingen med nuvarande inställningar">
+          <span class="material-symbols-outlined">refresh</span>
+          <span>Gör om</span>
+        </button>
+        <span class="w-px h-5 bg-line mx-1" aria-hidden="true"></span>
+        <button id="btn-copy" class="btn btn-sm">
+          <span class="material-symbols-outlined">content_copy</span>
+          <span>Kopiera</span>
+        </button>
+        <button id="btn-save" class="btn btn-sm">
+          <span class="material-symbols-outlined">save</span>
+          <span>Spara text</span>
+        </button>
+        <button id="btn-save-audio" class="hidden btn btn-sm" title="Spara inspelad ljudfil">
+          <span class="material-symbols-outlined">audio_file</span>
+          <span>Spara ljud</span>
         </button>
       </div>
-      <div
-        class="relative flex-1 bg-white dark:bg-slate-900/50 border border-slate-200 dark:border-slate-700 rounded-3xl shadow-sm overflow-hidden flex flex-col">
+    </div>
 
-        <!-- Audio Player — pinnad topsektion, alltid synlig -->
-        <div id="player-bar" class="hidden flex items-center gap-3 px-5 py-3 border-b border-slate-100 dark:border-slate-700/60 bg-slate-50/80 dark:bg-slate-800/40 shrink-0">
-          <button id="btn-play-pause" class="flex items-center justify-center w-9 h-9 rounded-full bg-primary hover:bg-primary-hover transition-colors shrink-0 shadow-sm">
-            <span id="play-icon" class="material-symbols-outlined text-white text-base">play_arrow</span>
-          </button>
-          <span id="player-time" class="text-xs font-mono text-slate-500 dark:text-slate-400 shrink-0 w-10">0:00</span>
-          <div id="player-track" class="flex-1 h-2 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden cursor-pointer">
-            <div id="player-fill" class="h-full bg-primary transition-none" style="width:0%"></div>
-          </div>
-          <span id="player-duration" class="text-xs font-mono text-slate-500 dark:text-slate-400 shrink-0 w-10 text-right">0:00</span>
+    <!-- Sök/ersätt -->
+    <div id="search-bar" class="hidden mb-3 flex items-center gap-2">
+      <input id="search-input" type="text" placeholder="Sök" aria-label="Sök" class="field flex-1" />
+      <input id="replace-input" type="text" placeholder="Ersätt med" aria-label="Ersätt med" class="field flex-1" />
+      <button id="btn-replace-one" class="btn btn-sm">Ersätt</button>
+      <button id="btn-replace-all" class="btn btn-sm">Ersätt alla</button>
+      <button id="btn-close-search" class="btn btn-ghost btn-sm btn-icon-only" aria-label="Stäng sök">
+        <span class="material-symbols-outlined">close</span>
+      </button>
+    </div>
+
+    <!-- Pappret -->
+    <div class="relative flex-1 min-h-0 bg-sheet border border-line rounded-lg overflow-hidden flex flex-col">
+
+      <!-- Spelare — fastsatt överst -->
+      <div id="player-bar" class="hidden flex items-center gap-3 px-5 py-2.5 border-b border-line shrink-0">
+        <button id="btn-play-pause" class="btn btn-icon-only" aria-label="Spela upp / pausa">
+          <span id="play-icon" class="material-symbols-outlined">play_arrow</span>
+        </button>
+        <span id="player-time" class="text-sm font-mono tabular-nums text-muted shrink-0 w-12">0:00</span>
+        <div id="player-track" class="relative flex-1 h-1.5 bg-line rounded-sm cursor-pointer before:absolute before:-inset-y-3 before:inset-x-0 before:content-['']">
+          <div id="player-fill" class="h-full bg-primary rounded-sm" style="width:0%"></div>
         </div>
+        <span id="player-duration" class="text-sm font-mono tabular-nums text-muted shrink-0 w-12 text-right">0:00</span>
+      </div>
 
-        <!-- Scrollbart textinnehåll -->
-        <div class="flex-1 overflow-y-auto p-6 custom-scrollbar flex flex-col">
+      <div class="flex-1 overflow-y-auto px-8 py-6 flex flex-col">
+        <div class="w-full max-w-[44rem] mx-auto flex-1 flex flex-col">
           <textarea id="output-text"
-            class="flex-1 w-full bg-transparent border-none focus:ring-0 p-0 text-slate-600 dark:text-slate-400 placeholder:text-slate-300 dark:placeholder:text-slate-600 resize-none text-base leading-relaxed"
+            class="transcript-text flex-1 w-full bg-transparent border-none focus:ring-0 p-0 placeholder:text-muted/70 resize-none"
             style="min-height: 200px;"
-            placeholder="Din transkriberade text kommer att visas här..."></textarea>
-          <!-- Segment editor (hidden by default, shown in segment view) -->
-          <div id="segment-editor" class="hidden flex-1 text-slate-600 dark:text-slate-400" style="min-height: 200px;"></div>
+            placeholder="Spela in ett möte eller öppna en ljudfil, så visas texten här."></textarea>
+          <!-- Segmentvy -->
+          <div id="segment-editor" class="hidden flex-1" style="min-height: 200px;"></div>
         </div>
+      </div>
 
-        <div
-          class="absolute bottom-0 left-0 right-0 h-12 bg-gradient-to-t from-white/50 dark:from-slate-900/50 to-transparent pointer-events-none">
-        </div>
-
-        <!-- Post-recording choice overlay -->
-        <div id="post-recording-actions"
-          class="hidden absolute inset-0 bg-white/90 dark:bg-slate-900/90 flex flex-col justify-center items-center z-10 rounded-3xl gap-5 px-8">
-          <span class="material-symbols-outlined text-4xl text-primary">mic_off</span>
-          <p class="text-slate-700 dark:text-slate-200 font-semibold text-center">Inspelningen är klar</p>
+      <!-- Efter inspelning -->
+      <div id="post-recording-actions" class="hidden absolute inset-0 bg-sheet z-10 flex items-center justify-center px-8">
+        <div class="w-full max-w-sm flex flex-col gap-4">
+          <h3 class="text-lg font-semibold">Inspelningen är sparad</h3>
           <button id="post-recording-path"
-            class="hidden max-w-full text-xs font-mono text-primary hover:underline truncate px-4 flex items-center gap-1.5"
+            class="hidden max-w-full text-sm font-mono text-primary hover:underline text-left flex items-center gap-2"
             title="Öppna inspelningsmappen i Utforskaren">
-            <span class="material-symbols-outlined text-sm shrink-0">folder_open</span>
+            <span class="material-symbols-outlined">folder_open</span>
             <span id="post-recording-path-text" class="truncate"></span>
           </button>
-          <!-- Valfritt namn — gör sessionsmappen igenkännbar. Tom = bara tidsstämpel.
-               Enter sparar direkt, så den som har bråttom slipper skriva. -->
-          <div id="session-name-row" class="hidden w-full max-w-xs">
-            <input type="text" id="session-name-input" maxlength="40"
-              placeholder="Namn på inspelningen (valfritt)"
-              class="w-full px-3 py-2.5 text-sm text-center bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-700 dark:text-slate-300 placeholder:text-slate-400 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary" />
+          <!-- Valfritt namn. Enter sparar direkt. -->
+          <div id="session-name-row" class="hidden">
+            <label for="session-name-input" class="block text-sm text-muted mb-1">Namn på inspelningen (valfritt)</label>
+            <input type="text" id="session-name-input" maxlength="40" class="field" />
           </div>
-
-          <div class="flex flex-col sm:flex-row gap-3 w-full max-w-xs">
-            <button id="btn-start-transcription"
-              class="flex-1 flex items-center justify-center gap-2 px-5 py-3 bg-primary hover:bg-primary-hover text-white font-semibold rounded-2xl transition-colors shadow-sm">
-              <span class="material-symbols-outlined text-base">transcribe</span>
+          <div class="flex flex-wrap gap-2 mt-1">
+            <button id="btn-start-transcription" class="btn btn-primary">
+              <span class="material-symbols-outlined">transcribe</span>
               <span>Transkribera nu</span>
             </button>
-            <button id="btn-save-for-later"
-              class="flex-1 flex items-center justify-center gap-2 px-5 py-3 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold rounded-2xl transition-colors">
-              <span class="material-symbols-outlined text-base">schedule</span>
+            <button id="btn-save-for-later" class="btn">
+              <span class="material-symbols-outlined">schedule</span>
               <span>Spara för senare</span>
             </button>
           </div>
-
-          <!-- Export till valfri plats — ljudet är redan sparat, så detta är sekundärt. -->
-          <button id="btn-save-audio-only"
-            class="flex items-center gap-1.5 text-xs font-medium text-slate-500 dark:text-slate-400 hover:text-primary transition-colors">
-            <span class="material-symbols-outlined text-sm">audio_file</span>
+          <button id="btn-save-audio-only" class="btn btn-ghost btn-sm self-start -ml-2">
+            <span class="material-symbols-outlined">audio_file</span>
             <span>Spara en kopia som ljudfil…</span>
           </button>
         </div>
+      </div>
 
-        <!-- Loading overlay -->
-        <div id="loading-overlay"
-          class="hidden absolute inset-0 bg-white/80 dark:bg-slate-900/80 flex flex-col justify-center items-center z-10 rounded-3xl">
-          <div class="w-10 h-10 border-4 border-primary/30 border-t-primary rounded-full animate-spin mb-4"></div>
-          <span id="loading-text" class="text-primary font-medium mb-4 text-center px-4">Transkriberar...</span>
-          <div id="progress-container"
-            class="hidden w-2/3 max-w-[200px] h-2 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden mb-4">
+      <!-- Transkriberar -->
+      <div id="loading-overlay" class="hidden absolute inset-0 bg-sheet/95 z-10 flex items-center justify-center px-8"
+        role="status" aria-live="polite">
+        <div class="w-full max-w-xs flex flex-col gap-3">
+          <span id="loading-text" class="font-medium">Transkriberar…</span>
+          <div id="progress-container" class="hidden w-full h-1.5 bg-line rounded-sm overflow-hidden">
             <div id="progress-bar" class="h-full bg-primary transition-all duration-300" style="width: 0%"></div>
           </div>
-          <button id="btn-cancel-transcription"
-            class="hidden mt-2 px-4 py-1.5 text-sm font-medium text-slate-600 dark:text-slate-300 border border-slate-300 dark:border-slate-600 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">
-            Avbryt
-          </button>
+          <button id="btn-cancel-transcription" class="hidden btn btn-sm self-start">Avbryt</button>
         </div>
-
       </div>
-    </section>
+
+    </div>
   </main>
-  <!-- Hidden audio element for playback (must be in DOM for WKWebView) -->
+
+  <!-- Hidden audio element for playback -->
   <audio id="audio-player" preload="metadata" style="display:none"></audio>
 
-  <footer class="px-6 py-4 bg-white/50 dark:bg-slate-900/50 border-t border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-4 text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">
-    <div class="flex items-center gap-2">
-      <span class="material-symbols-outlined text-base">mic</span>
-      <span id="footer-mic">Standardmikrofon</span>
-    </div>
-    <div class="flex items-center gap-2">
-      <span class="material-symbols-outlined text-base">deployed_code</span>
-      <span id="footer-model">Small (Quantized)</span>
-    </div>
-    <div class="flex items-center gap-2">
-      <span class="material-symbols-outlined text-base">hard_drive</span>
-      <span id="footer-disk">Ledigt: 0 GB</span>
-    </div>
+  <!-- Statusrad -->
+  <footer class="h-8 px-5 bg-sheet border-t border-line flex items-center gap-6 text-xs text-muted shrink-0">
+    <span id="status-badge">Redo</span>
+    <span class="flex-1"></span>
+    <span class="truncate">Mikrofon: <span id="footer-mic">Standardmikrofon</span></span>
+    <span class="truncate">Modell: <span id="footer-model">Small (Quantized)</span></span>
+    <span id="footer-disk">Ledigt: 0 GB</span>
   </footer>
 
-  <!-- Settings Modal -->
-  <div id="settings-modal"
-    class="hidden fixed inset-0 bg-slate-900/60 z-[100] flex justify-center items-center">
-    <div class="bg-white dark:bg-slate-800 w-11/12 max-w-lg rounded-3xl shadow-xl flex flex-col overflow-hidden max-h-[90dvh]">
-      <div class="flex items-center justify-between p-6 border-b border-slate-200 dark:border-slate-700">
-        <h2 class="text-xl font-bold text-slate-800 dark:text-white">Inställningar</h2>
-        <button id="btn-close-settings" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
+  <!-- Inställningar — panel från höger -->
+  <div id="settings-modal" class="hidden fixed inset-0 bg-black/40 z-[100] flex justify-end"
+    role="dialog" aria-modal="true" aria-labelledby="settings-title">
+    <div class="bg-sheet w-full max-w-[30rem] h-full border-l border-line flex flex-col">
+      <div class="flex items-center justify-between h-12 px-6 border-b border-line shrink-0">
+        <h2 id="settings-title" class="text-[15px] font-semibold">Inställningar</h2>
+        <button id="btn-close-settings" class="btn btn-ghost btn-sm btn-icon-only" aria-label="Stäng inställningar">
           <span class="material-symbols-outlined">close</span>
         </button>
       </div>
-      <div class="p-6 flex flex-col gap-5 overflow-y-auto custom-scrollbar">
-        <!-- Hjälp för mötesljud (Stereo Mix-guide, Windows) -->
-        <button id="btn-stereo-mix-help"
-          type="button"
-          class="hidden self-start flex items-center gap-1.5 text-xs text-primary hover:text-primary-hover transition-colors bg-primary/5 px-3 py-2 rounded-lg">
-          <span class="material-symbols-outlined text-base">campaign</span>
-          Hjälp med mötesljud
-        </button>
 
-        <!-- Språk — det vanligaste valet, därför överst -->
-        <div class="flex flex-col gap-2 p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl">
-          <label for="transcription-language" class="text-sm font-medium text-slate-700 dark:text-slate-300">Språk för transkribering</label>
-          <select id="transcription-language"
-            class="p-2.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-sm text-slate-700 dark:text-slate-300 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary">
+      <div class="flex-1 overflow-y-auto">
+
+        <!-- Språk -->
+        <section class="section">
+          <label for="transcription-language" class="section-title block">Språk</label>
+          <select id="transcription-language" class="field mt-2">
             <option value="sv" selected>Svenska</option>
             <option value="en">Engelska</option>
             <option value="auto">Automatisk identifiering</option>
           </select>
-          <p id="engine-language-note" class="hidden text-xs text-slate-500 dark:text-slate-400">
+          <p id="engine-language-note" class="hidden hint mt-2">
             Modellen "Snabbast" klarar bara svenska. För engelska eller automatiskt språk används i stället en Whisper-modell, om du har laddat ned någon.
           </p>
-        </div>
+        </section>
 
-        <!-- Mapp för inspelningar -->
-        <div class="flex flex-col gap-2 p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl">
-          <p class="text-sm font-medium text-slate-700 dark:text-slate-300">Mapp för inspelningar</p>
-          <p class="text-xs text-slate-400 dark:text-slate-500">Här sparas inspelningar direkt till disk under inspelningen — skyddar mot dataförlust vid krasch.</p>
-          <div class="flex gap-2 items-center mt-1">
-            <input type="text" id="recording-dir-path" readonly
-              class="flex-1 px-3 py-2 text-xs font-mono bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-700 dark:text-slate-300 truncate"
-              placeholder="Standardmapp..." />
-            <button id="btn-browse-recording-dir"
-              class="px-4 py-2 text-sm font-medium bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 rounded-lg transition-colors">
-              Bläddra
+        <!-- Modell -->
+        <section class="section">
+          <h3 class="section-title">Modell</h3>
+          <p class="hint mb-3">Nedladdade modeller. Klicka på en för att använda den.</p>
+          <div id="model-list" class="flex flex-col gap-2 max-h-48 overflow-y-auto">
+            <p class="hint">Laddar modeller…</p>
+          </div>
+
+          <h4 class="text-sm font-semibold mt-6 mb-2">Ladda ned en modell</h4>
+          <div class="flex flex-col gap-2" id="quality-picker">
+            <button type="button" data-quality="fast" class="quality-btn choice">
+              <span class="choice-title">Snabbast <span class="font-normal text-muted">· rekommenderas, endast svenska</span></span>
+              <span class="choice-desc">Pianissimo. Körs på processorn och är oftast snabbast på vanliga datorer. Något lägre noggrannhet än Bästa kvalitet.</span>
+            </button>
+            <button type="button" data-quality="balanced" class="quality-btn choice">
+              <span class="choice-title">Snabbare</span>
+              <span class="choice-desc">Bra kvalitet på svenska, klart på halva tiden mot Bästa.</span>
+            </button>
+            <button type="button" data-quality="best" class="quality-btn choice">
+              <span class="choice-title">Bästa kvalitet</span>
+              <span class="choice-desc">Mest exakt på svenska, men tar betydligt längre tid.</span>
+            </button>
+            <button type="button" data-quality="multi" class="quality-btn choice">
+              <span class="choice-title">Flera språk</span>
+              <span class="choice-desc">För engelska facktermer, blandspråkigt eller internationella möten.</span>
             </button>
           </div>
-          <p id="recordings-usage" class="text-xs text-slate-400 dark:text-slate-500 mt-1"></p>
-        </div>
 
-        <!-- Radera alla ljudinspelningar -->
-        <div class="flex flex-col gap-2 p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl">
-          <p class="text-sm font-medium text-slate-700 dark:text-slate-300">Radera alla ljudinspelningar</p>
-          <p class="text-xs text-slate-400 dark:text-slate-500">Tar bort alla sessionsmappar (inspelning-...) i inspelningsmappen permanent. Sparade textfiler och exporterade ljudfiler påverkas inte.</p>
-          <button id="btn-delete-recordings"
-            class="self-end px-4 py-2 text-sm font-medium bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/50 rounded-lg transition-colors">
-            Radera alla
-          </button>
-        </div>
-        <!-- ── Avancerat ──────────────────────────────────────────────────
-             Felsökningsverktyg. Dolda som standard: en vanlig användare ska
-             aldrig behöva röra dem, men de behövs vid supportärenden. -->
-        <details id="advanced-settings" class="group">
-          <summary class="flex items-center gap-2 cursor-pointer select-none text-sm font-medium text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors py-1">
-            <span class="material-symbols-outlined text-base transition-transform group-open:rotate-90">chevron_right</span>
-            Avancerat
-            <span class="text-xs font-normal text-slate-400 dark:text-slate-500">— prestanda och felsökning</span>
-          </summary>
-          <div class="flex flex-col gap-4 pt-4">
-        <!-- CPU-trådar för transkribering -->
-        <div class="flex flex-col gap-2 p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl">
-          <div class="flex items-center justify-between">
-            <p class="text-sm font-medium text-slate-700 dark:text-slate-300">CPU-trådar för transkribering</p>
-            <span id="thread-count-value" class="text-sm font-mono text-primary">4</span>
-          </div>
-          <p class="text-xs text-slate-400 dark:text-slate-500">Sänk till 4 vid krasch på Intel-laptops med P/E-cores eller många trådar. Höj för snabbare transkribering på enklare CPUer (max 16).</p>
-          <input type="range" id="thread-count-slider" min="1" max="16" value="4" step="1"
-            class="w-full accent-primary cursor-pointer">
-        </div>
-
-        <!-- GPU-acceleration (Vulkan, Windows only) -->
-        <div id="gpu-section" class="hidden flex flex-col gap-3 p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl">
-          <div class="flex items-center justify-between">
-            <div>
-              <p class="text-sm font-medium text-slate-700 dark:text-slate-300">GPU-acceleration</p>
-              <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5">Använder grafikkortet (Vulkan) för snabbare transkribering. Stäng av om du har flera GPUer eller en NPU (t.ex. Intel Arc + NVIDIA), äldre/integrerade grafikkort, eller om transkriberingen kraschar.</p>
-            </div>
-            <label class="relative inline-flex items-center cursor-pointer ml-4 flex-shrink-0">
-              <input type="checkbox" id="gpu-toggle" class="sr-only peer" checked>
-              <div class="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+          <!-- Ordagrann — gäller hur texten skrivs, inte kvaliteten. -->
+          <div id="verbatim-row" class="mt-4">
+            <label class="flex items-start gap-3 cursor-pointer select-none">
+              <input type="checkbox" id="model-verbatim" class="w-4 h-4 accent-primary cursor-pointer shrink-0 mt-1">
+              <span class="text-sm">Ordagrann utskrift
+                <span class="block hint">Tar med upprepningar och talspråk. Passar diktering och protokoll. Utan kryss städas texten lätt.</span>
+              </span>
             </label>
           </div>
-          <div class="flex items-center gap-3 pt-2 border-t border-slate-200 dark:border-slate-700">
-            <div class="flex-1">
-              <p class="text-xs font-medium text-slate-600 dark:text-slate-400">GPU-index (avancerat)</p>
-              <p class="text-xs text-slate-400 dark:text-slate-500">Vid multi-GPU-system: testa 0, 1, 2 osv för att tvinga ett specifikt grafikkort. Lämna tomt för automatiskt val.</p>
-            </div>
-            <input type="number" id="gpu-device-index" min="0" max="7" placeholder="auto"
-              class="w-20 px-2 py-1 text-sm bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-700 dark:text-slate-300 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary">
-          </div>
-        </div>
 
-
-        <!-- Visa loggfil för diagnostik -->
-        <div class="flex flex-col gap-2 p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl">
-          <p class="text-sm font-medium text-slate-700 dark:text-slate-300">Diagnostik-logg</p>
-          <p class="text-xs text-slate-400 dark:text-slate-500">Öppna loggfilen som hjälp vid felsökning. Innehåller information om transkriberingsstegen och eventuella krascher.</p>
-          <button id="btn-show-log"
-            class="self-end px-4 py-2 text-sm font-medium bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 rounded-lg transition-colors">
-            Öppna loggfil
+          <button id="btn-download-model" class="btn btn-primary mt-4 w-full">
+            <span class="material-symbols-outlined">download</span>
+            <span class="download-label">Ladda ned</span>
           </button>
-        </div>
+        </section>
 
-            <!-- Markering av osäkra ord (tidigare "Konfidenströskel") -->
-            <div class="flex flex-col gap-2 p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl">
-              <div class="flex items-center justify-between">
-                <div>
-                  <p class="text-sm font-medium text-slate-700 dark:text-slate-300">Markera osäkra ord</p>
-                  <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5">Ord som appen är osäker på färgas i segmentvyn: <span class="tok tok-low px-1 rounded">gul</span> = osäker, <span class="tok tok-very-low px-1 rounded">röd</span> = mycket osäker. Högre värde markerar fler ord.</p>
-                </div>
-                <span id="confidence-threshold-label" class="text-sm font-semibold text-primary shrink-0 ml-3">60%</span>
-              </div>
-              <input type="range" id="confidence-threshold-slider" min="10" max="99" value="60" step="1"
-                class="w-full accent-primary cursor-pointer">
-            </div>
-          </div>
-        </details>
-
-        <!-- Personlig ordlista -->
-        <div class="pt-2 border-t border-slate-200 dark:border-slate-700">
-          <h3 class="text-sm font-bold text-slate-800 dark:text-white mb-1">Personlig ordlista</h3>
-          <p class="text-xs text-slate-400 dark:text-slate-500 mb-2">Facktermer och ord skickas som ledtrådar till transkriberingsmotorn. Ett ord per rad.</p>
-          <textarea id="vocabulary-input" rows="4"
-            placeholder="angioplastik&#10;endarterektomi&#10;EKG..."
-            class="w-full p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-700 dark:text-slate-300 placeholder:text-slate-300 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary resize-none custom-scrollbar"></textarea>
+        <!-- Ordlista -->
+        <section class="section">
+          <h3 class="section-title">Personlig ordlista</h3>
+          <p class="hint mb-2">Facktermer och ord skickas som ledtrådar till transkriberingsmotorn. Ett ord per rad.</p>
+          <label for="vocabulary-input" class="sr-only">Ordlista</label>
+          <textarea id="vocabulary-input" rows="4" placeholder="angioplastik&#10;endarterektomi&#10;EKG" class="field resize-none"></textarea>
           <div class="flex gap-2 mt-2">
-            <label class="flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-semibold text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg cursor-pointer hover:text-primary transition-colors">
-              <span class="material-symbols-outlined text-sm">upload</span>
-              Importera .txt
+            <label class="btn btn-sm cursor-pointer">
+              <span class="material-symbols-outlined">upload</span>
+              <span>Importera .txt</span>
               <input type="file" id="vocabulary-import" accept=".txt,.json" class="sr-only">
             </label>
-            <button id="vocabulary-export"
-              class="flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-semibold text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg hover:text-primary transition-colors">
-              <span class="material-symbols-outlined text-sm">download</span>
-              Exportera .txt
+            <button id="vocabulary-export" class="btn btn-sm">
+              <span class="material-symbols-outlined">download</span>
+              <span>Exportera .txt</span>
             </button>
           </div>
-        </div>
+        </section>
 
-        <!-- Nedladdade modeller — välj aktiv eller ta bort -->
-        <div class="pt-2 border-t border-slate-200 dark:border-slate-700">
-          <h3 class="text-sm font-bold text-slate-800 dark:text-white mb-3">Nedladdade modeller</h3>
-          <div id="model-list" class="flex flex-col gap-2 max-h-48 overflow-y-auto pr-1 custom-scrollbar">
-            <p class="text-xs text-slate-400 italic">Laddar modeller...</p>
+        <!-- Inspelningar -->
+        <section class="section">
+          <h3 class="section-title">Inspelningar</h3>
+          <p class="hint mb-2">Sparas direkt till disk under inspelningen, vilket skyddar mot dataförlust vid krasch.</p>
+          <label for="recording-dir-path" class="text-sm">Mapp</label>
+          <div class="flex gap-2 items-center mt-1">
+            <input type="text" id="recording-dir-path" readonly class="field font-mono text-[13px] truncate" placeholder="Standardmapp" />
+            <button id="btn-browse-recording-dir" class="btn shrink-0">Bläddra…</button>
           </div>
-        </div>
+          <p id="recordings-usage" class="hint mt-2"></p>
 
-        <!-- Ladda ner modell -->
-        <div class="pt-2 border-t border-slate-200 dark:border-slate-700">
-          <h3 class="text-sm font-bold text-slate-800 dark:text-white mb-4">Ladda ner modell</h3>
-          <div class="flex flex-col gap-4">
+          <button id="btn-stereo-mix-help" type="button" class="hidden btn btn-sm mt-4">
+            <span class="material-symbols-outlined">info</span>
+            <span>Hjälp med mötesljud</span>
+          </button>
 
-            <!-- Kvalitetsval — ersätter Stil/Storlek/format. Varje kort motsvarar
-                 en färdig modellkombination; användaren slipper kombinera själv. -->
-            <div class="flex flex-col gap-2" id="quality-picker">
-              <button type="button" data-quality="fast"
-                class="quality-btn flex items-start gap-3 px-3 py-2.5 border rounded-xl transition-colors text-left">
-                <span class="material-symbols-outlined text-lg shrink-0 mt-0.5">speed</span>
-                <span class="min-w-0">
-                  <span class="block text-sm font-semibold">Snabbast <span class="font-normal opacity-70">· rekommenderas, endast svenska</span></span>
-                  <span class="block text-xs opacity-70">Pianissimo. Går på processorn och är oftast snabbast på vanliga datorer. Bara svenska, och något lägre noggrannhet än Bästa kvalitet.</span>
-                </span>
-              </button>
-              <button type="button" data-quality="balanced"
-                class="quality-btn flex items-start gap-3 px-3 py-2.5 border rounded-xl transition-colors text-left">
-                <span class="material-symbols-outlined text-lg shrink-0 mt-0.5">bolt</span>
-                <span class="min-w-0">
-                  <span class="block text-sm font-semibold">Snabbare</span>
-                  <span class="block text-xs opacity-70">Bra kvalitet på svenska, klart på halva tiden mot Bästa.</span>
-                </span>
-              </button>
-              <button type="button" data-quality="best"
-                class="quality-btn flex items-start gap-3 px-3 py-2.5 border rounded-xl transition-colors text-left">
-                <span class="material-symbols-outlined text-lg shrink-0 mt-0.5">workspace_premium</span>
-                <span class="min-w-0">
-                  <span class="block text-sm font-semibold">Bästa kvalitet</span>
-                  <span class="block text-xs opacity-70">Mest exakt på svenska, men tar betydligt längre tid.</span>
-                </span>
-              </button>
-              <button type="button" data-quality="multi"
-                class="quality-btn flex items-start gap-3 px-3 py-2.5 border rounded-xl transition-colors text-left">
-                <span class="material-symbols-outlined text-lg shrink-0 mt-0.5">language</span>
-                <span class="min-w-0">
-                  <span class="block text-sm font-semibold">Flera språk</span>
-                  <span class="block text-xs opacity-70">För engelska facktermer, blandspråkigt eller internationella möten.</span>
-                </span>
-              </button>
-            </div>
-
-            <!-- Ordagrann — ortogonalt mot kvalitet, gäller hur texten skrivs.
-                 Finns inte för "Flera språk" (Turbo saknar KB-varianter). -->
-            <div id="verbatim-row">
-              <label class="flex items-start gap-3 cursor-pointer select-none">
-                <input type="checkbox" id="model-verbatim"
-                  class="w-4 h-4 rounded accent-primary cursor-pointer shrink-0 mt-0.5">
-                <span class="text-sm text-slate-700 dark:text-slate-300">
-                  Ordagrann utskrift <span class="text-slate-400 font-normal">— tar med upprepningar och talspråk. Passar diktering och protokoll. Utan kryss städas texten lätt.</span>
-                </span>
-              </label>
-            </div>
-
-            <button id="btn-download-model"
-              class="w-full py-3 bg-primary hover:bg-primary-hover text-white text-sm font-semibold rounded-xl transition-colors flex items-center justify-center gap-2">
-              <span class="material-symbols-outlined text-base">download</span>
-              <span class="download-label">Ladda ner</span>
+          <div class="mt-6">
+            <h4 class="text-sm font-semibold">Radera alla ljudinspelningar</h4>
+            <p class="hint mb-2">Tar bort alla sessionsmappar (inspelning-…) i inspelningsmappen permanent. Sparade textfiler och exporterade ljudfiler påverkas inte.</p>
+            <button id="btn-delete-recordings" class="btn btn-sm btn-danger">
+              <span class="material-symbols-outlined">delete</span>
+              <span>Radera alla</span>
             </button>
           </div>
-        </div>
+        </section>
+
+        <!-- Avancerat -->
+        <section class="section border-b-0">
+          <details id="advanced-settings" class="group">
+            <summary class="flex items-center gap-1 cursor-pointer select-none section-title mb-0">
+              <span class="material-symbols-outlined transition-transform group-open:rotate-90">chevron_right</span>
+              Avancerat
+              <span class="text-sm font-normal text-muted ml-1">prestanda och felsökning</span>
+            </summary>
+            <div class="flex flex-col gap-6 pt-5">
+
+              <div>
+                <div class="flex items-center justify-between">
+                  <label for="thread-count-slider" class="text-sm font-semibold">CPU-trådar för Whisper</label>
+                  <span id="thread-count-value" class="text-sm font-mono">4</span>
+                </div>
+                <p class="hint mb-2">Sänk till 4 vid krasch på Intel-laptops med P/E-cores eller många trådar. Höj för snabbare transkribering på enklare processorer (max 16).</p>
+                <input type="range" id="thread-count-slider" min="1" max="16" value="4" step="1" class="w-full accent-primary cursor-pointer">
+              </div>
+
+              <div id="gpu-section" class="hidden flex flex-col gap-3">
+                <label class="flex items-start gap-3 cursor-pointer select-none">
+                  <input type="checkbox" id="gpu-toggle" class="w-4 h-4 accent-primary cursor-pointer shrink-0 mt-1" checked>
+                  <span class="text-sm font-semibold">GPU-acceleration (Vulkan)
+                    <span class="block hint font-normal">Använder grafikkortet för snabbare transkribering med Whisper. Stäng av om du har flera grafikkort eller en NPU, äldre eller integrerade grafikkort, eller om transkriberingen kraschar.</span>
+                  </span>
+                </label>
+                <div class="flex items-center gap-3">
+                  <div class="flex-1">
+                    <label for="gpu-device-index" class="text-sm font-semibold">GPU-index</label>
+                    <p class="hint">Vid flera grafikkort: testa 0, 1, 2 för att välja ett specifikt. Tomt ger automatiskt val.</p>
+                  </div>
+                  <input type="number" id="gpu-device-index" min="0" max="7" placeholder="auto" class="field w-20">
+                </div>
+              </div>
+
+              <div>
+                <div class="flex items-center justify-between">
+                  <label for="confidence-threshold-slider" class="text-sm font-semibold">Markera osäkra ord</label>
+                  <span id="confidence-threshold-label" class="text-sm font-mono">60%</span>
+                </div>
+                <p class="hint mb-2">Osäkra ord får prickad understrykning i segmentvyn: <span class="tok tok-low">osäker</span> eller <span class="tok tok-very-low">mycket osäker</span>. Högre värde markerar fler ord.</p>
+                <input type="range" id="confidence-threshold-slider" min="10" max="99" value="60" step="1" class="w-full accent-primary cursor-pointer">
+              </div>
+
+              <div>
+                <h4 class="text-sm font-semibold">Diagnostiklogg</h4>
+                <p class="hint mb-2">Loggfilen hjälper vid felsökning och innehåller transkriberingssteg och eventuella krascher.</p>
+                <button id="btn-show-log" class="btn btn-sm">Öppna loggfil</button>
+              </div>
+            </div>
+          </details>
+        </section>
       </div>
-      <div class="p-6 bg-slate-50 dark:bg-slate-900/50 border-t border-slate-200 dark:border-slate-700">
-        <button id="btn-save-settings"
-          class="w-full py-4 bg-primary hover:bg-primary-hover text-white font-semibold rounded-xl transition-colors shadow-lg">
-          Spara inställningar
-        </button>
-        <p class="text-center text-xs text-slate-400 dark:text-slate-500 mt-3">
-          Transkribera <span id="app-version">v1.2.1</span>
-        </p>
+
+      <div class="px-6 py-4 border-t border-line shrink-0">
+        <button id="btn-save-settings" class="btn btn-primary w-full">Spara inställningar</button>
+        <p class="text-center text-xs text-muted mt-3">Transkribera <span id="app-version">v1.2.1</span></p>
       </div>
     </div>
   </div>
 
-  <!-- Confirm Modal (new recording warning) -->
-  <div id="confirm-modal"
-    class="hidden fixed inset-0 bg-slate-900/60 z-[200] flex justify-center items-center">
-    <div class="bg-white dark:bg-slate-800 w-11/12 max-w-sm rounded-3xl shadow-xl overflow-hidden">
-      <div class="p-6">
-        <div class="flex items-center gap-3 mb-3">
-          <span class="material-symbols-outlined text-amber-500 text-3xl">warning</span>
-          <h3 id="confirm-title" class="text-lg font-bold text-slate-800 dark:text-white">Ny inspelning</h3>
-        </div>
-        <p class="text-slate-600 dark:text-slate-300 text-sm leading-relaxed">
+  <!-- Bekräfta -->
+  <div id="confirm-modal" class="hidden fixed inset-0 bg-black/40 z-[200] flex justify-center items-center"
+    role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+    <div class="dialog w-11/12 max-w-sm">
+      <div class="p-5">
+        <h3 id="confirm-title" class="text-base font-semibold mb-2">Ny inspelning</h3>
+        <p class="text-sm text-muted leading-relaxed">
           Du har en transkribering som inte sparats. En ny inspelning kommer att ersätta den.
         </p>
       </div>
-      <div class="flex border-t border-slate-200 dark:border-slate-700">
-        <button id="confirm-cancel"
-          class="flex-1 py-4 text-slate-600 dark:text-slate-300 font-semibold hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
-          Avbryt
-        </button>
-        <button id="confirm-ok"
-          class="flex-1 py-4 text-amber-600 dark:text-amber-400 font-semibold hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-colors border-l border-slate-200 dark:border-slate-700">
-          Fortsätt
-        </button>
+      <div class="dialog-actions">
+        <button id="confirm-cancel" class="btn">Avbryt</button>
+        <button id="confirm-ok" class="btn btn-primary">Fortsätt</button>
       </div>
     </div>
   </div>
 
-  <!-- Import-val: fil eller sessionsmapp -->
-  <div id="import-choice-modal"
-    class="hidden fixed inset-0 bg-slate-900/60 z-[200] flex justify-center items-center">
-    <div class="bg-white dark:bg-slate-800 w-11/12 max-w-sm rounded-3xl shadow-xl overflow-hidden">
-      <div class="p-6">
-        <h3 class="text-lg font-bold text-slate-800 dark:text-white mb-1">Importera</h3>
-        <p class="text-slate-500 dark:text-slate-400 text-sm mb-5">Vad vill du öppna?</p>
-        <div class="flex flex-col gap-3">
-          <button id="import-choice-file"
-            class="flex items-center gap-3 px-4 py-3 bg-slate-50 dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 rounded-2xl transition-colors text-left">
-            <span class="material-symbols-outlined text-primary">audio_file</span>
-            <span>
-              <span class="block text-sm font-semibold text-slate-700 dark:text-slate-200">Ljud- eller videofil</span>
-              <span class="block text-xs text-slate-400 dark:text-slate-500">MP3, M4A, WAV, MP4 m.fl.</span>
-            </span>
+  <!-- Import: fil eller sessionsmapp -->
+  <div id="import-choice-modal" class="hidden fixed inset-0 bg-black/40 z-[200] flex justify-center items-center"
+    role="dialog" aria-modal="true" aria-labelledby="import-title">
+    <div class="dialog w-11/12 max-w-sm">
+      <div class="p-5">
+        <h3 id="import-title" class="text-base font-semibold mb-3">Vad vill du öppna?</h3>
+        <div class="flex flex-col gap-2">
+          <button id="import-choice-file" class="choice">
+            <span class="choice-title">Ljud- eller videofil</span>
+            <span class="choice-desc">MP3, M4A, WAV, MP4 med flera</span>
           </button>
-          <button id="import-choice-folder"
-            class="flex items-center gap-3 px-4 py-3 bg-slate-50 dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 rounded-2xl transition-colors text-left">
-            <span class="material-symbols-outlined text-primary">history</span>
-            <span>
-              <span class="block text-sm font-semibold text-slate-700 dark:text-slate-200">En tidigare inspelning</span>
-              <span class="block text-xs text-slate-400 dark:text-slate-500">Något du spelat in med Transkribera</span>
-            </span>
+          <button id="import-choice-folder" class="choice">
+            <span class="choice-title">En tidigare inspelning</span>
+            <span class="choice-desc">Något du spelat in med Transkribera</span>
           </button>
         </div>
       </div>
-      <div class="flex border-t border-slate-200 dark:border-slate-700">
-        <button id="import-choice-cancel"
-          class="flex-1 py-4 text-slate-600 dark:text-slate-300 font-semibold hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
-          Avbryt
-        </button>
+      <div class="dialog-actions">
+        <button id="import-choice-cancel" class="btn">Avbryt</button>
       </div>
     </div>
   </div>
 
-  <!-- Stereo Mix Guide Modal -->
-  <div id="stereo-mix-modal"
-    class="hidden fixed inset-0 bg-slate-900/60 z-[300] flex justify-center items-center">
-    <div class="bg-white dark:bg-slate-800 w-11/12 max-w-lg rounded-3xl shadow-2xl flex flex-col overflow-hidden max-h-[90dvh]">
-      <div class="flex items-center justify-between p-6 border-b border-slate-200 dark:border-slate-700">
-        <div class="flex items-center gap-3">
-          <span class="material-symbols-outlined text-primary">campaign</span>
-          <h2 class="text-xl font-bold text-slate-800 dark:text-white">Guide: Spela in mötesljud</h2>
-        </div>
-        <button id="btn-close-stereo-mix" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
+  <!-- Guide: spela in mötesljud -->
+  <div id="stereo-mix-modal" class="hidden fixed inset-0 bg-black/40 z-[300] flex justify-center items-center"
+    role="dialog" aria-modal="true" aria-labelledby="stereo-title">
+    <div class="dialog w-11/12 max-w-lg flex flex-col max-h-[90dvh]">
+      <div class="flex items-center justify-between h-12 px-5 border-b border-line shrink-0">
+        <h2 id="stereo-title" class="text-[15px] font-semibold">Spela in mötesljud</h2>
+        <button id="btn-close-stereo-mix" class="btn btn-ghost btn-sm btn-icon-only" aria-label="Stäng guiden">
           <span class="material-symbols-outlined">close</span>
         </button>
       </div>
-      <div class="p-8 overflow-y-auto custom-scrollbar">
-        <p class="text-slate-600 dark:text-slate-300 mb-6 leading-relaxed">
-          För att spela in både din röst och ljudet från datorn (t.ex. vid möten i Teams/Zoom) behöver du aktivera enheten <strong>Stereo Mix</strong> i Windows.
+      <div class="p-5 overflow-y-auto">
+        <p class="text-sm mb-5 leading-relaxed">
+          För att spela in både din röst och ljudet från datorn (till exempel vid möten i Teams eller Zoom) behöver du aktivera enheten <strong>Stereo Mix</strong> i Windows.
         </p>
-        
-        <div class="space-y-6">
-          <div class="flex gap-4">
-            <div class="flex-shrink-0 w-8 h-8 bg-primary/10 text-primary font-bold rounded-full flex items-center justify-center">1</div>
+        <ol class="flex flex-col gap-4 text-sm">
+          <li class="flex gap-3">
+            <span class="step-no">1</span>
             <div>
-              <p class="font-semibold text-slate-800 dark:text-slate-200 mb-2">Öppna ljudinställningar</p>
-              <button onclick="window.__TAURI__.opener.open('ms-settings:sound');" class="flex items-center gap-2 px-4 py-2 bg-slate-100 dark:bg-slate-900 hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-xl transition-all border border-slate-200 dark:border-slate-700 text-sm font-medium shadow-sm">
-                <span class="material-symbols-outlined text-base">open_in_new</span>
-                Öppna Windows inställningar
+              <p class="font-semibold mb-2">Öppna ljudinställningar</p>
+              <button onclick="window.__TAURI__.opener.open('ms-settings:sound');" class="btn btn-sm">
+                <span class="material-symbols-outlined">open_in_new</span>
+                <span>Öppna Windows inställningar</span>
               </button>
             </div>
-          </div>
-
-          <div class="flex gap-4">
-            <div class="flex-shrink-0 w-8 h-8 bg-primary/10 text-primary font-bold rounded-full flex items-center justify-center">2</div>
+          </li>
+          <li class="flex gap-3">
+            <span class="step-no">2</span>
             <div>
-              <p class="font-semibold text-slate-800 dark:text-slate-200 mb-1">Gå till detaljerade inställningar</p>
-              <p class="text-sm text-slate-500 dark:text-slate-400">Scrolla längst ner på sidan i Windows och klicka på <strong>"Mer ljudinställningar"</strong> (More sound settings).</p>
+              <p class="font-semibold">Gå till detaljerade inställningar</p>
+              <p class="text-muted">Bläddra längst ned och klicka på <strong>Mer ljudinställningar</strong>.</p>
             </div>
-          </div>
-
-          <div class="flex gap-4">
-            <div class="flex-shrink-0 w-8 h-8 bg-primary/10 text-primary font-bold rounded-full flex items-center justify-center">3</div>
+          </li>
+          <li class="flex gap-3">
+            <span class="step-no">3</span>
             <div>
-              <p class="font-semibold text-slate-800 dark:text-slate-200 mb-1">Visa inaktiverade enheter</p>
-              <p class="text-sm text-slate-500 dark:text-slate-400">Gå till fliken <strong>"Inspelning"</strong>. Högerklicka på en tom yta och se till att <strong>"Visa inaktiverade enheter"</strong> är ikryssat.</p>
+              <p class="font-semibold">Visa inaktiverade enheter</p>
+              <p class="text-muted">Gå till fliken <strong>Inspelning</strong>. Högerklicka på en tom yta och kryssa i <strong>Visa inaktiverade enheter</strong>.</p>
             </div>
-          </div>
-
-          <div class="flex gap-4">
-            <div class="flex-shrink-0 w-8 h-8 bg-primary/10 text-primary font-bold rounded-full flex items-center justify-center">4</div>
+          </li>
+          <li class="flex gap-3">
+            <span class="step-no">4</span>
             <div>
-              <p class="font-semibold text-slate-800 dark:text-slate-200 mb-1">Aktivera Stereo Mix</p>
-              <p class="text-sm text-slate-500 dark:text-slate-400">Hitta <strong>Stereo Mix</strong> i listan, högerklicka och välj <strong>"Aktivera"</strong>.</p>
+              <p class="font-semibold">Aktivera Stereo Mix</p>
+              <p class="text-muted">Högerklicka på <strong>Stereo Mix</strong> i listan och välj <strong>Aktivera</strong>.</p>
             </div>
-          </div>
-
-          <div class="flex gap-4">
-            <div class="flex-shrink-0 w-8 h-8 bg-primary/10 text-primary font-bold rounded-full flex items-center justify-center">5</div>
+          </li>
+          <li class="flex gap-3">
+            <span class="step-no">5</span>
             <div>
-              <p class="font-semibold text-slate-800 dark:text-slate-200 mb-1">Sätt som standardmikrofon</p>
-              <p class="text-sm text-slate-500 dark:text-slate-400">Högerklicka på <strong>Stereo Mix</strong> igen och välj <strong>"Ange som standardenhet"</strong>.</p>
+              <p class="font-semibold">Sätt som standardenhet</p>
+              <p class="text-muted">Högerklicka på <strong>Stereo Mix</strong> igen och välj <strong>Ange som standardenhet</strong>.</p>
             </div>
-          </div>
-        </div>
-
-        <div class="mt-8 p-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-100 dark:border-amber-800 rounded-2xl">
-          <div class="flex gap-3">
-            <span class="material-symbols-outlined text-amber-500 text-xl">tips_and_updates</span>
-            <p class="text-xs text-amber-800 dark:text-amber-200 leading-relaxed italic">
-              <strong>Klart!</strong> Välj <strong>"Systemets standardmikrofon"</strong> i mikrofonlistan i appen. Starta mötet och se till att ljud spelas innan du trycker Spela in.
-            </p>
-          </div>
-        </div>
+          </li>
+        </ol>
+        <p class="mt-6 pl-3 border-l-[3px] border-warn text-sm leading-relaxed">
+          Välj sedan <strong>Systemets standardmikrofon</strong> i mikrofonlistan i appen. Starta mötet och se till att ljud spelas innan du trycker Spela in.
+        </p>
       </div>
-      <div class="p-6 bg-slate-50 dark:bg-slate-900/50 border-t border-slate-200 dark:border-slate-700">
-        <button id="btn-close-stereo-mix-ok" class="w-full py-4 bg-primary hover:bg-primary-hover text-white font-bold rounded-xl transition-all shadow-lg">
-          Jag förstår
-        </button>
+      <div class="dialog-actions">
+        <button id="btn-close-stereo-mix-ok" class="btn btn-primary">Jag förstår</button>
       </div>
     </div>
   </div>
