@@ -1,0 +1,63 @@
+use crate::inference::{ExecutionModeError, InferenceError, ModelLoadError};
+
+/// Errors that can occur during the diarization pipeline
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum PipelineError {
+    /// Model construction or inference runtime initialization error
+    #[error(transparent)]
+    ModelLoad(#[from] ModelLoadError),
+    /// Embedding or segmentation inference error
+    #[error(transparent)]
+    Inference(#[from] InferenceError),
+    /// Requested execution mode is not supported by this build
+    #[error(transparent)]
+    UnsupportedExecutionMode(#[from] ExecutionModeError),
+    /// Segmentation inference error
+    #[error(transparent)]
+    Segmentation(#[from] crate::inference::segmentation::SegmentationError),
+    /// Powerset class decode error
+    #[error(transparent)]
+    Powerset(#[from] crate::powerset::PowersetDecodeError),
+    /// PLDA scoring/training error
+    #[error(transparent)]
+    Plda(#[from] crate::clustering::plda::PldaError),
+    /// Reconstruction inputs are inconsistent
+    #[error(transparent)]
+    Reconstruct(#[from] crate::reconstruct::ReconstructError),
+    /// SphereVBx-PF clustering input error
+    #[cfg(feature = "_metrics")]
+    #[error(transparent)]
+    SphereVbx(#[from] crate::clustering::sphere_vbx::SphereVbxError),
+    /// Queue setup or execution error
+    #[error(transparent)]
+    Queue(#[from] super::super::queued::QueueError),
+    /// Internal pipeline invariant was violated
+    #[error("{0}")]
+    Invariant(String),
+    /// Background worker panicked
+    #[error("{worker} thread panicked")]
+    WorkerPanic {
+        /// Worker or thread name
+        worker: String,
+    },
+    /// A background worker could not be started
+    #[error("could not start {worker} thread: {source}")]
+    WorkerSpawn {
+        /// Worker or thread name
+        worker: &'static str,
+        /// Operating system thread creation error
+        source: std::io::Error,
+    },
+    /// Backend-specific execution failed with additional context
+    #[error("{context}: {message}")]
+    Backend {
+        /// Which backend step failed
+        context: &'static str,
+        /// Backend error message
+        message: String,
+    },
+    /// Catch-all for other pipeline errors
+    #[error("{0}")]
+    Other(String),
+}

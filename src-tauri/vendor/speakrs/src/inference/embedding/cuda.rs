@@ -1,0 +1,795 @@
+//! Native CUDA embedding: GPU filterbank, then the ResNet34 multi-mask model, with the
+//! features kept on the device between the two
+//!
+//! Every embedding path runs through the multi-mask model: a single-mask embedding is a
+//! chunk whose other two speaker masks are zero, since each speaker row is pooled on its
+//! own
+
+use std::ops::Range;
+use std::path::{Path, PathBuf};
+
+use cudarc::driver::CudaView;
+use ndarray::{Array1, Array2, ArrayView2, Axis};
+use tracing::{debug, trace};
+
+use crate::inference::cuda::implementation::policy::RecipeMode;
+use crate::inference::cuda::{
+    CudaError, CudaFbank, CudaGraphs, CudaMath, CudaRuntime, CudaSession, DeviceTensor,
+    EMBEDDING_DIM, EmbeddingBatch, EmbeddingBatchClass, FBANK_FRAMES, FBANK_MEL_BINS,
+    FBANK_WINDOW_SAMPLES, FbankBuffers, ResNetEmbedding, SPEAKERS_PER_CHUNK, SafetensorsFile,
+    SharedEmbeddingActivations,
+};
+use crate::inference::{ExecutionMode, InferenceError, ModelLoadError, TensorShapeError};
+use crate::pipeline::RuntimeConfig;
+
+use super::{
+    AudioWindows, EMBEDDING_WIDTH, EmbeddingMeta, FBANK_FEATURES, MASK_FRAMES,
+    MULTI_MASK_BATCH_SIZE, MultiMaskStart, NUM_SPEAKERS, SplitTailInput, prepare_weights,
+    should_use_clean_mask,
+};
+
+/// The weights file CUDA modes load, next to the base embedding ONNX path
+const WEIGHTS_FILE: &str = "wespeaker-multimask-tail.safetensors";
+
+/// Values of one chunk's `[998, 80]` filterbank
+const FBANK_LEN: usize = FBANK_FRAMES * FBANK_MEL_BINS;
+/// Values of one chunk's three speaker masks
+const CHUNK_MASKS_LEN: usize = SPEAKERS_PER_CHUNK * MASK_FRAMES;
+
+const _: () = assert!(FBANK_FEATURES == FBANK_MEL_BINS && EMBEDDING_WIDTH == EMBEDDING_DIM);
+const _: () = assert!(NUM_SPEAKERS == SPEAKERS_PER_CHUNK);
+
+/// Native CUDA embedding plus private host staging for one model handle
+pub(super) struct CudaEmbedding {
+    session: CudaSession<EmbeddingState>,
+    // the reload inputs are only read by `clone_shared`, which CoreML builds do not have
+    #[cfg_attr(feature = "coreml", allow(dead_code))]
+    weights: PathBuf,
+    #[cfg_attr(feature = "coreml", allow(dead_code))]
+    math: CudaMath,
+    #[cfg_attr(feature = "coreml", allow(dead_code))]
+    graphs: CudaGraphs,
+    #[cfg_attr(feature = "coreml", allow(dead_code))]
+    recipe_mode: RecipeMode,
+    /// `[chunks * 3, 589]` speaker masks for the next batch
+    masks: Vec<f32>,
+    /// `[chunks, 998, 80]` host filterbanks for the next batch
+    fbanks: Vec<f32>,
+    /// The newest multi-mask batch: the embeddings of its batch classes before the
+    /// last, and the last, still running
+    running: Option<(Vec<f32>, Launch)>,
+    /// The batch before `running`, whose output download is already queued behind it;
+    /// [`Self::wait_multi_mask_audio_windows`] finishes it first
+    pending: Option<(Vec<f32>, Launch)>,
+}
+
+/// The device models and buffers; a session keeps them with the runtime they were
+/// built on
+struct EmbeddingState {
+    fbank: CudaFbank,
+    fbank_buffers: FbankBuffers,
+    batches: Batches,
+}
+
+// SAFETY: `EmbeddingState` is not `Send` only because of cuDNN state (the convolution
+// plans' descriptors and cudarc's cuDNN handle they share), the captured CUDA graphs
+// and the pinned staging memory of `FbankBuffers`. All of it was created on the
+// session's runtime and is reachable only through this session, which is neither
+// `Clone` nor `Sync` and hands out no references to it, so moving the session moves
+// every owner of that state at once and no two threads ever use it concurrently. cuDNN
+// handles and descriptors, CUDA graphs and pinned host memory may be used from any host
+// thread as long as calls are not concurrent, and `CudaSession::run` and its `Drop` make
+// the runtime's context current on the thread that uses or frees them
+unsafe impl Send for CudaSession<EmbeddingState> {}
+
+/// The multi-mask model and its exact batch classes, each allocated on first use
+struct Batches {
+    model: ResNetEmbedding,
+    graphs: bool,
+    plans: [Option<EmbeddingBatch>; 5],
+    /// A second 32-chunk batch that full batches alternate with, so one can launch
+    /// while the previous one's inputs stay intact for its FP16 range recompute
+    spare: Option<EmbeddingBatch>,
+    /// Whether the next 32-chunk launch uses `spare`
+    next_spare: bool,
+    activations: Option<SharedEmbeddingActivations>,
+}
+
+/// A batch class launched on the device whose embeddings are not yet downloaded
+struct Launch {
+    class: EmbeddingBatchClass,
+    /// Whether the launch ran on [`Batches::spare`]
+    spare: bool,
+    plan_us: u128,
+    stage_us: u128,
+    launch_us: u128,
+}
+
+impl CudaEmbedding {
+    pub(super) fn load(
+        model_path: &Path,
+        mode: ExecutionMode,
+        config: &RuntimeConfig,
+    ) -> Result<Self, ModelLoadError> {
+        let weights = model_path.with_file_name(WEIGHTS_FILE);
+        if !weights.is_file() {
+            return Err(ModelLoadError::MissingCudaWeights {
+                mode,
+                path: weights,
+            });
+        }
+
+        let math = config.cuda_embedding_math;
+        let graphs = config.cuda_graphs;
+        let recipe_mode = RecipeMode::new(config.cuda_segmentation_math, math);
+        let session = open_session(&weights, math, graphs, recipe_mode)?;
+        Ok(Self::with_session(
+            session,
+            weights,
+            math,
+            graphs,
+            recipe_mode,
+        ))
+    }
+
+    fn with_session(
+        session: CudaSession<EmbeddingState>,
+        weights: PathBuf,
+        math: CudaMath,
+        graphs: CudaGraphs,
+        recipe_mode: RecipeMode,
+    ) -> Self {
+        Self {
+            session,
+            weights,
+            math,
+            graphs,
+            recipe_mode,
+            masks: Vec::new(),
+            fbanks: Vec::new(),
+            running: None,
+            pending: None,
+        }
+    }
+
+    /// A handle with its own runtime, stream and device copy of the same weights
+    #[cfg(not(feature = "coreml"))]
+    pub(super) fn reload(&self) -> Result<Self, InferenceError> {
+        let session = open_session(&self.weights, self.math, self.graphs, self.recipe_mode)?;
+        Ok(Self::with_session(
+            session,
+            self.weights.clone(),
+            self.math,
+            self.graphs,
+            self.recipe_mode,
+        ))
+    }
+
+    /// No fused waveform-to-embedding batch model exists, so masked batches run one
+    /// window at a time
+    pub(super) fn primary_batch_size(&self) -> usize {
+        1
+    }
+
+    /// Chunk speakers run as one multi-mask chunk on a downloaded filterbank
+    pub(super) fn prefers_chunk_embedding_path(&self) -> bool {
+        true
+    }
+
+    /// No batch-64 tail exists, so the pipeline's split path stays off
+    pub(super) fn split_primary_batch_size(&self) -> usize {
+        0
+    }
+
+    pub(super) fn prefers_multi_mask_path(&self) -> bool {
+        true
+    }
+
+    pub(super) fn multi_mask_batch_size(&self) -> usize {
+        MULTI_MASK_BATCH_SIZE
+    }
+
+    pub(super) fn has_batched_tail(&self) -> bool {
+        true
+    }
+
+    pub(in crate::inference::embedding) fn embed_single(
+        &mut self,
+        meta: &EmbeddingMeta,
+        audio: &[f32],
+        weights: &[f32],
+    ) -> Result<Array1<f32>, InferenceError> {
+        stage_masks(&mut self.masks, [weights], meta.mask_frames);
+        let rows = self.embed_audio(&[audio])?;
+        first_row(rows)
+    }
+
+    /// Filterbanks and embeddings for up to [`MULTI_MASK_BATCH_SIZE`] audio chunks,
+    /// with the filterbanks never leaving the device
+    pub(in crate::inference::embedding) fn embed_multi_mask_audio_batch(
+        &mut self,
+        meta: &EmbeddingMeta,
+        audios: &[&[f32]],
+        masks: &[&[f32]],
+    ) -> Result<Array2<f32>, InferenceError> {
+        check_multi_mask_counts(audios.len(), masks.len())?;
+        stage_masks(&mut self.masks, masks.iter().copied(), meta.mask_frames);
+        let rows = self.embed_audio(audios)?;
+        Ok(rows.slice_axis(Axis(0), (..masks.len()).into()).to_owned())
+    }
+
+    /// Starts [`Self::embed_multi_mask_audio_batch`] for windows of one recording,
+    /// uploading the audio they cover once instead of every window on its own, and
+    /// returns while the batch runs; [`Self::wait_multi_mask_audio_windows`] returns its
+    /// embeddings
+    ///
+    /// Windows the span upload does not suit embed at once instead. No other embedding
+    /// may run on this handle while a batch runs, since it would reuse the batch's
+    /// output
+    pub(in crate::inference::embedding) fn start_multi_mask_audio_windows(
+        &mut self,
+        meta: &EmbeddingMeta,
+        windows: &AudioWindows<'_>,
+        masks: &[&[f32]],
+    ) -> Result<MultiMaskStart, InferenceError> {
+        if self.pending.is_some() {
+            return Err(InferenceError::MissingOutput {
+                context: "cuda multi-mask batch started with two batches unfinished",
+            });
+        }
+        // queue the running batch's download before anything below reuses its buffers,
+        // so the device runs straight on into this batch while the host waits for that
+        if let Some((values, running)) = self.running.take() {
+            self.session
+                .run(|runtime, state| state.batches.enqueue_download(runtime, &running))?;
+            self.pending = Some((values, running));
+        }
+        // the span is cut on the GPU filterbank's own fixed window
+        if meta.window_samples != FBANK_WINDOW_SAMPLES {
+            let rows = self.embed_multi_mask_audio_batch(meta, &windows.slices(), masks)?;
+            return Ok(MultiMaskStart::Done(rows));
+        }
+        check_multi_mask_counts(windows.len(), masks.len())?;
+        let (span, starts) = windows.span();
+        // windows spread over long inactive stretches cover more audio than the
+        // per-window upload would copy
+        if span.len() > windows.len() * FBANK_WINDOW_SAMPLES {
+            let rows = self.embed_multi_mask_audio_batch(meta, &windows.slices(), masks)?;
+            return Ok(MultiMaskStart::Done(rows));
+        }
+        let starts: Vec<usize> = starts.collect();
+        stage_masks(&mut self.masks, masks.iter().copied(), meta.mask_frames);
+        let staged = &self.masks;
+        let (values, running) = self.session.run(|runtime, state| {
+            let EmbeddingState {
+                fbank,
+                fbank_buffers,
+                batches,
+            } = state;
+            let features = fbank.compute_span(runtime, span, &starts, fbank_buffers)?;
+            batches.launch(runtime, starts.len(), staged, |runtime, rows, target| {
+                let source = features.slice(rows.start * FBANK_LEN..rows.end * FBANK_LEN);
+                copy_device(runtime, &source, target)
+            })
+        })?;
+        // every window has its three masks, so the batch's rows are exactly the masks
+        match running {
+            Some(running) => {
+                self.running = Some((values, running));
+                Ok(MultiMaskStart::Running)
+            }
+            None => Ok(MultiMaskStart::Done(embedding_rows(values)?)),
+        }
+    }
+
+    /// Waits for the oldest batch [`Self::start_multi_mask_audio_windows`] left
+    /// unfinished and returns one embedding row per mask
+    pub(in crate::inference::embedding) fn wait_multi_mask_audio_windows(
+        &mut self,
+    ) -> Result<Array2<f32>, InferenceError> {
+        if let Some((mut values, pending)) = self.pending.take() {
+            let last = self
+                .session
+                .run(|runtime, state| state.batches.finish_download(runtime, pending))?;
+            values.extend(last);
+            return embedding_rows(values);
+        }
+        let Some((mut values, running)) = self.running.take() else {
+            return Err(InferenceError::MissingOutput {
+                context: "cuda multi-mask batch is not running",
+            });
+        };
+        let last = self
+            .session
+            .run(|runtime, state| state.batches.download(runtime, running))?;
+        values.extend(last);
+        embedding_rows(values)
+    }
+
+    /// Forgets the batches a failed run left unfinished, so the next recording's
+    /// first start finds none; their buffers stay with the handle, and any download
+    /// still queued finishes in stream order before the next launch reuses them
+    pub(in crate::inference::embedding) fn discard_multi_mask_batches(&mut self) {
+        self.running = None;
+        self.pending = None;
+    }
+
+    pub(in crate::inference::embedding) fn embed_multi_mask_batch(
+        &mut self,
+        meta: &EmbeddingMeta,
+        fbanks: &[&Array2<f32>],
+        masks: &[&[f32]],
+    ) -> Result<Array2<f32>, InferenceError> {
+        check_multi_mask_counts(fbanks.len(), masks.len())?;
+        stage_fbanks(&mut self.fbanks, fbanks)?;
+        stage_masks(&mut self.masks, masks.iter().copied(), meta.mask_frames);
+        let rows = self.embed_fbanks()?;
+        Ok(rows.slice_axis(Axis(0), (..masks.len()).into()).to_owned())
+    }
+
+    pub(in crate::inference::embedding) fn embed_tail_single(
+        &mut self,
+        meta: &EmbeddingMeta,
+        fbank: &Array2<f32>,
+        weights: &[f32],
+    ) -> Result<Array1<f32>, InferenceError> {
+        stage_fbanks(&mut self.fbanks, &[fbank])?;
+        stage_masks(&mut self.masks, [weights], meta.mask_frames);
+        let rows = self.embed_fbanks()?;
+        first_row(rows)
+    }
+
+    pub(in crate::inference::embedding) fn embed_tail_batch(
+        &mut self,
+        meta: &EmbeddingMeta,
+        fbank: &Array2<f32>,
+        segmentations: &ArrayView2<'_, f32>,
+        clean_masks: &Array2<f32>,
+        num_samples: usize,
+    ) -> Result<Array2<f32>, InferenceError> {
+        let speakers = segmentations.ncols();
+        if speakers > SPEAKERS_PER_CHUNK {
+            return Err(InferenceError::BatchTooLarge {
+                context: "cuda chunk speaker batch",
+                rows: speakers,
+                capacity: SPEAKERS_PER_CHUNK,
+            });
+        }
+
+        let selected: Vec<Vec<f32>> = (0..speakers)
+            .map(|speaker| {
+                let mask = segmentations.column(speaker);
+                let clean = clean_masks.column(speaker);
+                let use_clean =
+                    should_use_clean_mask(&clean, mask.len(), num_samples, meta.min_num_samples);
+                let chosen = if use_clean { clean } else { mask };
+                chosen.iter().copied().collect()
+            })
+            .collect();
+
+        stage_fbanks(&mut self.fbanks, &[fbank])?;
+        stage_masks(
+            &mut self.masks,
+            selected.iter().map(Vec::as_slice),
+            meta.mask_frames,
+        );
+        let rows = self.embed_fbanks()?;
+        Ok(rows.slice_axis(Axis(0), (..speakers).into()).to_owned())
+    }
+
+    pub(in crate::inference::embedding) fn embed_tail_batch_inputs(
+        &mut self,
+        meta: &EmbeddingMeta,
+        inputs: &[SplitTailInput<'_>],
+    ) -> Result<Array2<f32>, InferenceError> {
+        let mut embeddings = Array2::<f32>::zeros((inputs.len(), EMBEDDING_WIDTH));
+        for (row, input) in inputs.iter().enumerate() {
+            let embedding = self.embed_tail_single(meta, input.fbank, input.weights)?;
+            embeddings.row_mut(row).assign(&embedding);
+        }
+
+        Ok(embeddings)
+    }
+
+    pub(in crate::inference::embedding) fn compute_chunk_fbank(
+        &mut self,
+        meta: &EmbeddingMeta,
+        audio: &[f32],
+    ) -> Result<Array2<f32>, InferenceError> {
+        let mut fbanks = self.compute_chunk_fbanks_batch(meta, &[audio])?;
+        fbanks.pop().ok_or(InferenceError::MissingOutput {
+            context: "cuda chunk fbank output",
+        })
+    }
+
+    pub(in crate::inference::embedding) fn compute_chunk_fbanks_batch(
+        &mut self,
+        meta: &EmbeddingMeta,
+        audios: &[&[f32]],
+    ) -> Result<Vec<Array2<f32>>, InferenceError> {
+        // the GPU filterbank pads and truncates to its own fixed window
+        debug_assert_eq!(meta.window_samples, FBANK_WINDOW_SAMPLES);
+        let mut results = Vec::with_capacity(audios.len());
+        for batch in audios.chunks(MULTI_MASK_BATCH_SIZE) {
+            let values = self.session.run(|runtime, state| {
+                let features =
+                    state
+                        .fbank
+                        .compute_host(runtime, batch, &mut state.fbank_buffers)?;
+                Ok::<_, CudaError>(runtime.stream().clone_dtoh(&features)?)
+            })?;
+
+            for chunk in values.as_chunks::<FBANK_LEN>().0 {
+                let fbank = Array2::from_shape_vec((FBANK_FRAMES, FBANK_MEL_BINS), chunk.to_vec())
+                    .map_err(|source| InferenceError::OutputArray {
+                        context: "cuda chunk fbank output",
+                        source,
+                    })?;
+                results.push(fbank);
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Embeds the staged masks for `audios`, computing their filterbanks on the device
+    fn embed_audio(&mut self, audios: &[&[f32]]) -> Result<Array2<f32>, InferenceError> {
+        debug_assert!(
+            self.running.is_none(),
+            "a multi-mask batch is still running"
+        );
+        let masks = &self.masks;
+        let values = self.session.run(|runtime, state| {
+            let EmbeddingState {
+                fbank,
+                fbank_buffers,
+                batches,
+            } = state;
+            let features = fbank.compute_host(runtime, audios, fbank_buffers)?;
+            batches.embed(runtime, audios.len(), masks, |runtime, rows, target| {
+                let source = features.slice(rows.start * FBANK_LEN..rows.end * FBANK_LEN);
+                copy_device(runtime, &source, target)
+            })
+        })?;
+
+        embedding_rows(values)
+    }
+
+    /// Embeds the staged masks for the staged host filterbanks
+    fn embed_fbanks(&mut self) -> Result<Array2<f32>, InferenceError> {
+        debug_assert!(
+            self.running.is_none(),
+            "a multi-mask batch is still running"
+        );
+        let (fbanks, masks) = (&self.fbanks, &self.masks);
+        let chunks = fbanks.len() / FBANK_LEN;
+        let values = self.session.run(|runtime, state| {
+            state
+                .batches
+                .embed(runtime, chunks, masks, |runtime, rows, target| {
+                    let source = &fbanks[rows.start * FBANK_LEN..rows.end * FBANK_LEN];
+                    target.copy_from_host(runtime.stream(), source)
+                })
+        })?;
+
+        embedding_rows(values)
+    }
+}
+
+impl Batches {
+    /// Runs `chunks` chunks whose masks are in `masks`; `fill` writes the filterbanks
+    /// of a range of chunks into a batch's input
+    fn embed(
+        &mut self,
+        runtime: &CudaRuntime,
+        chunks: usize,
+        masks: &[f32],
+        fill: impl FnMut(&CudaRuntime, Range<usize>, &mut DeviceTensor) -> Result<(), CudaError>,
+    ) -> Result<Vec<f32>, CudaError> {
+        let (mut embeddings, last) = self.launch(runtime, chunks, masks, fill)?;
+        if let Some(last) = last {
+            embeddings.extend(self.download(runtime, last)?);
+        }
+
+        Ok(embeddings)
+    }
+
+    /// Launches `chunks` chunks as [`Self::embed`] runs them, but leaves the last batch
+    /// class running: returns the embeddings of the classes before it and the launch
+    /// that [`Self::download`] finishes
+    ///
+    /// Partial batches use the largest exact class that fits each remaining range. A
+    /// class is downloaded before the next one launches, since the classes share
+    /// activation storage and planning a class for the first time may synchronize
+    fn launch(
+        &mut self,
+        runtime: &CudaRuntime,
+        chunks: usize,
+        masks: &[f32],
+        mut fill: impl FnMut(&CudaRuntime, Range<usize>, &mut DeviceTensor) -> Result<(), CudaError>,
+    ) -> Result<(Vec<f32>, Option<Launch>), CudaError> {
+        let mut embeddings = Vec::with_capacity(chunks * SPEAKERS_PER_CHUNK * EMBEDDING_DIM);
+        let mut running = None;
+        let mut start = 0;
+        while let Some(class) = EmbeddingBatchClass::fitting(chunks - start) {
+            if let Some(previous) = running.take() {
+                embeddings.extend(self.download(runtime, previous)?);
+            }
+
+            let rows = start..start + class.chunks();
+            let plan_start = std::time::Instant::now();
+            let spare = class == EmbeddingBatchClass::ThirtyTwo && self.next_spare;
+            if class == EmbeddingBatchClass::ThirtyTwo {
+                self.next_spare = !self.next_spare;
+            }
+            let batch = self.batch(runtime, class, spare)?;
+            let plan_us = plan_start.elapsed().as_micros();
+            let stage_start = std::time::Instant::now();
+            fill(runtime, rows.clone(), batch.fbank_mut())?;
+            let chunk_masks = &masks[rows.start * CHUNK_MASKS_LEN..rows.end * CHUNK_MASKS_LEN];
+            batch
+                .masks_mut()
+                .copy_from_host(runtime.stream(), chunk_masks)?;
+            let stage_us = stage_start.elapsed().as_micros();
+            let launch_start = std::time::Instant::now();
+            batch.forward(runtime)?;
+            running = Some(Launch {
+                class,
+                spare,
+                plan_us,
+                stage_us,
+                launch_us: launch_start.elapsed().as_micros(),
+            });
+            start = rows.end;
+        }
+
+        Ok((embeddings, running))
+    }
+
+    /// The planned batch a launch ran on
+    fn launched(&mut self, launch: &Launch) -> Result<&mut EmbeddingBatch, CudaError> {
+        let batch = if launch.spare {
+            &mut self.spare
+        } else {
+            &mut self.plans[launch.class.slot()]
+        };
+        batch.as_mut().ok_or_else(|| CudaError::Unsupported {
+            context: "cuda embedding download",
+            reason: format!("batch class {} was never launched", launch.class.chunks()),
+        })
+    }
+
+    /// Waits for a launched batch class and downloads its embeddings
+    fn download(&mut self, runtime: &CudaRuntime, launch: Launch) -> Result<Vec<f32>, CudaError> {
+        let output_start = std::time::Instant::now();
+        let embeddings = self.launched(&launch)?.download_output(runtime)?;
+        Self::trace_download(&launch, output_start);
+        Ok(embeddings)
+    }
+
+    /// Queues a launched batch's download behind it without waiting
+    fn enqueue_download(
+        &mut self,
+        runtime: &CudaRuntime,
+        launch: &Launch,
+    ) -> Result<(), CudaError> {
+        self.launched(launch)?.enqueue_output_download(runtime)
+    }
+
+    /// Waits for the download [`Self::enqueue_download`] queued and returns its embeddings
+    fn finish_download(
+        &mut self,
+        runtime: &CudaRuntime,
+        launch: Launch,
+    ) -> Result<Vec<f32>, CudaError> {
+        let output_start = std::time::Instant::now();
+        let embeddings = self.launched(&launch)?.finish_output_download(runtime)?;
+        Self::trace_download(&launch, output_start);
+        Ok(embeddings)
+    }
+
+    fn trace_download(launch: &Launch, output_start: std::time::Instant) {
+        trace!(
+            target: "speakrs::timing",
+            class = launch.class.chunks(),
+            plan_us = launch.plan_us,
+            stage_us = launch.stage_us,
+            launch_us = launch.launch_us,
+            output_wait_us = output_start.elapsed().as_micros(),
+            "CUDA embedding batch timing"
+        );
+    }
+
+    /// The batch for `chunks` chunks, planned and (with graphs on) captured on first use
+    fn batch(
+        &mut self,
+        runtime: &CudaRuntime,
+        class: EmbeddingBatchClass,
+        spare: bool,
+    ) -> Result<&mut EmbeddingBatch, CudaError> {
+        let activations = match &self.activations {
+            Some(activations) => {
+                self.model
+                    .grow_activations(runtime, activations, class.chunks())?;
+                activations.clone()
+            }
+            None => {
+                let activations = self.model.activations(runtime, class.chunks())?;
+                self.activations = Some(activations.clone());
+                activations
+            }
+        };
+        let slot = if spare {
+            &mut self.spare
+        } else {
+            &mut self.plans[class.slot()]
+        };
+        if let Some(batch) = slot {
+            return Ok(batch);
+        }
+
+        let mut batch = self
+            .model
+            .batch_with_activations(runtime, class.chunks(), activations)?;
+        if self.graphs {
+            batch.capture_graph(runtime)?;
+        }
+        Ok(slot.insert(batch))
+    }
+}
+
+fn open_session(
+    weights: &Path,
+    math: CudaMath,
+    graphs: CudaGraphs,
+    recipe_mode: RecipeMode,
+) -> Result<CudaSession<EmbeddingState>, CudaError> {
+    let file = SafetensorsFile::open(weights)?;
+    CudaSession::new(
+        CudaRuntime::new(0)?.with_recipe_mode(recipe_mode),
+        |runtime| {
+            // the filterbank stays FP32 whatever the embedding precision: TF32 moves
+            // low-energy log-mel bins by up to 2.7 for a 0.16 ms gain
+            let fbank = CudaFbank::new(runtime, CudaMath::Fp32)?;
+            let model = ResNetEmbedding::load(runtime, &file, math)?;
+            debug!(
+                capability = %runtime.compute_capability(),
+                ptx_limit = %runtime.ptx_tier(),
+                fbank_tier = %fbank.tier(),
+                embedding_tier = %model.kernel_tier(),
+                ?math,
+                ?graphs,
+                "Loaded CUDA embedding"
+            );
+
+            Ok(EmbeddingState {
+                fbank_buffers: fbank.buffers(runtime, MULTI_MASK_BATCH_SIZE)?,
+                fbank,
+                batches: Batches {
+                    model,
+                    graphs: graphs.enabled(),
+                    plans: std::array::from_fn(|_| None),
+                    spare: None,
+                    next_spare: false,
+                    activations: None,
+                },
+            })
+        },
+    )
+}
+
+/// Copies device filterbank values into a batch's input, which must have their length
+fn copy_device(
+    runtime: &CudaRuntime,
+    source: &CudaView<'_, f32>,
+    target: &mut DeviceTensor,
+) -> Result<(), CudaError> {
+    if source.len() != target.len() {
+        return Err(CudaError::BufferLength {
+            context: "cuda embedding filterbank copy",
+            expected: target.len(),
+            actual: source.len(),
+        });
+    }
+
+    runtime.stream().memcpy_dtod(source, target.data_mut())?;
+    Ok(())
+}
+
+/// Stages `[chunks, 998, 80]` host filterbanks, zero padding shorter ones
+fn stage_fbanks(staging: &mut Vec<f32>, fbanks: &[&Array2<f32>]) -> Result<(), InferenceError> {
+    staging.clear();
+    staging.resize(fbanks.len() * FBANK_LEN, 0.0);
+    for (row, fbank) in staging
+        .as_chunks_mut::<FBANK_LEN>()
+        .0
+        .iter_mut()
+        .zip(fbanks)
+    {
+        if fbank.nrows() > FBANK_FRAMES || fbank.ncols() != FBANK_MEL_BINS {
+            return Err(TensorShapeError::ShapeMismatch {
+                context: "cuda embedding filterbank",
+                expected: vec![FBANK_FRAMES, FBANK_MEL_BINS],
+                actual: fbank.shape().to_vec(),
+            }
+            .into());
+        }
+
+        for (target, source) in row
+            .as_chunks_mut::<FBANK_MEL_BINS>()
+            .0
+            .iter_mut()
+            .zip(fbank.rows())
+        {
+            for (target, source) in target.iter_mut().zip(source) {
+                *target = *source;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Stages one mask row per item, padded to whole chunks of three speakers with zero
+/// masks, each row truncated or zero padded to `mask_frames`
+fn stage_masks<'a>(
+    staging: &mut Vec<f32>,
+    masks: impl IntoIterator<Item = &'a [f32]>,
+    mask_frames: usize,
+) {
+    let masks: Vec<&[f32]> = masks.into_iter().collect();
+    let rows = masks.len().div_ceil(SPEAKERS_PER_CHUNK) * SPEAKERS_PER_CHUNK;
+    staging.clear();
+    staging.resize(rows * mask_frames, 0.0);
+
+    let Ok(mut view) = ndarray::ArrayViewMut2::from_shape((rows, mask_frames), staging) else {
+        return;
+    };
+    for (row, mask) in masks.iter().enumerate() {
+        prepare_weights(row, mask, mask_frames, &mut view);
+    }
+}
+
+fn check_multi_mask_counts(chunks: usize, masks: usize) -> Result<(), InferenceError> {
+    if chunks > MULTI_MASK_BATCH_SIZE {
+        return Err(InferenceError::BatchTooLarge {
+            context: "cuda multi-mask batch",
+            rows: chunks,
+            capacity: MULTI_MASK_BATCH_SIZE,
+        });
+    }
+
+    let expected = chunks * NUM_SPEAKERS;
+    if masks != expected {
+        return Err(InferenceError::MaskCountMismatch {
+            fbanks: chunks,
+            expected,
+            actual: masks,
+        });
+    }
+
+    Ok(())
+}
+
+fn embedding_rows(values: Vec<f32>) -> Result<Array2<f32>, InferenceError> {
+    let rows = values.len() / EMBEDDING_DIM;
+    Array2::from_shape_vec((rows, EMBEDDING_DIM), values).map_err(|source| {
+        InferenceError::OutputArray {
+            context: "cuda embedding output",
+            source,
+        }
+    })
+}
+
+fn first_row(rows: Array2<f32>) -> Result<Array1<f32>, InferenceError> {
+    if rows.nrows() == 0 {
+        return Err(InferenceError::MissingOutput {
+            context: "cuda embedding output",
+        });
+    }
+
+    Ok(rows.row(0).to_owned())
+}
+
+#[cfg(test)]
+mod tests;

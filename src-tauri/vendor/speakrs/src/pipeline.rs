@@ -1,0 +1,768 @@
+mod config;
+pub use crate::binarize::ActivityCleanup;
+pub use crate::clustering::ahc::{AhcConfig, AhcConfigError};
+#[cfg(feature = "_metrics")]
+#[cfg_attr(docsrs, doc(cfg(feature = "_metrics")))]
+pub use crate::clustering::sphere_vbx::{
+    ResponsibilitySmoothing, ResponsibilitySmoothingError, SpeakerRegularizationScale,
+    SpeakerRegularizationScaleError, SphereVbxAhcInitialization, SphereVbxInitialization,
+    SphereVbxPfConfig, SphereVbxResponsibilityTolerance, SphereVbxResponsibilityToleranceError,
+    SufficientStatisticsScale, SufficientStatisticsScaleError,
+};
+pub use crate::clustering::vbx::{ResponsibilityInitialization, VbxConfig, VbxConfigError};
+pub use crate::reconstruct::ReconstructError;
+pub(crate) use config::MIN_SPEAKER_ACTIVITY;
+pub use config::{
+    COREML_SEGMENTATION_STEP_SECONDS, CUDA_SEGMENTATION_STEP_SECONDS, CleanFrameDuration,
+    CleanFrameDurationError, ClusteringBackend, ClusteringConfig, ClusteringConfigError,
+    FAST_SEGMENTATION_STEP_SECONDS, FRAME_DURATION_SECONDS, FRAME_STEP_SECONDS, FbankSessionPool,
+    FbankSessionPoolSize, FbankSessionPoolSizeError, OrtThreadCount, OrtThreadCountError,
+    PipelineConfig, ReconstructMethod, RuntimeConfig, SEGMENTATION_STEP_SECONDS,
+    SEGMENTATION_WINDOW_SECONDS, segmentation_step_seconds,
+};
+#[cfg(feature = "_metrics")]
+#[cfg_attr(docsrs, doc(cfg(feature = "_metrics")))]
+pub use config::{
+    CoreMlChunkLayout, CoreMlFbankNormalizationScope, CoreMlFbankPreparationWorkers,
+    CoreMlSegmentationWorkers, CoreMlShapeLadder, ExperimentInferenceConfig,
+    ExperimentInferenceConfigError,
+};
+
+mod types;
+pub(crate) use types::FrameActivations;
+#[cfg(feature = "_metrics")]
+#[cfg_attr(docsrs, doc(cfg(feature = "_metrics")))]
+pub use types::InferenceStageTimings;
+pub use types::{
+    BatchInput, ChunkEmbeddings, ChunkSpeakerClusters, DecodedSegmentations, DiarizationResult,
+    DiscreteDiarization, InferenceArtifacts, PipelineError, SpeakerCountTrack,
+};
+use types::{ChunkLayout, EmbeddingPath, InferencePath, RawSegmentationWindows};
+#[cfg(test)]
+use types::{chunk_audio_raw, chunk_start_frames, total_output_frames};
+
+pub(crate) mod clustering;
+#[cfg(test)]
+use clustering::mark_inactive_speakers;
+pub(crate) use clustering::{clean_masks, select_speaker_weights, write_speaker_mask_to_slice};
+
+mod batch;
+use batch::BatchPostProcessor;
+pub use batch::{BatchOutput, BatchStreamError, OwnedBatchInput};
+
+mod concurrent;
+use concurrent::{ConcurrentEmbeddingResult, ConcurrentEmbeddingRunner};
+
+mod prefetch;
+
+mod post_inference;
+pub use post_inference::post_inference;
+
+#[cfg(feature = "coreml")]
+mod chunk_embedding;
+
+mod builder;
+pub use builder::PipelineBuilder;
+
+mod queued;
+pub use queued::{
+    QueueConfig, QueueError, QueueReceiver, QueueReceiverIter, QueueSender, QueuedDiarizationJobId,
+    QueuedDiarizationRequest, QueuedDiarizationResult,
+};
+
+#[cfg(test)]
+mod test_support;
+#[cfg(test)]
+mod tests;
+
+use std::path::Path;
+
+use ndarray::Array2;
+use tracing::{debug, trace};
+
+use crate::clustering::plda::PldaTransform;
+use crate::inference::ExecutionMode;
+use crate::inference::embedding::EmbeddingModel;
+use crate::inference::segmentation::SegmentationModel;
+use crate::powerset::PowersetMapping;
+
+/// Shared run/query methods for both owned and borrowed pipeline facades.
+/// Both structs provide `runner()`, `mode`, and `seg_model` with compatible types
+macro_rules! pipeline_run_methods {
+    () => {
+        /// Diarize audio using default config, file id defaults to "file1"
+        pub fn run(&mut self, audio: &[f32]) -> Result<DiarizationResult, PipelineError> {
+            self.run_with_file_id(audio, "file1")
+        }
+
+        /// Diarize audio with a custom file identifier for RTTM output
+        pub fn run_with_file_id(
+            &mut self,
+            audio: &[f32],
+            file_id: &str,
+        ) -> Result<DiarizationResult, PipelineError> {
+            let config = self.pipeline_config();
+            self.run_with_config(audio, file_id, &config)
+        }
+
+        /// Diarize audio with a custom file identifier and pipeline config
+        pub fn run_with_config(
+            &mut self,
+            audio: &[f32],
+            file_id: &str,
+            config: &PipelineConfig,
+        ) -> Result<DiarizationResult, PipelineError> {
+            self.runner().run(audio, file_id, config)
+        }
+
+        /// Run only inference (segmentation + embedding), returning intermediate artifacts
+        pub fn run_inference_only(
+            &mut self,
+            audio: &[f32],
+        ) -> Result<InferenceArtifacts, PipelineError> {
+            self.runner().run_inference(audio)
+        }
+
+        /// Default pipeline config used by `run` and `run_batch`
+        pub fn pipeline_config(&self) -> PipelineConfig {
+            self.default_config.clone()
+        }
+
+        /// Diarize a batch of files, keeping all hardware busy across file boundaries
+        pub fn run_batch(
+            &mut self,
+            files: &[BatchInput<'_>],
+        ) -> Result<Vec<DiarizationResult>, PipelineError> {
+            let config = self.pipeline_config();
+            self.run_batch_with_config(files, &config)
+        }
+
+        /// Diarize a batch of files with custom config
+        pub fn run_batch_with_config(
+            &mut self,
+            files: &[BatchInput<'_>],
+            config: &PipelineConfig,
+        ) -> Result<Vec<DiarizationResult>, PipelineError> {
+            self.runner().run_batch(files, config)
+        }
+
+        /// Diarize owned inputs as they arrive, returning outputs in input order
+        ///
+        /// The producer is consumed on the calling thread. Audio is released after
+        /// inference. No partial output is returned if an input or pipeline stage
+        /// fails. CoreML retains its existing whole-batch chunk schedule. CUDA
+        /// modes take the next input before the current one finishes, so they
+        /// segment it while the current file's embedding runs and hold its audio
+        pub fn run_batch_stream<E>(
+            &mut self,
+            files: impl IntoIterator<Item = Result<OwnedBatchInput, E>>,
+        ) -> Result<Vec<BatchOutput>, BatchStreamError<E>> {
+            let config = self.pipeline_config();
+            self.run_batch_stream_with_config(files, &config)
+        }
+
+        /// Diarize an ordered input stream with a custom pipeline config
+        ///
+        /// Errors from the producer are kept separate from pipeline errors
+        pub fn run_batch_stream_with_config<E>(
+            &mut self,
+            files: impl IntoIterator<Item = Result<OwnedBatchInput, E>>,
+            config: &PipelineConfig,
+        ) -> Result<Vec<BatchOutput>, BatchStreamError<E>> {
+            self.runner().run_batch_stream(files, config)
+        }
+
+        /// Segmentation step size in seconds for the current execution mode
+        pub fn segmentation_step(&self) -> f64 {
+            self.seg_model.step_seconds()
+        }
+    };
+}
+
+/// Owned pipeline that manages its own model lifetimes
+///
+/// Construct directly for the default path, or use [`PipelineBuilder`] for custom config:
+/// ```no_run
+/// use speakrs::{ExecutionMode, OwnedDiarizationPipeline};
+///
+/// let mut pipeline = OwnedDiarizationPipeline::from_pretrained(ExecutionMode::Cpu)?;
+/// # Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+/// ```
+pub struct OwnedDiarizationPipeline {
+    pub(crate) seg_model: SegmentationModel,
+    pub(crate) emb_model: EmbeddingModel,
+    pub(crate) plda: PldaTransform,
+    pub(crate) powerset: PowersetMapping,
+    pub(crate) default_config: PipelineConfig,
+    #[cfg(feature = "coreml")]
+    coreml_chunk_execution_policy: config::CoreMlChunkExecutionPolicy,
+}
+
+impl OwnedDiarizationPipeline {
+    /// Load models from a local directory using default pipeline and runtime config
+    pub fn from_dir(
+        models_dir: impl Into<std::path::PathBuf>,
+        mode: ExecutionMode,
+    ) -> Result<Self, PipelineError> {
+        PipelineBuilder::from_dir(models_dir, mode)?.build()
+    }
+
+    /// Build from a resolved [`ModelBundle`](crate::models::ModelBundle) using default config
+    pub fn from_bundle(
+        bundle: crate::models::ModelBundle,
+        mode: ExecutionMode,
+    ) -> Result<Self, PipelineError> {
+        PipelineBuilder::from_bundle(bundle, mode).build()
+    }
+
+    /// Download models from HuggingFace and build with default config
+    #[cfg(feature = "online")]
+    pub fn from_pretrained(mode: ExecutionMode) -> Result<Self, PipelineError> {
+        PipelineBuilder::from_pretrained(mode)?.build()
+    }
+
+    /// Create an independent pipeline handle that can run on another thread
+    ///
+    /// The new handle has private scratch buffers. Native CPU handles share immutable
+    /// weights. In ONNX Runtime modes the handle shares the
+    /// loaded sessions, and calls that use the same shared session are serialized
+    /// through inference, output validation, and output copying. In CUDA modes it loads
+    /// its own copy of the models on a new CUDA stream, because CUDA state is used by
+    /// one thread at a time
+    #[cfg(all(
+        any(feature = "cpu", feature = "migraphx", feature = "_cuda"),
+        not(feature = "coreml")
+    ))]
+    #[cfg_attr(
+        docsrs,
+        doc(cfg(all(
+            any(feature = "cpu", feature = "_cuda", feature = "migraphx"),
+            not(feature = "coreml")
+        )))
+    )]
+    pub fn clone_shared(&self) -> Result<Self, PipelineError> {
+        Ok(Self {
+            seg_model: self.seg_model.clone_shared()?,
+            emb_model: self.emb_model.clone_shared()?,
+            plda: self.plda.clone(),
+            powerset: self.powerset.clone(),
+            default_config: self.default_config.clone(),
+        })
+    }
+
+    pipeline_run_methods!();
+
+    /// Run post-inference (clustering + reconstruction) on pre-computed artifacts
+    ///
+    /// Does not need mutable model access, so it can run on a background
+    /// thread while the next file's inference proceeds
+    pub fn finish_post_inference(
+        &self,
+        artifacts: InferenceArtifacts,
+        config: &PipelineConfig,
+    ) -> Result<DiarizationResult, PipelineError> {
+        post_inference(artifacts, config, &self.plda)
+    }
+
+    /// Convert into a background-processing queue
+    pub fn into_queued(self) -> Result<(QueueSender, QueueReceiver), QueueError> {
+        let config = self.default_config.clone();
+        self.into_queued_with_config(config)
+    }
+
+    /// Convert into a background-processing queue with custom pipeline config
+    pub fn into_queued_with_config(
+        self,
+        config: PipelineConfig,
+    ) -> Result<(QueueSender, QueueReceiver), QueueError> {
+        QueueSender::new(self, config, QueueConfig::default())
+    }
+
+    /// Convert into a background-processing queue with custom queue capacity
+    pub fn into_queued_with_queue_config(
+        self,
+        queue: QueueConfig,
+    ) -> Result<(QueueSender, QueueReceiver), QueueError> {
+        let config = self.default_config.clone();
+        self.into_queued_with_configs(config, queue)
+    }
+
+    /// Convert into a background-processing queue with custom pipeline and queue config
+    pub fn into_queued_with_configs(
+        self,
+        config: PipelineConfig,
+        queue: QueueConfig,
+    ) -> Result<(QueueSender, QueueReceiver), QueueError> {
+        QueueSender::new(self, config, queue)
+    }
+}
+
+/// Segmentation windows a file's segmentation may run ahead of its embedding
+const CONCURRENT_WINDOW_QUEUE: usize = 64;
+
+/// The model settings one file's concurrent inference uses, read before the
+/// segmentation model moves to its own thread
+struct ConcurrentPlan {
+    layout: ChunkLayout,
+    embedding_path: EmbeddingPath,
+    batch_size: usize,
+    min_num_samples: usize,
+}
+
+impl ConcurrentPlan {
+    /// Embeds the windows segmentation sends for `audio` as they arrive
+    fn embed(
+        &self,
+        powerset: &PowersetMapping,
+        emb_model: &mut EmbeddingModel,
+        audio: &[f32],
+        windows: crossbeam_channel::Receiver<Array2<f32>>,
+    ) -> Result<ConcurrentEmbeddingResult, PipelineError> {
+        let runner = ConcurrentEmbeddingRunner {
+            powerset,
+            audio,
+            step_samples: self.layout.step_samples,
+            window_samples: self.layout.window_samples,
+            num_speakers: 3,
+        };
+        match self.embedding_path {
+            EmbeddingPath::MultiMask => {
+                runner.run_multi_mask(windows, emb_model, self.batch_size, self.min_num_samples)
+            }
+            EmbeddingPath::Split => {
+                runner.run_split(windows, emb_model, self.batch_size, self.min_num_samples)
+            }
+            EmbeddingPath::Masked => runner.run_masked(windows, emb_model, self.batch_size),
+        }
+    }
+
+    /// The inference artifacts of one file's embedded windows
+    fn artifacts(
+        &self,
+        result: ConcurrentEmbeddingResult,
+        inference_elapsed: std::time::Duration,
+    ) -> Result<InferenceArtifacts, PipelineError> {
+        let layout = self.layout.clone();
+        if result.is_empty() {
+            return Ok(InferenceArtifacts::empty_with_layout(layout));
+        }
+
+        let layout = layout.with_num_chunks(result.num_chunks);
+        debug!(
+            target: "speakrs::timing",
+            chunks = result.segmentations.shape()[0],
+            speakers = result.segmentations.shape()[2],
+            inference_ms = inference_elapsed.as_millis(),
+            embedding_path = ?self.embedding_path,
+            "Concurrent seg+emb complete"
+        );
+
+        InferenceArtifacts::try_new(
+            layout,
+            DecodedSegmentations(result.segmentations),
+            ChunkEmbeddings(result.embeddings),
+            #[cfg(feature = "_metrics")]
+            None,
+        )
+    }
+}
+
+/// Borrowed pipeline for when you manage model lifetimes yourself
+pub struct DiarizationPipeline<'a> {
+    seg_model: &'a mut SegmentationModel,
+    emb_model: &'a mut EmbeddingModel,
+    plda: PldaTransform,
+    powerset: PowersetMapping,
+    default_config: PipelineConfig,
+    #[cfg(feature = "coreml")]
+    coreml_chunk_execution_policy: config::CoreMlChunkExecutionPolicy,
+}
+
+impl<'a> DiarizationPipeline<'a> {
+    /// Build a pipeline from pre-loaded models and a PLDA parameters directory
+    pub fn new(
+        seg_model: &'a mut SegmentationModel,
+        emb_model: &'a mut EmbeddingModel,
+        models_dir: &Path,
+    ) -> Result<Self, PipelineError> {
+        let default_config = PipelineConfig::for_mode(seg_model.mode());
+        Self::new_with_config(seg_model, emb_model, models_dir, default_config)
+    }
+
+    /// Build a pipeline from pre-loaded models with custom pipeline config
+    pub fn new_with_config(
+        seg_model: &'a mut SegmentationModel,
+        emb_model: &'a mut EmbeddingModel,
+        models_dir: &Path,
+        default_config: PipelineConfig,
+    ) -> Result<Self, PipelineError> {
+        Ok(Self {
+            seg_model,
+            emb_model,
+            plda: PldaTransform::from_dir(models_dir)?,
+            powerset: PowersetMapping::new(3, 2),
+            default_config,
+            #[cfg(feature = "coreml")]
+            coreml_chunk_execution_policy: config::CoreMlChunkExecutionPolicy::default(),
+        })
+    }
+
+    /// Default segmentation step in seconds (CPU mode)
+    pub fn default_segmentation_step() -> f32 {
+        segmentation_step_seconds(ExecutionMode::Cpu) as f32
+    }
+
+    pipeline_run_methods!();
+}
+
+impl OwnedDiarizationPipeline {
+    fn runner(&mut self) -> PipelineRunner<'_> {
+        PipelineRunner {
+            seg_model: &mut self.seg_model,
+            emb_model: &mut self.emb_model,
+            plda: &self.plda,
+            powerset: &self.powerset,
+            #[cfg(feature = "coreml")]
+            coreml_chunk_execution_policy: self.coreml_chunk_execution_policy,
+        }
+    }
+}
+
+impl<'a> DiarizationPipeline<'a> {
+    fn runner(&mut self) -> PipelineRunner<'_> {
+        PipelineRunner {
+            seg_model: self.seg_model,
+            emb_model: self.emb_model,
+            plda: &self.plda,
+            powerset: &self.powerset,
+            #[cfg(feature = "coreml")]
+            coreml_chunk_execution_policy: self.coreml_chunk_execution_policy,
+        }
+    }
+}
+
+struct PipelineRunner<'a> {
+    seg_model: &'a mut SegmentationModel,
+    emb_model: &'a mut EmbeddingModel,
+    plda: &'a PldaTransform,
+    powerset: &'a PowersetMapping,
+    #[cfg(feature = "coreml")]
+    coreml_chunk_execution_policy: config::CoreMlChunkExecutionPolicy,
+}
+
+impl<'a> PipelineRunner<'a> {
+    fn run(
+        &mut self,
+        audio: &[f32],
+        file_id: &str,
+        config: &PipelineConfig,
+    ) -> Result<DiarizationResult, PipelineError> {
+        let run_start = std::time::Instant::now();
+        let inference_artifacts = self.run_inference(audio)?;
+        let inference_ms = run_start.elapsed().as_millis();
+        let post_start = std::time::Instant::now();
+        let result = self.run_post_inference(inference_artifacts, config)?;
+        let post_ms = post_start.elapsed().as_millis();
+        let total_ms = run_start.elapsed().as_millis();
+        let audio_secs = audio.len() as f64 / 16_000.0;
+        trace!(
+            target: "speakrs::timing",
+            %file_id,
+            inference_ms,
+            post_ms,
+            total_ms,
+            audio_secs,
+            "Pipeline complete",
+        );
+        Ok(result)
+    }
+
+    fn inference_path(&self) -> InferencePath {
+        if matches!(
+            self.seg_model.mode(),
+            ExecutionMode::CoreMl
+                | ExecutionMode::CoreMlFast
+                | ExecutionMode::Cuda
+                | ExecutionMode::CudaFast
+                | ExecutionMode::MiGraphX
+        ) {
+            InferencePath::Concurrent
+        } else {
+            InferencePath::Sequential
+        }
+    }
+
+    fn embedding_path(&self) -> EmbeddingPath {
+        let path = if self.emb_model.prefers_multi_mask_path()
+            && self.emb_model.multi_mask_batch_size() > 0
+        {
+            EmbeddingPath::MultiMask
+        } else if self.emb_model.prefers_chunk_embedding_path()
+            && self.emb_model.split_primary_batch_size() > 0
+        {
+            EmbeddingPath::Split
+        } else {
+            EmbeddingPath::Masked
+        };
+        debug!(?path, "Embedding path selected");
+        path
+    }
+
+    fn run_batch(
+        &mut self,
+        files: &[BatchInput<'_>],
+        config: &PipelineConfig,
+    ) -> Result<Vec<DiarizationResult>, PipelineError> {
+        if files.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // try batch chunk embedding for the concurrent path before falling back
+        #[cfg(feature = "coreml")]
+        if matches!(self.inference_path(), InferencePath::Concurrent)
+            && let Some(results) = chunk_embedding::try_batch_chunk_embedding(
+                self.seg_model,
+                self.emb_model,
+                self.powerset,
+                self.plda,
+                files,
+                config,
+                self.coreml_chunk_execution_policy,
+            )?
+        {
+            return Ok(results);
+        }
+
+        if matches!(
+            self.seg_model.mode(),
+            ExecutionMode::CoreMl | ExecutionMode::CoreMlFast
+        ) || files.len() == 1
+        {
+            return files
+                .iter()
+                .map(|file| self.run(file.audio, file.file_id, config))
+                .collect();
+        }
+
+        let inputs = files
+            .iter()
+            .map(|file| Ok::<_, std::convert::Infallible>((file.file_id, file.audio)));
+        self.run_ordered_stream(inputs, config)
+            .map(|outputs| outputs.into_iter().map(|output| output.result).collect())
+            .map_err(|error| match error {
+                BatchStreamError::Input(never) => match never {},
+                BatchStreamError::Pipeline(error) => error,
+            })
+    }
+
+    fn run_batch_stream<E>(
+        &mut self,
+        files: impl IntoIterator<Item = Result<OwnedBatchInput, E>>,
+        config: &PipelineConfig,
+    ) -> Result<Vec<BatchOutput>, BatchStreamError<E>> {
+        if matches!(
+            self.seg_model.mode(),
+            ExecutionMode::CoreMl | ExecutionMode::CoreMlFast
+        ) {
+            let audio = files
+                .into_iter()
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(BatchStreamError::Input)?;
+            let inputs: Vec<_> = audio
+                .iter()
+                .map(|file| BatchInput {
+                    audio: &file.audio,
+                    file_id: &file.file_id,
+                })
+                .collect();
+            let results = self.run_batch(&inputs, config)?;
+            return Ok(audio
+                .into_iter()
+                .zip(results)
+                .map(|(file, result)| BatchOutput {
+                    file_id: file.file_id,
+                    audio_secs: file.audio.len() as f64 / 16_000.0,
+                    result,
+                })
+                .collect());
+        }
+
+        let inputs = files
+            .into_iter()
+            .map(|file| file.map(|file| (file.file_id, file.audio)));
+        self.run_ordered_stream(inputs, config)
+    }
+
+    fn run_ordered_stream<E, A: AsRef<[f32]> + Send + Sync, S: AsRef<str>>(
+        &mut self,
+        files: impl IntoIterator<Item = Result<(S, A), E>>,
+        config: &PipelineConfig,
+    ) -> Result<Vec<BatchOutput>, BatchStreamError<E>> {
+        let plda = self.plda;
+        // CUDA segmentation runs on its own stream, so the next file's can overlap
+        // this file's last embedding batches
+        let prefetch = matches!(
+            self.seg_model.mode(),
+            ExecutionMode::Cuda | ExecutionMode::CudaFast
+        ) && matches!(self.inference_path(), InferencePath::Concurrent);
+        std::thread::scope(|scope| {
+            let mut post = BatchPostProcessor::new(scope, plda, config)?;
+            if prefetch {
+                let run = self.run_prefetched_stream(files, &mut post);
+                // an earlier post-inference error takes precedence over a later input or inference error
+                let outputs = post.finish()?;
+                run?;
+                return Ok(outputs);
+            }
+            let run = (|| {
+                let mut files = files.into_iter();
+                loop {
+                    post.collect_ready()?;
+                    let Some(file) = files.next() else {
+                        break;
+                    };
+                    let (file_id, audio) = file.map_err(BatchStreamError::Input)?;
+                    let file_id = file_id.as_ref().to_owned();
+                    let start = std::time::Instant::now();
+                    let span = tracing::debug_span!("batch_inference", %file_id);
+                    let artifacts = span.in_scope(|| self.run_inference(audio.as_ref()))?;
+                    let inference_ms = start.elapsed().as_millis();
+                    let audio_secs = audio.as_ref().len() as f64 / 16_000.0;
+                    drop(audio);
+                    post.submit(artifacts, file_id, audio_secs, start, inference_ms)?;
+                }
+
+                Ok::<_, BatchStreamError<E>>(())
+            })();
+            // an earlier post-inference error takes precedence over a later input or inference error
+            let outputs = post.finish()?;
+            run?;
+            Ok(outputs)
+        })
+    }
+
+    fn run_inference(&mut self, audio: &[f32]) -> Result<InferenceArtifacts, PipelineError> {
+        match self.inference_path() {
+            InferencePath::Sequential => self.run_sequential_inference(audio),
+            InferencePath::Concurrent => {
+                #[cfg(feature = "coreml")]
+                if let Some(result) = chunk_embedding::try_chunk_embedding(
+                    self.seg_model,
+                    self.emb_model,
+                    self.powerset,
+                    audio,
+                    self.coreml_chunk_execution_policy,
+                )? {
+                    return Ok(result);
+                }
+                self.run_concurrent_inference(audio)
+            }
+        }
+    }
+
+    fn run_sequential_inference(
+        &mut self,
+        audio: &[f32],
+    ) -> Result<InferenceArtifacts, PipelineError> {
+        let raw_windows = RawSegmentationWindows(self.seg_model.run(audio)?);
+        debug!(windows = raw_windows.0.len(), "Segmentation complete");
+
+        let segmentations = raw_windows.decode(self.powerset)?;
+        let layout = ChunkLayout::new(
+            self.seg_model.step_seconds(),
+            self.seg_model.step_samples(),
+            self.seg_model.window_samples(),
+            segmentations.nchunks(),
+        );
+        let embeddings = segmentations.extract_embeddings(
+            audio,
+            self.emb_model,
+            &layout,
+            self.embedding_path(),
+        )?;
+
+        debug!(
+            chunks = segmentations.nchunks(),
+            speakers = segmentations.num_speakers(),
+            "Embeddings complete"
+        );
+
+        InferenceArtifacts::try_new(
+            layout,
+            segmentations,
+            embeddings,
+            #[cfg(feature = "_metrics")]
+            None,
+        )
+    }
+
+    fn run_concurrent_inference(
+        &mut self,
+        audio: &[f32],
+    ) -> Result<InferenceArtifacts, PipelineError> {
+        let plan = self.concurrent_plan();
+        let (tx, rx) = crossbeam_channel::bounded::<Array2<f32>>(CONCURRENT_WINDOW_QUEUE);
+
+        let inference_start = std::time::Instant::now();
+        let use_parallel_seg = matches!(
+            self.seg_model.mode(),
+            ExecutionMode::CoreMl | ExecutionMode::CoreMlFast
+        );
+        let (segmentation_result, embedding_result) = std::thread::scope(|scope| {
+            let segmentation_handle = if use_parallel_seg {
+                #[cfg(feature = "coreml")]
+                {
+                    scope.spawn(|| self.seg_model.run_streaming_parallel(audio, tx, 4, None))
+                }
+                #[cfg(not(feature = "coreml"))]
+                {
+                    scope.spawn(|| self.seg_model.run_streaming(audio, tx))
+                }
+            } else {
+                scope.spawn(|| self.seg_model.run_streaming(audio, tx))
+            };
+
+            let embedding_result = plan.embed(self.powerset, self.emb_model, audio, rx);
+
+            let segmentation_result =
+                segmentation_handle
+                    .join()
+                    .map_err(|_| PipelineError::WorkerPanic {
+                        worker: "concurrent segmentation".to_owned(),
+                    });
+            (segmentation_result, embedding_result)
+        });
+        let inference_elapsed = inference_start.elapsed();
+
+        segmentation_result??;
+        plan.artifacts(embedding_result?, inference_elapsed)
+    }
+
+    /// The per-file settings of concurrent inference, read from both models up front
+    fn concurrent_plan(&self) -> ConcurrentPlan {
+        let embedding_path = self.embedding_path();
+        let batch_size = match embedding_path {
+            EmbeddingPath::MultiMask => self.emb_model.multi_mask_batch_size(),
+            EmbeddingPath::Split => self.emb_model.split_primary_batch_size(),
+            EmbeddingPath::Masked => self.emb_model.primary_batch_size(),
+        };
+        ConcurrentPlan {
+            layout: ChunkLayout::without_frame_extent(
+                self.seg_model.step_seconds(),
+                self.seg_model.step_samples(),
+                self.seg_model.window_samples(),
+            ),
+            embedding_path,
+            batch_size,
+            min_num_samples: self.emb_model.min_num_samples(),
+        }
+    }
+
+    fn run_post_inference(
+        &mut self,
+        inference_artifacts: InferenceArtifacts,
+        config: &PipelineConfig,
+    ) -> Result<DiarizationResult, PipelineError> {
+        post_inference(inference_artifacts, config, self.plda)
+    }
+}

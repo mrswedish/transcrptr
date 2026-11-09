@@ -13,6 +13,8 @@ Avskrift (referensimplementation för förbehandling/avkodning)
 Talaridentifiering (valfri funktion "Identifiera talare")
   speakrs — Rust-implementation av pyannote community-1-pipelinen. Licens: Apache-2.0.
     https://github.com/avencera/speakrs
+    Används som lokalt ändrad kopia i src-tauri/vendor/speakrs (matrismultiplikation via
+    `gemm`-cratet, MIT/Apache-2.0); ändringarna beskrivs i TRANSKRIBERA-PATCH.md.
   Modeller (konverterade av speakrs, ej omtränade), hämtas från
   https://huggingface.co/avencera/speakrs-models (fast revision, SHA-256-kontroll):
     - pyannote/segmentation-3.0. Licens: MIT. Upphovsrätt: CNRS.

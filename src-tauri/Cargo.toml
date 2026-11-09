@@ -45,7 +45,8 @@ rustfft = "6.4"
 regex = "1"
 sha2 = "0.10"
 # Talaridentifiering: pyannote community-1-pipelinen i ren Rust (CPU, ingen onnxruntime).
-speakrs = { version = "0.7", default-features = false, features = ["cpu"] }
+# Lokal patchad kopia (snabbare matrismultiplikation), se vendor/speakrs/TRANSKRIBERA-PATCH.md.
+speakrs = { path = "vendor/speakrs", default-features = false, features = ["cpu"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 whisper-rs = { version = "0.16", features = ["metal"] }
