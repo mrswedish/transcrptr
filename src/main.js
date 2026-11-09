@@ -2067,6 +2067,7 @@ async function processAudioFile(filePath) {
     }
   } catch (err) {
     console.error("transcribe_file error:", err);
+    logToFile(`processAudioFile: FEL ${err && err.stack ? err.stack : err}`);
     const errMsg = typeof err === "string" ? err : err.message || String(err);
     if (isCancelling || errMsg.toLowerCase().includes("cancel")) {
       outputText.value += "\n\n[Transkribering avbruten]";
