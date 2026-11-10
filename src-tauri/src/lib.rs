@@ -16,6 +16,7 @@ mod models;
 mod pianissimo;
 mod session;
 mod types;
+mod vocabulary;
 mod whisper;
 use decode::StreamingDecoder;
 use types::*;
@@ -109,7 +110,6 @@ async fn transcribe_file(
     quantized: bool,
     revision: String,
     language: String,
-    initial_prompt: Option<String>,
     use_gpu: Option<bool>,
     thread_count: Option<u32>,
     gpu_device: Option<i32>,
@@ -122,6 +122,9 @@ async fn transcribe_file(
     }
     let cancel = Arc::clone(&state.inner().cancel_flag);
     let app = app_handle.clone();
+    // Personliga ordlistor: ledtråd till Whisper och efterkorrigering för alla motorer.
+    let vocab_entries = vocabulary::active_entries(&vocabulary::load_store(&app_handle).unwrap_or_default());
+    let initial_prompt = vocabulary::whisper_prompt(&vocab_entries);
     // Talaridentifiering är valfri och körs bara om modellerna redan är nedladdade.
     let diar_dir = if identify_speakers.unwrap_or(false) {
         let d = models::diarization_dir(&app_handle)?;
@@ -161,6 +164,20 @@ async fn transcribe_file(
             let mut segs = engine::run_file(engine.as_mut(), &mut dec, &cancel, &emit)?;
             drop(engine);
             drop(dec);
+
+            if !vocab_entries.is_empty() {
+                let mut changes: Vec<vocabulary::Change> = Vec::new();
+                for seg in segs.iter_mut() {
+                    let (text, c) = vocabulary::correct_text(&seg.text, &vocab_entries);
+                    if !c.is_empty() {
+                        seg.text = text;
+                        seg.tokens.clear(); // ordnivå-konfidensen stämmer inte längre
+                        changes.extend(c);
+                    }
+                }
+                log_line(&format!("ordlista: {} ord rättades", changes.len()));
+                let _ = app.emit("vocabulary_applied", changes);
+            }
 
             if let Some(dir) = diar_dir {
                 if !cancel.load(Ordering::Relaxed) && !segs.is_empty() {
@@ -311,6 +328,11 @@ pub fn run() {
             models::get_available_models,
             models::delete_model,
             models::check_diarization_models,
+            vocabulary::vocab_load,
+            vocabulary::vocab_save,
+            vocabulary::vocab_dir,
+            vocabulary::vocab_add_entry,
+            vocabulary::apply_vocabulary,
             models::download_diarization_models,
             session::get_disk_info,
             start_backend_recording,

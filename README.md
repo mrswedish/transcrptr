@@ -29,7 +29,7 @@ Transkribera använder [KB-whisper](https://huggingface.co/KBLab/kb-whisper-smal
 - **⏹️ Avbryt transkribering:** Avbryt pågående transkribering när som helst med en knapp. Inspelad audio bevaras alltid och kan sparas även efter avbrott.
 - **🔄 Gör om transkribering:** Byt modell och kör om utan att spela in på nytt.
 - **✏️ Redigera transkribering:** Redigera, sök och ersätt direkt i appen (Ctrl+F).
-- **📝 Personlig ordlista:** Mata in facktermer och medicinsk terminologi som skickas som ledtrådar till transkriberingsmotorn — förbättrar igenkänning av domänspecifika ord.
+- **📝 Personliga ordlistor:** Flera ordlistor (till exempel per avdelning) med facktermer och egennamn. Efter transkriberingen rättas liknande felhörningar automatiskt, oavsett motor — till exempel "Kulturum" till "Qulturum", även med ändelse ("Kulturumet" blir "Qulturumet"). Rättar du ett ord i segmentvyn kan du lägga till det i ordlistan med ett klick. Listorna sparas i en fil som kan säkerhetskopieras. För Whisper skickas orden dessutom som ledtråd.
 - **🎬 Segmentredigering:** Visa transkriberingen som tidsstämplade rader — klicka på en tidsstämpel för att hoppa direkt till den punkten i inspelningen. Progressiv rendering håller UI:t responsivt även för flertimmes-transkriberingar.
 - **🔊 Synkad ljudspelare:** Spela upp inspelningen direkt i appen med automatisk markering av det aktiva textsegmentet.
 - **🟡 Konfidensfärgning:** Ord med låg igenkänningssäkerhet markeras med färg i segmentvyn — gul = osäker, röd = mycket osäker. Tröskelvärdet justeras i inställningarna.

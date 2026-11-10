@@ -122,7 +122,10 @@ let dlRevision = "standard";
 let transcriptionLanguage = "sv";
 
 // Personlig ordlista
-let personalVocabulary = [];  // Array of strings
+// Ordlistor lagras i en fil via Rust (ordlistor.json); här en kopia att redigera.
+let vocabStore = { version: 1, lists: [] };
+let vocabSelected = null;   // id på vald lista i inställningarna
+let pendingVocabChanges = []; // ersättningar från senaste transkriberingen
 
 // Segment editor & audio player state
 let transcriptSegments = [];        // [{startMs, endMs, text, tokens}] — accumulated across chunks
@@ -174,7 +177,6 @@ function loadSettings() {
   const wasapi = localStorage.getItem("wasapiEnabled");
   const gpu = localStorage.getItem("useGpu");
   identifySpeakers = localStorage.getItem("identifySpeakers") === "true";
-  const vocab = localStorage.getItem("personalVocabulary");
   const confThresh = localStorage.getItem("confidenceThreshold");
 
   if (size) modelSize = size;
@@ -184,9 +186,6 @@ function loadSettings() {
   if (micId) selectedMicId = micId;
   if (wasapi !== null) wasapiEnabled = wasapi === "true";
   if (gpu !== null) useGpu = gpu === "true";
-  if (vocab) {
-    try { personalVocabulary = JSON.parse(vocab); } catch { personalVocabulary = []; }
-  }
   if (confThresh !== null) confidenceThreshold = parseFloat(confThresh);
 
   const wasapiToggle = document.getElementById("wasapi-toggle");
@@ -230,8 +229,7 @@ function loadSettings() {
   if (confSlider) confSlider.value = Math.round(confidenceThreshold * 100);
   if (confLabel) confLabel.textContent = Math.round(confidenceThreshold * 100) + "%";
 
-  const vocabInput = document.getElementById("vocabulary-input");
-  if (vocabInput) vocabInput.value = personalVocabulary.join("\n");
+  renderVocab();
 
   // Sync pill pickers to current state
   // Spegla sparad modell i kvalitetsvalet
@@ -337,6 +335,10 @@ async function setupEventListeners() {
     const dlMb = (downloaded / 1048576).toFixed(1);
     const totMb = (total / 1048576).toFixed(1);
     loadingText.innerText = `Laddar ner modell... ${dlMb}MB / ${totMb}MB`;
+  });
+
+  await listen("vocabulary_applied", (event) => {
+    pendingVocabChanges = Array.isArray(event.payload) ? event.payload : [];
   });
 
   await listen("diarization_phase", (event) => {
@@ -570,6 +572,7 @@ async function initialize() {
   }
 
   initPlayer();
+  await loadVocab();
   loadSettings();
   await loadMicrophones();
   setupEventListeners();
@@ -1095,12 +1098,8 @@ btnSaveSettings.addEventListener("click", async () => {
   localStorage.setItem("selectedMicId", newMicId);
   localStorage.setItem("wasapiEnabled", newWasapi.toString());
 
-  // Personlig ordlista
-  const vocabInput = document.getElementById("vocabulary-input");
-  if (vocabInput) {
-    personalVocabulary = vocabInput.value.split("\n").map(s => s.trim()).filter(Boolean);
-    localStorage.setItem("personalVocabulary", JSON.stringify(personalVocabulary));
-  }
+  // Ordlistor (sparas direkt vid ändring; här säkerställs att allt är skrivet)
+  await saveVocabNow();
 
   // Confidence threshold
   const confSlider = document.getElementById("confidence-threshold-slider");
@@ -1796,7 +1795,10 @@ function buildSegmentRow(seg, idx) {
     outputText.value = buildPlainText();
     autoGrow();
   });
+  let textAtFocus = "";
+  ta.addEventListener("focus", () => { textAtFocus = transcriptSegments[idx].text; });
   ta.addEventListener("blur", () => {
+    if (textAtFocus && ta.value !== textAtFocus) suggestVocabFromEdit(textAtFocus, ta.value);
     const newView = buildConfidenceView(transcriptSegments[idx]);
     newView.title = "Klicka för att redigera";
     newView.addEventListener("click", () => { newView.classList.add("hidden"); ta.classList.remove("hidden"); requestAnimationFrame(autoGrow); ta.focus(); });
@@ -2063,10 +2065,11 @@ async function processAudioFile(filePath) {
     transcriptSegments = [];
     speakerNames = {};
     speakerNotice = null;
+    pendingVocabChanges = [];
+    hideNotice();
     teardownPlayer();
     showRawView();
 
-    const initialPrompt = personalVocabulary.length > 0 ? personalVocabulary.join(", ") : null;
     isCancelling = false;
     if (btnCancelTranscription) btnCancelTranscription.classList.remove("hidden");
     // Rust beräknar overall-progress (0–99%) och emitterar det direkt.
@@ -2080,7 +2083,6 @@ async function processAudioFile(filePath) {
       filePath,
       ...(await resolveEngine()),
       language:     transcriptionLanguage,
-      initialPrompt,
       useGpu,
       threadCount,
       gpuDevice: gpuDeviceIndex,
@@ -2107,6 +2109,9 @@ async function processAudioFile(filePath) {
       speakerNotice = null;
     }
     outputText.scrollTop = outputText.scrollHeight;
+    if (pendingVocabChanges.length > 0) {
+      showNotice(`Ordlistan rättade ${pendingVocabChanges.length} ord: ${summarizeChanges(pendingVocabChanges)}.`);
+    }
 
     if (transcriptSegments.length > 0) {
       logToFile(`processAudioFile: anropar renderSegmentEditor (${transcriptSegments.length} segment)`);
@@ -2337,30 +2342,189 @@ if (btnTheme) {
 }
 
 // -------------------------------------------------------------
-// Personlig ordlista — import/export
+// Ordlistor — flera listor, lagrade i en fil (Rust), rättar texten efter transkribering
 // -------------------------------------------------------------
+function newVocabId() {
+  return "l" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+}
+
+function vocabEntryCount(text) {
+  return text.split("\n").filter(l => l.split("#")[0].trim()).length;
+}
+
+async function loadVocab() {
+  try {
+    vocabStore = await invoke("vocab_load");
+  } catch (err) {
+    logToFile(`loadVocab: ${err}`);
+    vocabStore = { version: 1, lists: [] };
+    try { await message(String(err), { title: "Ordlistorna", kind: "warning" }); } catch (_) {}
+  }
+  // Engångsflytt från tidigare versioner (ordlistan låg i webbläsarens lagring).
+  const legacy = localStorage.getItem("personalVocabulary");
+  if (legacy) {
+    try {
+      const words = JSON.parse(legacy);
+      if (Array.isArray(words) && words.length && vocabStore.lists.length === 0) {
+        vocabStore.lists.push({ id: newVocabId(), name: "Min ordlista", enabled: true, text: words.join("\n") + "\n" });
+        await invoke("vocab_save", { store: vocabStore });
+      }
+      localStorage.removeItem("personalVocabulary");
+    } catch (e) { logToFile(`vocab-migrering misslyckades: ${e}`); }
+  }
+  if (!vocabStore.lists.some(l => l.id === vocabSelected)) vocabSelected = vocabStore.lists[0]?.id ?? null;
+}
+
+let vocabSaveTimer = null;
+function saveVocabSoon() {
+  clearTimeout(vocabSaveTimer);
+  vocabSaveTimer = setTimeout(saveVocabNow, 600);
+}
+async function saveVocabNow() {
+  clearTimeout(vocabSaveTimer);
+  vocabSaveTimer = null;
+  try { await invoke("vocab_save", { store: vocabStore }); }
+  catch (err) { logToFile(`saveVocab: ${err}`); }
+}
+
+function selectedVocabList() {
+  return vocabStore.lists.find(l => l.id === vocabSelected) || null;
+}
+
+// Ritar listraderna och redigeringsfälten i inställningarna.
+function renderVocab() {
+  const ul = document.getElementById("vocab-lists");
+  if (!ul) return;
+  ul.replaceChildren();
+  if (vocabStore.lists.length === 0) {
+    const p = document.createElement("li");
+    p.className = "hint";
+    p.textContent = "Du har inga ordlistor än. Skapa en med Ny ordlista.";
+    ul.appendChild(p);
+  }
+  for (const list of vocabStore.lists) {
+    const li = document.createElement("li");
+    li.className = `model-row ${list.id === vocabSelected ? "is-active" : ""}`;
+
+    const label = document.createElement("label");
+    label.className = "flex items-center gap-3 min-w-0 flex-1 cursor-pointer";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.className = "w-4 h-4 accent-primary shrink-0";
+    cb.checked = list.enabled;
+    cb.setAttribute("aria-label", `Använd ordlistan ${list.name} vid transkribering`);
+    cb.addEventListener("change", () => { list.enabled = cb.checked; saveVocabSoon(); });
+    label.appendChild(cb);
+    const name = document.createElement("span");
+    name.className = "text-sm font-semibold truncate";
+    name.textContent = list.name;
+    const count = document.createElement("span");
+    count.className = "text-xs text-muted shrink-0";
+    count.textContent = `${vocabEntryCount(list.text)} ord`;
+    label.append(name, count);
+
+    const pick = document.createElement("button");
+    pick.type = "button";
+    pick.className = "btn btn-sm shrink-0";
+    pick.textContent = list.id === vocabSelected ? "Vald" : "Redigera";
+    pick.disabled = list.id === vocabSelected;
+    pick.setAttribute("aria-label", `Redigera ordlistan ${list.name}`);
+    pick.addEventListener("click", () => { vocabSelected = list.id; renderVocab(); document.getElementById("vocab-list-name")?.focus(); });
+    li.append(label, pick);
+    ul.appendChild(li);
+  }
+
+  const editor = document.getElementById("vocab-editor");
+  const list = selectedVocabList();
+  if (editor) editor.classList.toggle("hidden", !list);
+  const del = document.getElementById("vocab-delete");
+  if (del) del.disabled = !list;
+  if (list) {
+    const nameEl = document.getElementById("vocab-list-name");
+    const textEl = document.getElementById("vocabulary-input");
+    if (nameEl && nameEl.value !== list.name) nameEl.value = list.name;
+    if (textEl && textEl.value !== list.text) textEl.value = list.text;
+  }
+}
+
+function updateVocabCounts() {
+  // Uppdaterar bara namn/antal i listraderna utan att ta fokus från redigeringsfälten.
+  const list = selectedVocabList();
+  const idx = vocabStore.lists.indexOf(list);
+  const li = document.querySelectorAll("#vocab-lists > li")[idx];
+  if (!li || !list) return;
+  const spans = li.querySelectorAll("label > span");
+  if (spans[0]) spans[0].textContent = list.name;
+  if (spans[1]) spans[1].textContent = `${vocabEntryCount(list.text)} ord`;
+}
+
+document.getElementById("vocab-list-name")?.addEventListener("input", (e) => {
+  const list = selectedVocabList();
+  if (!list) return;
+  list.name = e.target.value.trim() || "Ordlista";
+  updateVocabCounts();
+  saveVocabSoon();
+});
+document.getElementById("vocabulary-input")?.addEventListener("input", (e) => {
+  const list = selectedVocabList();
+  if (!list) return;
+  list.text = e.target.value;
+  updateVocabCounts();
+  saveVocabSoon();
+});
+document.getElementById("vocab-new")?.addEventListener("click", () => {
+  const list = { id: newVocabId(), name: `Ordlista ${vocabStore.lists.length + 1}`, enabled: true, text: "" };
+  vocabStore.lists.push(list);
+  vocabSelected = list.id;
+  renderVocab();
+  const nameEl = document.getElementById("vocab-list-name");
+  if (nameEl) { nameEl.focus(); nameEl.select(); }
+  saveVocabSoon();
+});
+document.getElementById("vocab-delete")?.addEventListener("click", async () => {
+  const list = selectedVocabList();
+  if (!list) return;
+  const ok = await showConfirm(`Ordlistan "${list.name}" och dess ${vocabEntryCount(list.text)} ord tas bort. Det går inte att ångra.`, "Ta bort ordlista");
+  if (!ok) return;
+  vocabStore.lists = vocabStore.lists.filter(l => l.id !== list.id);
+  vocabSelected = vocabStore.lists[0]?.id ?? null;
+  renderVocab();
+  await saveVocabNow();
+});
+document.getElementById("vocab-open-dir")?.addEventListener("click", async () => {
+  try {
+    const dir = await invoke("vocab_dir");
+    await window.__TAURI__.opener.openPath(dir);
+  } catch (err) { logToFile(`vocab-open-dir: ${err}`); }
+});
+invoke("vocab_dir").then(d => { const el = document.getElementById("vocab-dir"); if (el) el.textContent = d; }).catch(() => {});
+
+// Import/export av vald lista som textfil
 const vocabImport = document.getElementById("vocabulary-import");
 vocabImport && vocabImport.addEventListener("change", async (e) => {
   const file = e.target.files[0];
   if (!file) return;
-  const text = await file.text();
-  let words;
+  let text = await file.text();
   try {
     const parsed = JSON.parse(text);
-    words = Array.isArray(parsed) ? parsed.map(String) : text.split("\n");
-  } catch {
-    words = text.split("\n");
+    if (Array.isArray(parsed)) text = parsed.map(String).join("\n");
+  } catch { /* vanlig text */ }
+  let list = selectedVocabList();
+  if (!list) {
+    list = { id: newVocabId(), name: file.name.replace(/\.[^.]+$/, "").slice(0, 40) || "Importerad", enabled: true, text: "" };
+    vocabStore.lists.push(list);
+    vocabSelected = list.id;
   }
-  words = words.map(w => w.trim()).filter(Boolean);
-  const vocabInput = document.getElementById("vocabulary-input");
-  if (vocabInput) vocabInput.value = words.join("\n");
+  list.text = text.replace(/\r\n/g, "\n").trim() + "\n";
+  renderVocab();
+  saveVocabSoon();
   vocabImport.value = "";
 });
 
 const vocabExport = document.getElementById("vocabulary-export");
 vocabExport && vocabExport.addEventListener("click", async () => {
-  const vocabInput = document.getElementById("vocabulary-input");
-  const content = vocabInput ? vocabInput.value : personalVocabulary.join("\n");
+  const list = selectedVocabList();
+  const content = list ? list.text : "";
   try {
     await invoke("save_text_file", { content });
   } catch (err) {
@@ -2370,4 +2534,96 @@ vocabExport && vocabExport.addEventListener("click", async () => {
     }
   }
 });
+
+// ── Meddelanderad ovanför texten (rättningar, förslag) ──
+const noticeBar = document.getElementById("notice-bar");
+const noticeText = document.getElementById("notice-text");
+const noticeAction = document.getElementById("notice-action");
+let noticeActionHandler = null;
+function showNotice(text, action) {
+  if (!noticeBar) return;
+  noticeText.textContent = text;
+  noticeActionHandler = action ? action.onClick : null;
+  if (action) { noticeAction.textContent = action.label; noticeAction.classList.remove("hidden"); }
+  else noticeAction.classList.add("hidden");
+  noticeBar.classList.remove("hidden");
+}
+function hideNotice() { noticeBar?.classList.add("hidden"); noticeActionHandler = null; }
+noticeAction?.addEventListener("click", () => { const h = noticeActionHandler; if (h) h(); });
+document.getElementById("notice-close")?.addEventListener("click", hideNotice);
+
+function summarizeChanges(changes) {
+  const counts = new Map();
+  for (const c of changes) {
+    const k = `${c.from} → ${c.to}`;
+    counts.set(k, (counts.get(k) || 0) + 1);
+  }
+  const top = [...counts.entries()].slice(0, 4).map(([k, n]) => (n > 1 ? `${k} (${n})` : k));
+  const more = counts.size > 4 ? ` och ${counts.size - 4} till` : "";
+  return `${top.join(", ")}${more}`;
+}
+
+// Rättar den visade texten mot de ikryssade ordlistorna. Returnerar antal rättade ord.
+async function applyVocabularyToTranscript(quiet) {
+  await saveVocabNow();
+  const useSegments = transcriptSegments.length > 0;
+  const texts = useSegments ? transcriptSegments.map(s => s.text) : [outputText.value];
+  if (!texts.some(t => t.trim())) {
+    if (!quiet) showNotice("Det finns ingen text att rätta än.");
+    return 0;
+  }
+  let res;
+  try { res = await invoke("apply_vocabulary", { texts }); }
+  catch (err) { showNotice(`Ordlistan kunde inte tillämpas: ${err}`); return 0; }
+  if (res.changes.length === 0) {
+    if (!quiet) showNotice("Ordlistan hittade inget att rätta i texten.");
+    return 0;
+  }
+  if (useSegments) {
+    res.texts.forEach((t, i) => {
+      if (t !== transcriptSegments[i].text) { transcriptSegments[i].text = t; transcriptSegments[i].tokens = []; }
+    });
+    renderSegmentEditor();
+    outputText.value = buildPlainText();
+  } else {
+    outputText.value = res.texts[0];
+  }
+  showNotice(`Ordlistan rättade ${res.changes.length} ord: ${summarizeChanges(res.changes)}.`);
+  return res.changes.length;
+}
+document.getElementById("btn-apply-vocab")?.addEventListener("click", () => applyVocabularyToTranscript(false));
+
+// Förslag: när användaren rättar ett ord i segmentvyn, erbjud att lägga till det i ordlistan.
+function wordEdit(oldText, newText) {
+  const tok = (t) => t.match(/[\p{L}\p{N}][\p{L}\p{N}-]*/gu) || [];
+  const a = tok(oldText), b = tok(newText);
+  let s = 0;
+  while (s < a.length && s < b.length && a[s] === b[s]) s++;
+  let ea = a.length, eb = b.length;
+  while (ea > s && eb > s && a[ea - 1] === b[eb - 1]) { ea--; eb--; }
+  const from = a.slice(s, ea), to = b.slice(s, eb);
+  if (!from.length || !to.length || from.length > 3 || to.length > 3) return null;
+  const f = from.join(" "), t = to.join(" ");
+  if (f.toLowerCase() === t.toLowerCase()) return null;
+  return { from: f, to: t };
+}
+
+function suggestVocabFromEdit(oldText, newText) {
+  const edit = wordEdit(oldText, newText);
+  if (!edit) return;
+  showNotice(`Lägga till "${edit.to}" i ordlistan? "${edit.from}" rättas då automatiskt framöver.`, {
+    label: "Lägg till",
+    onClick: async () => {
+      try {
+        vocabStore = await invoke("vocab_add_entry", { listId: null, term: edit.to, alias: edit.from });
+        if (!vocabStore.lists.some(l => l.id === vocabSelected)) vocabSelected = vocabStore.lists[0]?.id ?? null;
+        renderVocab();
+        const n = await applyVocabularyToTranscript(true);
+        showNotice(`Lade till "${edit.from} => ${edit.to}" i ordlistan.${n ? ` ${n} ord i resten av texten rättades.` : ""}`);
+      } catch (err) {
+        showNotice(`Kunde inte lägga till i ordlistan: ${err}`);
+      }
+    },
+  });
+}
 

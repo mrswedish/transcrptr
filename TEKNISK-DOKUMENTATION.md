@@ -77,8 +77,11 @@ Följande nycklar sparas: `modelSize`, `modelRevision`, `modelQuantized`,
 
 **Två av dem kan innehålla känsliga uppgifter:**
 
-- **`personalVocabulary`** — användarens egna ordlista. Innehåller ofta verksamhetsspecifika
-  termer, och kan innehålla personnamn, diagnoser eller interna projektnamn.
+- **Ordlistor** — från v2.1.0 i filen `ordlistor.json` i appens datamapp
+  (`%APPDATA%\com.patriksvensk.transcrptr\`), inte längre i `localStorage` (en gammal
+  `personalVocabulary` flyttas dit vid första start och raderas ur `localStorage`). Innehåller
+  ofta verksamhetsspecifika termer, och kan innehålla personnamn, diagnoser eller interna
+  projektnamn. Filen kan säkerhetskopieras och tas inte bort vid avinstallation.
 - **`recordingDir`** — full sökväg, kan avslöja användarnamn och nätverksstruktur.
 
 Mappen `EBWebView` innehåller även WebView2:s cache och tas **inte** bort automatiskt vid

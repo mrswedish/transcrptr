@@ -95,6 +95,10 @@
           <span class="material-symbols-outlined">search</span>
           <span>Sök</span>
         </button>
+        <button id="btn-apply-vocab" class="btn btn-ghost btn-sm" title="Rätta texten med dina ordlistor (till exempel Kulturum till Qulturum)">
+          <span class="material-symbols-outlined">spellcheck</span>
+          <span>Ordlista</span>
+        </button>
         <button id="btn-segment-toggle" class="hidden btn btn-ghost btn-sm" title="Växla segmentvy / råtext">
           <span class="material-symbols-outlined">view_list</span>
           <span id="segment-toggle-label">Segmentvy</span>
@@ -117,6 +121,16 @@
           <span>Spara ljud</span>
         </button>
       </div>
+    </div>
+
+    <!-- Meddelanden: ordlistan rättade ord, förslag om att lägga till ord -->
+    <div id="notice-bar" class="hidden mb-3 px-3 py-2 bg-sheet border border-line border-l-[3px] border-l-primary rounded-lg text-sm flex items-center gap-3"
+      role="status" aria-live="polite">
+      <span id="notice-text" class="flex-1 min-w-0"></span>
+      <button id="notice-action" class="hidden btn btn-sm shrink-0"></button>
+      <button id="notice-close" class="btn btn-ghost btn-sm btn-icon-only shrink-0" aria-label="Stäng meddelandet">
+        <span class="material-symbols-outlined">close</span>
+      </button>
     </div>
 
     <!-- Sök/ersätt -->
@@ -285,21 +299,51 @@
           </button>
         </section>
 
-        <!-- Ordlista -->
-        <section class="section">
-          <h3 class="section-title">Personlig ordlista</h3>
-          <p class="hint mb-2">Facktermer och ord skickas som ledtrådar till transkriberingsmotorn. Ett ord per rad.</p>
-          <label for="vocabulary-input" class="sr-only">Ordlista</label>
-          <textarea id="vocabulary-input" rows="4" placeholder="angioplastik&#10;endarterektomi&#10;EKG" class="field resize-none"></textarea>
-          <div class="flex gap-2 mt-2">
-            <label class="btn btn-sm cursor-pointer">
-              <span class="material-symbols-outlined">upload</span>
-              <span>Importera .txt</span>
-              <input type="file" id="vocabulary-import" accept=".txt,.json" class="sr-only">
-            </label>
-            <button id="vocabulary-export" class="btn btn-sm">
-              <span class="material-symbols-outlined">download</span>
-              <span>Exportera .txt</span>
+        <!-- Ordlistor -->
+        <section class="section" aria-labelledby="vocab-title">
+          <h3 id="vocab-title" class="section-title">Ordlistor</h3>
+          <p class="hint mb-3">Rättar ord som ofta hörs fel i texten, till exempel "Kulturum" till "Qulturum". Ordlistor som är ikryssade används vid transkribering.</p>
+          <ul id="vocab-lists" class="flex flex-col gap-2 mb-3" role="list"></ul>
+          <div class="flex gap-2 mb-4">
+            <button id="vocab-new" class="btn btn-sm">
+              <span class="material-symbols-outlined">add</span>
+              <span>Ny ordlista</span>
+            </button>
+            <button id="vocab-delete" class="btn btn-sm btn-danger">
+              <span class="material-symbols-outlined">delete</span>
+              <span>Ta bort vald</span>
+            </button>
+          </div>
+          <div id="vocab-editor" class="hidden">
+            <label for="vocab-list-name" class="text-sm font-semibold">Namn på vald ordlista</label>
+            <input type="text" id="vocab-list-name" maxlength="40" class="field mt-1 mb-3" />
+            <label for="vocabulary-input" class="text-sm font-semibold">Ord i listan</label>
+            <textarea id="vocabulary-input" rows="7" placeholder="Qulturum&#10;Kulturum =&gt; Qulturum&#10;angio plastik =&gt; angioplastik" class="field mt-1 font-mono text-[13px] resize-y"></textarea>
+            <ul class="hint mt-2 list-disc pl-5">
+              <li><code class="font-mono">Qulturum</code> — liknande stavningar rättas, även med ändelse (Kulturumet blir Qulturumet).</li>
+              <li><code class="font-mono">Kulturum =&gt; Qulturum</code> — exakt felstavning som ska bli rätt ord. Flera fel avgränsas med komma.</li>
+              <li><code class="font-mono">=Qulturum</code> — bara exakt träff, inga liknande ord.</li>
+              <li>Rader som börjar med <code class="font-mono">#</code> är kommentarer.</li>
+            </ul>
+            <div class="flex gap-2 mt-3">
+              <label class="btn btn-sm cursor-pointer">
+                <span class="material-symbols-outlined">upload</span>
+                <span>Importera .txt</span>
+                <input type="file" id="vocabulary-import" accept=".txt,.json" class="sr-only">
+              </label>
+              <button id="vocabulary-export" class="btn btn-sm">
+                <span class="material-symbols-outlined">download</span>
+                <span>Exportera .txt</span>
+              </button>
+            </div>
+          </div>
+          <div class="mt-4">
+            <p class="text-sm font-semibold">Säkerhetskopiera</p>
+            <p class="hint">Alla ordlistor ligger i filen <span class="font-mono">ordlistor.json</span> i appens datamapp.</p>
+            <p id="vocab-dir" class="hint font-mono break-all mt-1"></p>
+            <button id="vocab-open-dir" class="btn btn-sm mt-2">
+              <span class="material-symbols-outlined">folder_open</span>
+              <span>Öppna mappen</span>
             </button>
           </div>
         </section>
