@@ -344,6 +344,7 @@ pub fn run() {
             session::recover_session,
             session::inspect_session_dir,
             session::count_recordings,
+            session::list_recordings,
             session::delete_all_recordings,
             save_text_file,
             session::save_audio_file,

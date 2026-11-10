@@ -524,7 +524,7 @@ async function setupEventListeners() {
     });
   }
 
-  // (v1.5: recover-knappen i settings borttagen — importeras nu via "Öppna fil/mapp" i headern)
+  // (v1.5: recover-knappen i settings borttagen — importeras nu via "Öppna" i headern)
 }
 
 // Parsar sessionens starttid ur mappnamnet (inspelning-YYYYMMDD-HHMMSS / recording-<unix>).
@@ -684,6 +684,7 @@ async function initialize() {
   setupV11Handlers();
   updateFooter();
   refreshModelList();
+  checkInterruptedRecordings();
   // Visa systemljud-toggle + GPU-inställning bara på Windows (Application Loopback API)
   if (navigator.userAgent.includes('Windows')) {
     const wasapiQuick = document.getElementById('wasapi-quick');
@@ -1664,8 +1665,8 @@ async function stopSession() {
       const detalj = typeof err === "string" ? err : err.message || String(err);
       await message(
         "Inspelningen kunde inte förberedas för uppspelning.\n\n" +
-        "Ljudet finns kvar på disk. Öppna det med \"Öppna fil/mapp\" → " +
-        "\"En tidigare inspelning\" och välj den senaste mappen.\n\n" +
+        "Ljudet finns kvar på disk. Öppna det med \"Öppna\" och välj det i listan " +
+        "Senaste inspelningar.\n\n" +
         `Teknisk information: ${detalj}`,
         { title: 'Inspelningen är sparad', kind: 'warning' });
     } finally {
@@ -1679,26 +1680,65 @@ async function stopSession() {
 // -------------------------------------------------------------
 // File Selection Logic
 // -------------------------------------------------------------
-// Visar import-valmodalen och resolvar med "file" | "folder" | null (avbruten).
-function showImportChoice() {
+// Visar "Öppna": ljudfil överst och en lista med senaste inspelningar. Resolvar med
+// { kind: "file" } | { kind: "session", rec } | null (avbruten). Finns inga tidigare
+// inspelningar går det direkt till filväljaren.
+function formatRecordingTitle(rec) {
+  const d = new Date(rec.started);
+  const when = isNaN(d) ? rec.started
+    : d.toLocaleString("sv-SE", { day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" });
+  const label = rec.label ? rec.label.replace(/-/g, " ") : "";
+  return label ? `${label} · ${when}` : when;
+}
+
+async function showImportChoice() {
+  let recs = [];
+  try { recs = await invoke("list_recordings", { recordingDir: recordingDir || null }); }
+  catch (e) { logToFile(`list_recordings: ${e}`); }
+  if (recs.length === 0) return { kind: "file" };
+
   return new Promise(resolve => {
-    const modal  = document.getElementById("import-choice-modal");
+    const modal     = document.getElementById("import-choice-modal");
     const fileBtn   = document.getElementById("import-choice-file");
-    const folderBtn = document.getElementById("import-choice-folder");
     const cancelBtn = document.getElementById("import-choice-cancel");
-    if (!modal || !fileBtn || !folderBtn || !cancelBtn) { resolve(null); return; }
+    const list      = document.getElementById("recent-list");
+    if (!modal || !fileBtn || !cancelBtn || !list) { resolve({ kind: "file" }); return; }
+
+    list.replaceChildren();
+    const rowHandlers = [];
+    for (const rec of recs) {
+      const li = document.createElement("li");
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "choice";
+      const t = document.createElement("span");
+      t.className = "choice-title";
+      t.textContent = formatRecordingTitle(rec);
+      const d = document.createElement("span");
+      d.className = "choice-desc";
+      d.textContent = formatSize(rec.sizeBytes);
+      if (rec.recoverable) {
+        const w = document.createElement("span");
+        w.className = "text-warn font-semibold";
+        w.textContent = " · Avbruten – återställs när du öppnar den";
+        d.appendChild(w);
+      }
+      b.append(t, d);
+      const h = () => { cleanup(); resolve({ kind: "session", rec }); };
+      b.addEventListener("click", h);
+      li.appendChild(b);
+      list.appendChild(li);
+    }
+
     modal.classList.remove("hidden");
     const cleanup = () => {
       modal.classList.add("hidden");
       fileBtn.removeEventListener("click", onFile);
-      folderBtn.removeEventListener("click", onFolder);
       cancelBtn.removeEventListener("click", onCancel);
     };
-    const onFile   = () => { cleanup(); resolve("file"); };
-    const onFolder = () => { cleanup(); resolve("folder"); };
+    const onFile   = () => { cleanup(); resolve({ kind: "file" }); };
     const onCancel = () => { cleanup(); resolve(null); };
     fileBtn.addEventListener("click", onFile);
-    folderBtn.addEventListener("click", onFolder);
     cancelBtn.addEventListener("click", onCancel);
   });
 }
@@ -1707,7 +1747,7 @@ btnFile.addEventListener("click", async () => {
   const choice = await showImportChoice();
   if (!choice) return;
   try {
-    if (choice === "file") {
+    if (choice.kind === "file") {
       const selected = await invoke("pick_audio_file");
       if (selected) {
         disableControls();
@@ -1715,35 +1755,33 @@ btnFile.addEventListener("click", async () => {
       }
       return;
     }
-    // choice === "folder": öppna en tidigare inspelning. Appen avgör själv om
-    // mappen behöver repareras (avbruten inspelning där råspåren finns men
-    // recording.wav saknas) eller redan är färdig — användaren ska inte behöva
-    // känna till skillnaden.
-    const dir = await window.__TAURI__.dialog.open({
-      directory: true,
-      multiple: false,
-      defaultPath: recordingDir || undefined,
-      title: "Välj en tidigare inspelning",
-    });
-    if (typeof dir !== "string" || !dir) return;
-    const info = await invoke("inspect_session_dir", { dir });
-    if (!info.is_session) {
-      await message(
-        "Den här mappen innehåller ingen inspelning.\n\n" +
-        "Välj en mapp som börjar med \"inspelning-\" — de skapas automatiskt när du spelar in.",
-        { title: "Ingen inspelning hittades", kind: "error" });
-      return;
-    }
-    // Avbruten inspelning (råspår men ingen färdig recording.wav) → laga först.
-    const needsRepair = !info.has_ready_recording;
-    if (needsRepair) {
+    // En tidigare inspelning från listan. Är den avbruten (råspår men ingen recording.wav)
+    // lagas och mixas den först — användaren behöver inte känna till skillnaden.
+    if (choice.rec.recoverable) {
       logToFile("import: avbruten inspelning upptäckt — reparerar och mixar råspåren");
     }
-    await importSessionFolder(dir, needsRepair);
+    await importSessionFolder(choice.rec.path, choice.rec.recoverable);
   } catch (e) {
     console.error("Import misslyckades:", e);
   }
 });
+
+// Vid start: erbjud återställning om en inspelning avbröts (råspår men ingen färdig fil).
+async function checkInterruptedRecordings() {
+  try {
+    const recs = await invoke("list_recordings", { recordingDir: recordingDir || null });
+    const rec = recs.find(r => r.recoverable);
+    if (!rec || isRecording) return;
+    showNotice(`Hittade en avbruten inspelning från ${formatRecordingTitle(rec)}. Ljudet finns kvar på disken.`, {
+      label: "Återställ",
+      onClick: async () => {
+        hideNotice();
+        disableControls();
+        await importSessionFolder(rec.path, true);
+      },
+    });
+  } catch (e) { logToFile(`checkInterruptedRecordings: ${e}`); }
+}
 
 // Returns the last N words of a text string (for chunk context continuity)
 function lastWords(text, n) {

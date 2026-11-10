@@ -58,7 +58,7 @@ stopp mixas de till `recording.wav` och **råspåren raderas**.
 
 > **Observera:** Vid krasch eller strömavbrott ligger råspåren kvar. Det är råinspelningar av
 > mikrofon och systemljud och ska betraktas som lika känsliga som den färdiga filen. Appen kan
-> återställa dem ("Öppna fil/mapp" → "En tidigare inspelning") men rensar dem aldrig automatiskt.
+> återställa dem ("Öppna" → listan "Senaste inspelningar") men rensar dem aldrig automatiskt.
 
 ---
 

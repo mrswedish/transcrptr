@@ -156,7 +156,7 @@ Sökvägen i **Inställningar → Mapp för inspelningar** används både som **
 
 **Tips:** Välj alltid en lokal mapp (t.ex. `C:\Users\<dittnamn>\Downloads`) — undvik UNC-paths (`\\server\...`) eftersom mid-recording-skrivningar mot nätverksdisk kan hänga och tappa hela inspelningen.
 
-**Öppna en gammal eller avbruten inspelning:** Klicka **Öppna fil/mapp** i appens överkant och välj **Sessionsmapp**. Peka ut en `inspelning-...`-mapp så mixas materialet ihop till en spelbar inspelning du kan transkribera eller spara om. Det fungerar även för inspelningar som inte avslutades korrekt (t.ex. om appen kraschade).
+**Öppna en gammal eller avbruten inspelning:** Klicka **Öppna** i appens överkant. Där ligger en lista över dina senaste inspelningar; välj en så öppnas den. Inspelningar som avbröts (till exempel om appen kraschade) är markerade och återställs automatiskt när du öppnar dem — råspåren mixas ihop till en spelbar inspelning. Vid start visar appen också en rad om den hittar en avbruten inspelning.
 
 ### Windows SmartScreen och säkerhet
 

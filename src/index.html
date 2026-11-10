@@ -20,7 +20,7 @@
     <h1 class="text-[15px] font-semibold tracking-tight">Transkribera</h1>
     <div class="flex flex-wrap items-center gap-1">
       <button id="btn-file" class="btn btn-ghost btn-sm"
-        title="Öppna en ljud- eller videofil, eller en sessionsmapp med inspelat material">
+        title="Öppna en ljud- eller videofil, eller en av dina senaste inspelningar">
         <span class="material-symbols-outlined">folder_open</span>
         <span>Öppna</span>
       </button>
@@ -458,21 +458,21 @@
   <!-- Import: fil eller sessionsmapp -->
   <div id="import-choice-modal" class="hidden fixed inset-0 bg-black/40 z-[200] flex justify-center items-center"
     role="dialog" aria-modal="true" aria-labelledby="import-title">
-    <div class="dialog w-11/12 max-w-sm">
-      <div class="p-5">
-        <h3 id="import-title" class="text-base font-semibold mb-3">Vad vill du öppna?</h3>
-        <div class="flex flex-col gap-2">
-          <button id="import-choice-file" class="choice" data-autofocus>
-            <span class="choice-title">Ljud- eller videofil</span>
-            <span class="choice-desc">MP3, M4A, WAV, MP4 med flera</span>
-          </button>
-          <button id="import-choice-folder" class="choice">
-            <span class="choice-title">En tidigare inspelning</span>
-            <span class="choice-desc">Något du spelat in med Transkribera</span>
-          </button>
-        </div>
+    <div class="dialog w-11/12 max-w-md flex flex-col max-h-[90dvh]">
+      <div class="p-5 pb-4 shrink-0">
+        <h3 id="import-title" class="text-base font-semibold mb-3">Öppna</h3>
+        <button id="import-choice-file" class="btn btn-primary" data-autofocus>
+          <span class="material-symbols-outlined">audio_file</span>
+          <span>Öppna ljud- eller videofil…</span>
+        </button>
+        <p class="hint mt-2">MP3, M4A, WAV, MP4 med flera.</p>
       </div>
-      <div class="dialog-actions">
+      <div class="px-5 pb-4 overflow-y-auto min-h-0 border-t border-line pt-4">
+        <h4 id="recent-title" class="text-sm font-semibold mb-1">Senaste inspelningar</h4>
+        <p class="hint mb-3">Inspelningar du gjort med Transkribera.</p>
+        <ul id="recent-list" class="flex flex-col gap-2" aria-labelledby="recent-title"></ul>
+      </div>
+      <div class="dialog-actions shrink-0">
         <button id="import-choice-cancel" class="btn">Avbryt</button>
       </div>
     </div>

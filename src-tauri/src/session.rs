@@ -247,6 +247,100 @@ pub(crate) fn is_session_folder(name: &str) -> bool {
     name.starts_with("inspelning-") || name.starts_with("recording-")
 }
 
+/// En tidigare inspelning i inspelningsmappen (för listan "Senaste inspelningar").
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RecordingInfo {
+    pub(crate) path: String,
+    /// Namnet användaren gav inspelningen, annars tomt.
+    pub(crate) label: String,
+    /// Lokal tid, "2026-11-06T13:43:18" (läses av `new Date(...)` som lokal tid).
+    pub(crate) started: String,
+    /// recording.wav finns och kan öppnas direkt.
+    pub(crate) has_ready: bool,
+    /// Råspår finns men ingen färdig recording.wav — avbruten inspelning som kan återställas.
+    pub(crate) recoverable: bool,
+    pub(crate) size_bytes: u64,
+}
+
+fn non_empty(p: &std::path::Path) -> bool {
+    p.is_file() && fs::metadata(p).map(|m| m.len() > 44).unwrap_or(false)
+}
+
+/// Tolkar `inspelning-20260906-134318[-namn]` → ("2026-09-06T13:43:18", "namn").
+fn parse_session_name(name: &str) -> Option<(String, String)> {
+    let rest = name.strip_prefix("inspelning-").or_else(|| name.strip_prefix("recording-"))?;
+    let mut it = rest.splitn(3, '-');
+    let (d, t) = (it.next()?, it.next()?);
+    if d.len() != 8 || t.len() != 6 || !d.bytes().all(|b| b.is_ascii_digit()) || !t.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let iso = format!("{}-{}-{}T{}:{}:{}", &d[0..4], &d[4..6], &d[6..8], &t[0..2], &t[2..4], &t[4..6]);
+    Some((iso, it.next().unwrap_or("").to_string()))
+}
+
+/// Listar tidigare inspelningar (nyast först, högst 30) i inspelningsmappen.
+#[tauri::command]
+pub(crate) async fn list_recordings(
+    app_handle: AppHandle,
+    recording_dir: Option<String>,
+) -> Result<Vec<RecordingInfo>, String> {
+    let base = match recording_dir.as_deref() {
+        Some(p) if !p.is_empty() => PathBuf::from(p),
+        _ => default_recording_dir(&app_handle)?,
+    };
+    let Ok(rd) = fs::read_dir(&base) else { return Ok(vec![]) };
+    let mut out: Vec<RecordingInfo> = Vec::new();
+    for entry in rd.flatten() {
+        let p = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !p.is_dir() || !is_session_folder(&name) {
+            continue;
+        }
+        let has_ready = non_empty(&p.join("recording.wav"));
+        let has_parts = ["mic.wav", "lb_console.wav", "lb_comms.wav"].iter().any(|f| non_empty(&p.join(f)));
+        if !has_ready && !has_parts {
+            continue;
+        }
+        let (started, label) = parse_session_name(&name).unwrap_or_else(|| {
+            let t = entry.metadata().and_then(|m| m.modified()).ok()
+                .map(|t| chrono::DateTime::<chrono::Local>::from(t).format("%Y-%m-%dT%H:%M:%S").to_string())
+                .unwrap_or_default();
+            (t, name.clone())
+        });
+        out.push(RecordingInfo {
+            path: p.to_string_lossy().into_owned(),
+            label,
+            started,
+            has_ready,
+            recoverable: !has_ready && has_parts,
+            size_bytes: get_dir_size(&p),
+        });
+    }
+    out.sort_by(|a, b| b.started.cmp(&a.started));
+    out.truncate(30);
+    Ok(out)
+}
+
+#[cfg(test)]
+mod recordings_tests {
+    use super::parse_session_name;
+
+    #[test]
+    fn tolkar_mappnamn() {
+        assert_eq!(
+            parse_session_name("inspelning-20261106-134318"),
+            Some(("2026-11-06T13:43:18".into(), "".into()))
+        );
+        assert_eq!(
+            parse_session_name("inspelning-20260903-142233-ledningsgrupp-vecka-3"),
+            Some(("2026-09-03T14:22:33".into(), "ledningsgrupp-vecka-3".into()))
+        );
+        assert_eq!(parse_session_name("annat"), None);
+        assert_eq!(parse_session_name("inspelning-xx-yy"), None);
+    }
+}
+
 #[derive(Serialize)]
 pub(crate) struct RecordingsSummary {
     count: usize,
