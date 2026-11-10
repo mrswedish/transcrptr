@@ -176,7 +176,7 @@
       <!-- Efter inspelning -->
       <div id="post-recording-actions" class="hidden absolute inset-0 bg-sheet z-10 flex items-center justify-center px-8">
         <div class="w-full max-w-sm flex flex-col gap-4">
-          <h3 class="text-lg font-semibold">Inspelningen är sparad</h3>
+          <h3 id="post-recording-title" class="text-lg font-semibold">Inspelningen är sparad</h3>
           <button id="post-recording-path"
             class="hidden max-w-full text-sm font-mono text-primary hover:underline text-left flex items-center gap-2"
             title="Öppna inspelningsmappen i Utforskaren">
@@ -193,6 +193,7 @@
               <span class="material-symbols-outlined">transcribe</span>
               <span>Transkribera nu</span>
             </button>
+            <button id="btn-close-opened" class="hidden btn">Stäng</button>
             <button id="btn-save-for-later" class="btn">
               <span class="material-symbols-outlined">schedule</span>
               <span>Spara för senare</span>

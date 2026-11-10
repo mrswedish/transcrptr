@@ -565,7 +565,9 @@ async function importSessionFolder(dir, needsRepair = false) {
     wasapiRecordingReady = true;
     pendingRecording     = { type: "wav-file", filePath: recordedPath };
     lastRecordedSegments = [{ startTime: sessionStartFromFolderName(folderName) }];
-    showPostRecordingActions(dir);
+    const started = sessionStartFromFolderName(folderName);
+    const when = started.toLocaleString("sv-SE", { day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" });
+    showPostRecordingActions(dir, { title: `Inspelning från ${when}` });
   } catch (err) {
     loadingOverlay.classList.add("hidden");
     const msg = typeof err === "string" ? err : err.message || String(err);
@@ -1546,15 +1548,24 @@ function sessionDirFromRecordingPath(p) {
   return p ? p.replace(/[/\\][^/\\]+$/, "") : "";
 }
 
-function showPostRecordingActions(sessionDir) {
+// `opts.title` anges när en redan sparad inspelning öppnas (listan Senaste inspelningar):
+// då visas bara det som är relevant — Transkribera och Stäng — inte namnfält, Spara för senare
+// eller Spara kopia, eftersom inspelningen redan ligger sparad och namngiven.
+function showPostRecordingActions(sessionDir, opts = {}) {
+  const opened = !!opts.title;
   document.getElementById("post-recording-actions")?.classList.remove("hidden");
+  const titleEl = document.getElementById("post-recording-title");
+  if (titleEl) titleEl.textContent = opened ? opts.title : "Inspelningen är sparad";
+  document.getElementById("btn-save-for-later")?.classList.toggle("hidden", opened);
+  document.getElementById("btn-save-audio-only")?.classList.toggle("hidden", opened);
+  document.getElementById("btn-close-opened")?.classList.toggle("hidden", !opened);
   // Namnfältet döper om sessionsmappen — visa det bara när en sådan finns.
   // Mac-flödet (MediaRecorder, type "segments") har inga filer på disk ännu,
   // så där finns ingen mapp att namnge.
   const nameRow = document.getElementById("session-name-row");
   const nameInput = document.getElementById("session-name-input");
   if (nameInput) nameInput.value = "";
-  if (nameRow) nameRow.classList.toggle("hidden", !sessionDir);
+  if (nameRow) nameRow.classList.toggle("hidden", !sessionDir || opened);
   const btn = document.getElementById("post-recording-path");
   const txt = document.getElementById("post-recording-path-text");
   if (btn && txt) {
@@ -2460,6 +2471,12 @@ document.getElementById("btn-save-for-later")?.addEventListener("click", async (
   hidePostRecordingActions();
   pendingRecording = null;
   updateBadge("Inspelning sparad", "");
+});
+
+// "Stäng" för en öppnad inspelning: ingenting ska sparas eller döpas om.
+document.getElementById("btn-close-opened")?.addEventListener("click", () => {
+  hidePostRecordingActions();
+  pendingRecording = null;
 });
 
 // Enter i namnfältet = spara för senare (snabbaste vägen vidare)
