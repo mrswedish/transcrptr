@@ -2,17 +2,33 @@
 
 Transkribera är en lokal, integritetsfokuserad skrivbordsapp som omvandlar tal till text — helt utan molntjänster. Allt sker på din egen dator; ditt ljud och din röstdata lämnar aldrig din maskin.
 
-![Transkribera Screenshot](public/screenshot.png)
+![Transkribera — transkript med talare och ordlistans rättningar](docs/img/transkript.png)
 
 > **För IT och förvaltare:** [Teknisk dokumentation](TEKNISK-DOKUMENTATION.md) beskriver var data
 > lagras, vilken nätverkstrafik som förekommer, vad som blir kvar vid avinstallation och hur
 > systemet är byggt.
 
+## 🚀 Kom igång
+
+1. Ladda ner `Transkribera-portable.exe` från [Releases](https://github.com/mrswedish/transcrptr/releases) och dubbelklicka. Första starten hämtar språkmodellen en gång (ca 0,7 GB).
+2. Tryck **Spela in** (eller **Öppna** för en ljudfil) och sedan **Transkribera nu**.
+3. Rätta texten genom att klicka på den. **Kopiera** eller **Spara text** när du är klar.
+
+Det finns en [steg för steg-guide med bilder](KOM-IGANG.md).
+
+## 🖼️ Så ser det ut
+
+| | |
+|---|---|
+| ![Start](docs/img/start.png) **Start.** Spela in eller öppna en fil. | ![Inspelning](docs/img/inspelning.png) **Inspelning** med timer och nivåmätare. |
+| ![Öppna](docs/img/oppna.png) **Öppna** med senaste inspelningar. Avbrutna återställs. | ![Ordlistor](docs/img/ordlistor.png) **Ordlistor**, flera per verksamhet. |
+| ![Mörkt tema](docs/img/morkt.png) **Mörkt tema.** | ![Transkript](docs/img/transkript.png) **Transkript** med talare, spelare och tidsstämplar. |
+
 ## 🇸🇪 Fokus på svenska
 
-Transkribera använder [KB-whisper](https://huggingface.co/KBLab/kb-whisper-small) — en AI-modell från **Kungliga biblioteket (KB)** specialtränad på **50 000+ timmar** av svenskt tal, däribland tv-sändningar, riksdagstal och dialekter från hela landet.
+Standardmodellen **Snabbast** är [Pianissimo](https://klang.ai/pianissimo-sv/) från Klang AI, en svensk taligenkänningsmodell som går på processorn och oftast är snabbast på vanliga datorer. Vill du ha högsta möjliga noggrannhet finns [KB-whisper](https://huggingface.co/KBLab/kb-whisper-small) från **Kungliga biblioteket (KB)** — specialtränad på **50 000+ timmar** svenskt tal, däribland tv-sändningar, riksdagstal och dialekter från hela landet.
 
-> **Andra språk?** Transkribera kan hantera andra språk tack vare Whisper-arkitekturen, men resultatet blir bäst på svenska.
+> **Andra språk?** Engelska och blandade språk kräver en Whisper-modell (välj **Flera språk** under Inställningar → Modell). Resultatet blir bäst på svenska.
 
 📰 [Läs mer om KB-whisper på Kungliga bibliotekets hemsida](https://www.kb.se/om-oss/nyheter/nyhetsarkiv/2025-02-20-valtranad-ai-modell-forvandlar-tal-till-text.html)
 
@@ -24,15 +40,16 @@ Transkribera använder [KB-whisper](https://huggingface.co/KBLab/kb-whisper-smal
 - **💽 Automatisk sparning till disk:** Allt inspelat material streamas direkt till en tidsstämplad sessionsmapp (`inspelning-...`) under inspelningens gång — skyddar mot dataförlust vid krasch eller strömavbrott. Efter stopp visas sökvägen till mappen direkt i appen (klicka för att öppna i Utforskaren).
 - **⏭️ Spara för senare:** Efter en inspelning kan du välja *Transkribera nu* eller *Spara för senare* — det senare stänger dialogen direkt så du hinner starta nästa möte. Ge inspelningen ett valfritt namn så blir sessionsmappen lätt att hitta igen (`inspelning-20260903-142233-ledningsgrupp`).
 - **🌗 Ljust och mörkt tema:** Växla direkt med temaknappen i appens överkant. Första gången följer appen datorns inställning.
-- **📂 Importera fil eller mapp:** Transkribera valfri ljudfil — MP3, M4A, AAC, WAV, OGG, FLAC, MP4, WebM, MKV — eller öppna en hel sessionsmapp med streamat material (t.ex. en inspelning som inte avslutades korrekt). Avkodningen sker helt i Rust (Symphonia) utan att belasta JS-heapen — fungerar även för inspelningar på flera timmar.
+- **📂 Öppna fil eller tidigare inspelning:** Transkribera valfri ljudfil — MP3, M4A, AAC, WAV, OGG, FLAC, MP4, WebM, MKV — eller välj bland dina senaste inspelningar i en lista. Avbrutna inspelningar (t.ex. efter en krasch) är markerade och återställs automatiskt. Avkodningen sker helt i Rust (Symphonia) utan att belasta JS-heapen — fungerar även för inspelningar på flera timmar.
 - **🎚️ Antialiaserad ljudbehandling:** Lågpassfilter (cutoff 7 kHz) före nedsampling till 16 kHz — minskar aliasing-artefakter från 44.1k/48k-källor (iPhone, Mac mic) för bättre transkribering.
 - **⏹️ Avbryt transkribering:** Avbryt pågående transkribering när som helst med en knapp. Inspelad audio bevaras alltid och kan sparas även efter avbrott.
 - **🔄 Gör om transkribering:** Byt modell och kör om utan att spela in på nytt.
+- **👥 Identifiera talare:** Valfri kryssruta som märker "Talare 1, 2, …" och låter dig döpa om dem. Körs helt lokalt (se nedan).
 - **✏️ Redigera transkribering:** Redigera, sök och ersätt direkt i appen (Ctrl+F).
 - **📝 Personliga ordlistor:** Flera ordlistor (till exempel per avdelning) med facktermer och egennamn. Efter transkriberingen rättas liknande felhörningar automatiskt, oavsett motor — till exempel "Kulturum" till "Qulturum", även med ändelse ("Kulturumet" blir "Qulturumet"). Rättar du ett ord i segmentvyn kan du lägga till det i ordlistan med ett klick. Listorna sparas i en fil som kan säkerhetskopieras. För Whisper skickas orden dessutom som ledtråd.
 - **🎬 Segmentredigering:** Visa transkriberingen som tidsstämplade rader — klicka på en tidsstämpel för att hoppa direkt till den punkten i inspelningen. Progressiv rendering håller UI:t responsivt även för flertimmes-transkriberingar.
 - **🔊 Synkad ljudspelare:** Spela upp inspelningen direkt i appen med automatisk markering av det aktiva textsegmentet.
-- **🟡 Konfidensfärgning:** Ord med låg igenkänningssäkerhet markeras med färg i segmentvyn — gul = osäker, röd = mycket osäker. Tröskelvärdet justeras i inställningarna.
+- **〰️ Osäkra ord (Whisper):** Ord med låg igenkänningssäkerhet får en prickad understrykning i segmentvyn. Tröskelvärdet justeras under Avancerat i inställningarna.
 - **💾 Spara:** Exportera text som `.txt` eller spara inspelningen som en ny `.wav`-fil (originalet ligger redan kvar i sessionsmappen).
 - **🗑️ Rensa inspelningar:** Radera alla sparade sessionsmappar med ett klick i inställningarna. Visar antal och total storlek först, och rör bara inspelningsmappar — sparade textfiler och exporterade ljudfiler lämnas orörda.
 - **📊 Modellhantering:** Se, ladda ner och ta bort modeller i inställningarna.
