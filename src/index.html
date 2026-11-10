@@ -11,12 +11,14 @@
   <script type="module" src="/main.js" defer></script>
 </head>
 
-<body class="bg-paper text-ink h-screen overflow-hidden flex flex-col">
+<body class="bg-paper text-ink h-screen overflow-x-hidden overflow-y-auto flex flex-col">
+  <a href="#main-content" class="skip-link">Hoppa till transkriptet</a>
+  <p id="sr-status" class="sr-only" role="status" aria-live="polite"></p>
 
   <!-- Rad 1: namn och verktyg -->
-  <header class="flex items-center justify-between h-12 px-5 bg-sheet border-b border-line shrink-0">
+  <header class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 min-h-12 px-5 py-1 bg-sheet border-b border-line shrink-0">
     <h1 class="text-[15px] font-semibold tracking-tight">Transkribera</h1>
-    <div class="flex items-center gap-1">
+    <div class="flex flex-wrap items-center gap-1">
       <button id="btn-file" class="btn btn-ghost btn-sm"
         title="Öppna en ljud- eller videofil, eller en sessionsmapp med inspelat material">
         <span class="material-symbols-outlined">folder_open</span>
@@ -34,8 +36,8 @@
   </header>
 
   <!-- Rad 2: källa — spela in eller öppna fil. Blir inspelningsrad under inspelning. -->
-  <div class="bg-sheet border-b border-line px-5 py-3 shrink-0">
-    <div class="flex items-center gap-4">
+  <section class="bg-sheet border-b border-line px-5 py-3 shrink-0" aria-label="Spela in eller öppna ljud">
+    <div class="flex flex-wrap items-center gap-x-4 gap-y-3">
       <button id="btn-record" aria-label="Spela in" class="btn btn-primary btn-record">
         <span class="btn-icon rec-glyph"></span>
         <span class="btn-record-label">Spela in</span>
@@ -56,12 +58,12 @@
         <label id="wasapi-quick"
           title="Slå på för möten i Teams, Zoom m.fl. — annars spelas bara din egen mikrofon in"
           class="hidden items-center gap-2 cursor-pointer text-sm select-none">
-          <input type="checkbox" id="wasapi-toggle" class="w-4 h-4 accent-primary cursor-pointer">
+          <input type="checkbox" id="wasapi-toggle" class="w-5 h-5 accent-primary cursor-pointer">
           <span>Spela in mötesljud</span>
         </label>
         <label id="speakers-quick" class="flex items-center gap-2 cursor-pointer text-sm select-none"
           title="Märker vem som säger vad. Tar några minuter extra per timme ljud. Modellerna (ca 33 MB) hämtas första gången.">
-          <input type="checkbox" id="speakers-toggle" class="w-4 h-4 accent-primary cursor-pointer">
+          <input type="checkbox" id="speakers-toggle" class="w-5 h-5 accent-primary cursor-pointer">
           <span>Identifiera talare</span>
         </label>
         <!-- Syns bara när mötesljud är av. Det enda valet som kan förstöra en hel
@@ -73,8 +75,8 @@
 
       <!-- Inspelning pågår -->
       <div id="recording-status" class="hidden flex items-center gap-4 flex-1 min-w-0">
-        <div id="eq-bar" class="meter" role="presentation"><div class="eq-col"></div></div>
-        <span id="recording-status-text" class="text-sm font-medium">Spelar in</span>
+        <div id="eq-bar" class="meter" aria-hidden="true"><div class="eq-col"></div></div>
+        <span id="recording-status-text" class="text-sm font-medium" role="status">Spelar in</span>
         <span id="loopback-indicator" class="hidden text-sm text-muted">Mötesljud med</span>
         <div class="flex-1"></div>
         <span class="font-mono text-sm tabular-nums" id="recording-timer">00:00:00</span>
@@ -84,13 +86,13 @@
       </div>
     </div>
     <input type="file" id="file-input" accept="audio/*,video/mp4,video/webm,video/quicktime,video/x-matroska" class="hidden" />
-  </div>
+  </section>
 
   <!-- Transkriptet -->
-  <main class="flex-1 flex flex-col px-5 pt-4 pb-4 overflow-hidden min-h-0">
-    <div class="flex items-center justify-between mb-3">
+  <main id="main-content" tabindex="-1" class="flex-1 flex flex-col px-5 pt-4 pb-4 overflow-hidden min-h-[26rem] outline-none">
+    <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 mb-3">
       <h2 class="text-[15px] font-semibold">Transkribering</h2>
-      <div class="flex items-center gap-1">
+      <div class="flex flex-wrap items-center gap-1">
         <button id="btn-search" class="btn btn-ghost btn-sm" title="Sök och ersätt (Ctrl+F)">
           <span class="material-symbols-outlined">search</span>
           <span>Sök</span>
@@ -134,9 +136,9 @@
     </div>
 
     <!-- Sök/ersätt -->
-    <div id="search-bar" class="hidden mb-3 flex items-center gap-2">
-      <input id="search-input" type="text" placeholder="Sök" aria-label="Sök" class="field flex-1" />
-      <input id="replace-input" type="text" placeholder="Ersätt med" aria-label="Ersätt med" class="field flex-1" />
+    <div id="search-bar" class="hidden mb-3 flex flex-wrap items-center gap-2" role="search" aria-label="Sök och ersätt i texten">
+      <input id="search-input" type="text" placeholder="Sök" aria-label="Sök" class="field flex-1 min-w-[9rem]" />
+      <input id="replace-input" type="text" placeholder="Ersätt med" aria-label="Ersätt med" class="field flex-1 min-w-[9rem]" />
       <button id="btn-replace-one" class="btn btn-sm">Ersätt</button>
       <button id="btn-replace-all" class="btn btn-sm">Ersätt alla</button>
       <button id="btn-close-search" class="btn btn-ghost btn-sm btn-icon-only" aria-label="Stäng sök">
@@ -149,20 +151,21 @@
 
       <!-- Spelare — fastsatt överst -->
       <div id="player-bar" class="hidden flex items-center gap-3 px-5 py-2.5 border-b border-line shrink-0">
-        <button id="btn-play-pause" class="btn btn-icon-only" aria-label="Spela upp / pausa">
+        <button id="btn-play-pause" class="btn btn-icon-only" aria-label="Spela upp">
           <span id="play-icon" class="material-symbols-outlined">play_arrow</span>
         </button>
         <span id="player-time" class="text-sm font-mono tabular-nums text-muted shrink-0 w-12">0:00</span>
-        <div id="player-track" class="relative flex-1 h-1.5 bg-line rounded-sm cursor-pointer before:absolute before:-inset-y-3 before:inset-x-0 before:content-['']">
+        <div id="player-track" role="slider" tabindex="0" aria-label="Position i inspelningen" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-valuetext="0:00"
+          class="relative flex-1 h-1.5 bg-control rounded-sm cursor-pointer before:absolute before:-inset-y-3 before:inset-x-0 before:content-['']">
           <div id="player-fill" class="h-full bg-primary rounded-sm" style="width:0%"></div>
         </div>
         <span id="player-duration" class="text-sm font-mono tabular-nums text-muted shrink-0 w-12 text-right">0:00</span>
       </div>
 
-      <div class="flex-1 overflow-y-auto px-8 py-6 flex flex-col">
+      <div class="flex-1 overflow-y-auto px-4 sm:px-8 py-6 flex flex-col">
         <div class="w-full max-w-[44rem] mx-auto flex-1 flex flex-col">
           <textarea id="output-text"
-            class="transcript-text flex-1 w-full bg-transparent border-none focus:ring-0 p-0 placeholder:text-muted/70 resize-none"
+            class="transcript-text flex-1 w-full bg-transparent border-none focus:ring-0 p-0 placeholder:text-muted resize-none"
             style="min-height: 200px;"
             placeholder="Spela in ett möte eller öppna en ljudfil, så visas texten här."></textarea>
           <!-- Segmentvy -->
@@ -204,10 +207,10 @@
 
       <!-- Transkriberar -->
       <div id="loading-overlay" class="hidden absolute inset-0 bg-sheet/95 z-10 flex items-center justify-center px-8"
-        role="status" aria-live="polite">
+        role="group" aria-label="Transkribering pågår">
         <div class="w-full max-w-xs flex flex-col gap-3">
           <span id="loading-text" class="font-medium">Transkriberar…</span>
-          <div id="progress-container" class="hidden w-full h-1.5 bg-line rounded-sm overflow-hidden">
+          <div id="progress-container" class="hidden w-full h-1.5 bg-control rounded-sm overflow-hidden" role="progressbar" aria-label="Förlopp" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
             <div id="progress-bar" class="h-full bg-primary transition-all duration-300" style="width: 0%"></div>
           </div>
           <button id="btn-cancel-transcription" class="hidden btn btn-sm self-start">Avbryt</button>
@@ -221,7 +224,7 @@
   <audio id="audio-player" preload="metadata" style="display:none"></audio>
 
   <!-- Statusrad -->
-  <footer class="h-8 px-5 bg-sheet border-t border-line flex items-center gap-6 text-xs text-muted shrink-0">
+  <footer class="min-h-8 px-5 py-1 bg-sheet border-t border-line flex flex-wrap items-center gap-x-6 gap-y-0 text-xs text-muted shrink-0">
     <span id="status-badge">Redo</span>
     <span class="flex-1"></span>
     <span class="truncate">Mikrofon: <span id="footer-mic">Standardmikrofon</span></span>
@@ -245,7 +248,7 @@
         <!-- Språk -->
         <section class="section">
           <label for="transcription-language" class="section-title block">Språk</label>
-          <select id="transcription-language" class="field mt-2">
+          <select id="transcription-language" class="field mt-2" data-autofocus>
             <option value="sv" selected>Svenska</option>
             <option value="en">Engelska</option>
             <option value="auto">Automatisk identifiering</option>
@@ -264,7 +267,7 @@
           </div>
 
           <h4 class="text-sm font-semibold mt-6 mb-2">Ladda ned en modell</h4>
-          <div class="flex flex-col gap-2" id="quality-picker">
+          <div class="flex flex-col gap-2" id="quality-picker" role="group" aria-label="Kvalitet på modellen">
             <button type="button" data-quality="fast" class="quality-btn choice">
               <span class="choice-title">Snabbast <span class="font-normal text-muted">· rekommenderas, endast svenska</span></span>
               <span class="choice-desc">Pianissimo. Körs på processorn och är oftast snabbast på vanliga datorer. Något lägre noggrannhet än Bästa kvalitet.</span>
@@ -286,7 +289,7 @@
           <!-- Ordagrann — gäller hur texten skrivs, inte kvaliteten. -->
           <div id="verbatim-row" class="mt-4">
             <label class="flex items-start gap-3 cursor-pointer select-none">
-              <input type="checkbox" id="model-verbatim" class="w-4 h-4 accent-primary cursor-pointer shrink-0 mt-1">
+              <input type="checkbox" id="model-verbatim" class="w-5 h-5 accent-primary cursor-pointer shrink-0 mt-1">
               <span class="text-sm">Ordagrann utskrift
                 <span class="block hint">Tar med upprepningar och talspråk. Passar diktering och protokoll. Utan kryss städas texten lätt.</span>
               </span>
@@ -395,7 +398,7 @@
 
               <div id="gpu-section" class="hidden flex flex-col gap-3">
                 <label class="flex items-start gap-3 cursor-pointer select-none">
-                  <input type="checkbox" id="gpu-toggle" class="w-4 h-4 accent-primary cursor-pointer shrink-0 mt-1" checked>
+                  <input type="checkbox" id="gpu-toggle" class="w-5 h-5 accent-primary cursor-pointer shrink-0 mt-1" checked>
                   <span class="text-sm font-semibold">GPU-acceleration (Vulkan)
                     <span class="block hint font-normal">Använder grafikkortet för snabbare transkribering med Whisper. Stäng av om du har flera grafikkort eller en NPU, äldre eller integrerade grafikkort, eller om transkriberingen kraschar.</span>
                   </span>
@@ -446,7 +449,7 @@
         </p>
       </div>
       <div class="dialog-actions">
-        <button id="confirm-cancel" class="btn">Avbryt</button>
+        <button id="confirm-cancel" class="btn" data-autofocus>Avbryt</button>
         <button id="confirm-ok" class="btn btn-primary">Fortsätt</button>
       </div>
     </div>
@@ -459,7 +462,7 @@
       <div class="p-5">
         <h3 id="import-title" class="text-base font-semibold mb-3">Vad vill du öppna?</h3>
         <div class="flex flex-col gap-2">
-          <button id="import-choice-file" class="choice">
+          <button id="import-choice-file" class="choice" data-autofocus>
             <span class="choice-title">Ljud- eller videofil</span>
             <span class="choice-desc">MP3, M4A, WAV, MP4 med flera</span>
           </button>
@@ -534,7 +537,7 @@
         </p>
       </div>
       <div class="dialog-actions">
-        <button id="btn-close-stereo-mix-ok" class="btn btn-primary">Jag förstår</button>
+        <button id="btn-close-stereo-mix-ok" class="btn btn-primary" data-autofocus>Jag förstår</button>
       </div>
     </div>
   </div>

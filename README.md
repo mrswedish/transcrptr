@@ -265,3 +265,7 @@ cd transcrptr
 npm install
 npm run tauri dev
 ```
+
+## Tillgänglighet
+
+Appen är granskad mot WCAG 2.1 AA (EN 301 549). Se [TILLGANGLIGHET.md](TILLGANGLIGHET.md) för vad som är gjort och vad som återstår att verifiera (bland annat test med skärmläsare).

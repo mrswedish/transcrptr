@@ -15,6 +15,7 @@ export default {
         ink: "rgb(var(--c-ink) / <alpha-value>)",         // brödtext
         muted: "rgb(var(--c-muted) / <alpha-value>)",     // hjälptext, ≥ 4,5:1
         line: "rgb(var(--c-line) / <alpha-value>)",       // 1 px linjer i stället för skuggor
+        control: "rgb(var(--c-control) / <alpha-value>)", // kanter på fält och spår: minst 3:1 mot underlaget (WCAG 1.4.11)
         tone: "rgb(var(--c-tone) / <alpha-value>)",       // markerad rad, hover
         primary: "rgb(var(--c-primary) / <alpha-value>)",
         "primary-hover": "rgb(var(--c-primary-hover) / <alpha-value>)",

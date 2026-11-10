@@ -33,8 +33,109 @@ const recordingIndicator = document.getElementById("recording-status");
 const recordingStatusText = document.getElementById("recording-status-text");
 const idleHint = document.getElementById("idle-hint");
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Tillgänglighet (WCAG 2.1 AA / EN 301 549)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Meddelanden till skärmläsare (status utan fokusflytt, WCAG 4.1.3).
+const srStatusEl = document.getElementById("sr-status");
+let srStatusTimer = null;
+function announce(text) {
+  if (!srStatusEl) return;
+  srStatusEl.textContent = "";
+  clearTimeout(srStatusTimer);
+  srStatusTimer = setTimeout(() => { srStatusEl.textContent = text; }, 60);
+}
+
+// Förloppsstapeln speglas till aria-valuenow på behållaren.
+(function wireProgressAria() {
+  const bar = document.getElementById("progress-bar");
+  const box = document.getElementById("progress-container");
+  if (!bar || !box) return;
+  new MutationObserver(() => {
+    const n = Math.max(0, Math.min(100, parseInt(bar.style.width, 10) || 0));
+    box.setAttribute("aria-valuenow", String(n));
+    box.setAttribute("aria-valuetext", `${n} procent`);
+  }).observe(bar, { attributes: true, attributeFilter: ["style"] });
+})();
+
+// Dialoger: fokus flyttas in, Tab hålls kvar i dialogen, Esc stänger, fokus återställs och
+// bakgrunden görs inert medan en dialog är öppen (WCAG 2.1.1, 2.4.3, 2.4.7).
+(function wireDialogs() {
+  const DIALOGS = {
+    "settings-modal": "btn-close-settings",
+    "confirm-modal": "confirm-cancel",
+    "import-choice-modal": "import-choice-cancel",
+    "stereo-mix-modal": "btn-close-stereo-mix",
+  };
+  const stack = [];                 // öppna dialoger, den översta sist
+  const openers = new Map();        // dialog -> elementet som hade fokus före
+  const FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]):not([type=hidden]),select:not([disabled]),textarea:not([disabled]),summary,[tabindex]:not([tabindex="-1"])';
+  const visible = (el) => el.getClientRects().length > 0;
+  const focusables = (root) => [...root.querySelectorAll(FOCUSABLE)].filter(visible);
+
+  function syncInert() {
+    const bg = document.querySelectorAll("body > header, body > section, body > main, body > footer, body > .skip-link");
+    const top = stack[stack.length - 1] || null;
+    bg.forEach(el => el.toggleAttribute("inert", !!top));
+    for (const id of Object.keys(DIALOGS)) {
+      const el = document.getElementById(id);
+      if (el) el.toggleAttribute("inert", !!top && el !== top);
+    }
+  }
+
+  function opened(el) {
+    if (stack.includes(el)) return;
+    openers.set(el, document.activeElement);
+    stack.push(el);
+    syncInert();
+    requestAnimationFrame(() => {
+      const target = el.querySelector("[data-autofocus]") || focusables(el)[0];
+      if (target) target.focus();
+    });
+  }
+  function closed(el) {
+    const i = stack.indexOf(el);
+    if (i === -1) return;
+    stack.splice(i, 1);
+    syncInert();
+    const back = openers.get(el);
+    openers.delete(el);
+    requestAnimationFrame(() => {
+      if (back && document.contains(back) && visible(back)) back.focus();
+    });
+  }
+
+  for (const id of Object.keys(DIALOGS)) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    const check = () => (el.classList.contains("hidden") ? closed(el) : opened(el));
+    new MutationObserver(check).observe(el, { attributes: true, attributeFilter: ["class"] });
+  }
+
+  document.addEventListener("keydown", (e) => {
+    const top = stack[stack.length - 1];
+    if (!top) return;
+    if (e.key === "Escape") {
+      const btn = document.getElementById(DIALOGS[top.id]);
+      if (btn) { e.preventDefault(); btn.click(); }
+    } else if (e.key === "Tab") {
+      const f = focusables(top);
+      if (f.length === 0) { e.preventDefault(); return; }
+      const first = f[0], last = f[f.length - 1];
+      if (e.shiftKey && (document.activeElement === first || !top.contains(document.activeElement))) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && (document.activeElement === last || !top.contains(document.activeElement))) { e.preventDefault(); first.focus(); }
+    }
+  });
+})();
+
 // Central UI-state-växling för inspelningskontrollerna
+let lastRecUIState = "idle";
 function setRecordingUI(state) {                // "idle" | "recording" | "paused"
+  if (state !== lastRecUIState) {
+    announce(state === "recording" ? "Inspelning pågår" : state === "paused" ? "Inspelningen är pausad" : "Inspelningen är stoppad");
+    lastRecUIState = state;
+  }
   const recLabel = btnRecord && btnRecord.querySelector(".btn-record-label");
   if (state === "idle") {
     if (recLabel) recLabel.textContent = "Spela in";
@@ -344,6 +445,7 @@ async function setupEventListeners() {
   await listen("diarization_phase", (event) => {
     const { phase, message, percent, etaSeconds } = event.payload;
     if (phase === "start") {
+      announce("Identifierar talare. Det kan ta några minuter.");
       if (progressContainer) progressContainer.classList.remove("hidden");
       if (progressBar) progressBar.style.width = "0%";
       loadingText.innerText = "Identifierar talare…";
@@ -480,7 +582,10 @@ function applyTheme() {
   const icon = document.getElementById("theme-icon");
   if (icon) icon.textContent = isDark ? "light_mode" : "dark_mode";
   const btn = document.getElementById("btn-theme");
-  if (btn) btn.title = isDark ? "Byt till ljust tema" : "Byt till mörkt tema";
+  if (btn) {
+    btn.title = isDark ? "Byt till ljust tema" : "Byt till mörkt tema";
+    btn.setAttribute("aria-label", btn.title);
+  }
 }
 
 function setTheme(pref) {
@@ -1015,6 +1120,7 @@ function applyQuality(quality) {
 
   document.querySelectorAll("[data-quality]").forEach(b => {
     b.className = b.dataset.quality === quality ? QUALITY_ACTIVE : QUALITY_IDLE;
+    b.setAttribute("aria-pressed", String(b.dataset.quality === quality));
   });
   updateDownloadButtonLabel();
 }
@@ -1687,7 +1793,8 @@ function buildSpeakerHeader(id) {
   btn.type = "button";
   btn.className = `spk-tag spk-${((id - 1) % 6) + 1}`;
   btn.textContent = speakerLabel(id);
-  btn.title = "Klicka för att byta namn på talaren";
+  btn.title = "Byt namn på talaren";
+  btn.setAttribute("aria-label", `${speakerLabel(id)}. Byt namn på talaren`);
   btn.addEventListener("click", () => {
     const input = document.createElement("input");
     input.type = "text";
@@ -1703,11 +1810,12 @@ function buildSpeakerHeader(id) {
         const v = input.value.trim();
         if (v) speakerNames[id] = v; else delete speakerNames[id];
         document.querySelectorAll(`.segment-spk[data-speaker="${id}"] .spk-tag`)
-          .forEach(t => { t.textContent = speakerLabel(id); });
+          .forEach(t => { t.textContent = speakerLabel(id); t.setAttribute("aria-label", `${speakerLabel(id)}. Byt namn på talaren`); });
         outputText.value = buildPlainText();
       }
       if (input.parentNode) input.replaceWith(btn);
       btn.textContent = speakerLabel(id);
+      btn.focus();
     };
     input.addEventListener("keydown", (e) => {
       if (e.key === "Enter") finish(true);
@@ -1756,10 +1864,12 @@ function buildConfidenceView(seg) {
       const minProb = Math.min(...groups[i].map(t => t.prob));
       if (minProb < confidenceThreshold * 0.6) {
         span.className = "tok tok-very-low";
-        span.title = `Konfidenspoäng: ${Math.round(minProb * 100)}%`;
+        span.title = `Mycket osäkert ord (${Math.round(minProb * 100)}%)`;
+        span.setAttribute("aria-description", span.title);
       } else if (minProb < confidenceThreshold) {
         span.className = "tok tok-low";
-        span.title = `Konfidenspoäng: ${Math.round(minProb * 100)}%`;
+        span.title = `Osäkert ord (${Math.round(minProb * 100)}%)`;
+        span.setAttribute("aria-description", span.title);
       }
     }
     div.appendChild(span);
@@ -1770,22 +1880,35 @@ function buildConfidenceView(seg) {
 
 // Bygger en enskild segment-rad. Extraherad från renderSegmentEditor så att
 // progressive rendering kan anropa den per chunk.
+// Segmentets text visas som en knapp (fokuserbar, Enter/blanksteg öppnar redigering).
+function makeViewEditable(view) {
+  view.tabIndex = 0;
+  view.setAttribute("role", "button");
+  view.title = "Redigera texten (Enter)";
+}
+function viewKeydown(e) {
+  if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.currentTarget.click(); }
+}
+
 function buildSegmentRow(seg, idx) {
   const row = document.createElement("div");
   row.className = "segment-row";
   row.dataset.idx = idx;
 
-  const ts = document.createElement("span");
+  const ts = document.createElement("button");
+  ts.type = "button";
   ts.className = "segment-ts";
   ts.textContent = formatMs(seg.startMs);
-  ts.title = "Klicka för att spela från denna tidpunkt";
+  ts.title = "Spela från denna tidpunkt";
+  ts.setAttribute("aria-label", `Spela från ${formatMs(seg.startMs)}`);
   ts.addEventListener("click", () => seekPlayer(seg.startMs));
 
   const confView = buildConfidenceView(seg);
-  confView.title = "Klicka för att redigera";
+  makeViewEditable(confView);
 
   const ta = document.createElement("textarea");
   ta.className = "segment-input hidden";
+  ta.setAttribute("aria-label", `Redigera texten som börjar ${formatMs(seg.startMs)}. Esc avslutar.`);
   ta.value = seg.text;
   ta.rows = 1;
   const autoGrow = () => { ta.style.height = "auto"; ta.style.height = ta.scrollHeight + "px"; };
@@ -1797,11 +1920,13 @@ function buildSegmentRow(seg, idx) {
   });
   let textAtFocus = "";
   ta.addEventListener("focus", () => { textAtFocus = transcriptSegments[idx].text; });
-  ta.addEventListener("blur", () => {
+  const finishEdit = () => {
+    if (ta.classList.contains("hidden")) return;   // redan avslutad
     if (textAtFocus && ta.value !== textAtFocus) suggestVocabFromEdit(textAtFocus, ta.value);
     const newView = buildConfidenceView(transcriptSegments[idx]);
-    newView.title = "Klicka för att redigera";
+    makeViewEditable(newView);
     newView.addEventListener("click", () => { newView.classList.add("hidden"); ta.classList.remove("hidden"); requestAnimationFrame(autoGrow); ta.focus(); });
+    newView.addEventListener("keydown", viewKeydown);
     // Ersätt den befintliga vyn (eller sätt in en ny). Tidigare fanns här ett
     // extra replaceChild som kastade NotFoundError när confView redan bytts ut —
     // raderna nedan gör jobbet korrekt på egen hand.
@@ -1809,8 +1934,14 @@ function buildSegmentRow(seg, idx) {
     const existing = row.querySelector(".segment-view");
     if (existing) row.replaceChild(newView, existing);
     else row.insertBefore(newView, ta);
+    if (row._focusView) { row._focusView = false; newView.focus(); }
+  };
+  ta.addEventListener("blur", finishEdit);
+  ta.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") { e.stopPropagation(); row._focusView = true; finishEdit(); }
   });
 
+  confView.addEventListener("keydown", viewKeydown);
   confView.addEventListener("click", () => {
     confView.classList.add("hidden");
     ta.classList.remove("hidden");
@@ -1988,6 +2119,11 @@ function initPlayer() {
     if (fill) fill.style.width = `${pct}%`;
     const playerTime = document.getElementById("player-time");
     if (playerTime) playerTime.textContent = formatMs(ms);
+    const trackEl = document.getElementById("player-track");
+    if (trackEl) {
+      trackEl.setAttribute("aria-valuenow", String(Math.round(pct)));
+      trackEl.setAttribute("aria-valuetext", `${formatMs(ms)} av ${formatMs(dur)}`);
+    }
 
     if (segmentViewActive && segmentRowsCache.length > 0) {
       // Binary search istället för O(n) querySelectorAll på varje timeupdate-event
@@ -2007,7 +2143,7 @@ function initPlayer() {
           const row = segmentRowsCache[found];
           if (row) {
             row.classList.add("segment-active");
-            row.scrollIntoView({ block: "nearest", behavior: "smooth" });
+            row.scrollIntoView({ block: "nearest", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
           }
         }
         currentActiveSegIdx = found;
@@ -2032,8 +2168,29 @@ function initPlayer() {
     document.getElementById("player-bar")?.classList.add("hidden");
   });
 
+  const playBtn = document.getElementById("btn-play-pause");
+  audioPlayer.addEventListener("play", () => playBtn?.setAttribute("aria-label", "Pausa uppspelning"));
+  audioPlayer.addEventListener("pause", () => playBtn?.setAttribute("aria-label", "Spela upp"));
+  audioPlayer.addEventListener("ended", () => playBtn?.setAttribute("aria-label", "Spela upp"));
+
   const track = document.getElementById("player-track");
   if (track) {
+    track.addEventListener("keydown", (e) => {
+      if (!audioPlayer || !isFinite(audioPlayer.duration)) return;
+      const step = e.shiftKey ? 30 : 5;
+      let t = audioPlayer.currentTime;
+      switch (e.key) {
+        case "ArrowRight": case "ArrowUp": t += step; break;
+        case "ArrowLeft": case "ArrowDown": t -= step; break;
+        case "PageUp": t += 30; break;
+        case "PageDown": t -= 30; break;
+        case "Home": t = 0; break;
+        case "End": t = audioPlayer.duration; break;
+        default: return;
+      }
+      e.preventDefault();
+      audioPlayer.currentTime = Math.max(0, Math.min(audioPlayer.duration, t));
+    });
     track.addEventListener("click", (e) => {
       if (!audioPlayer || !isFinite(audioPlayer.duration)) return;
       const rect = track.getBoundingClientRect();
@@ -2057,6 +2214,7 @@ async function processAudioFile(filePath) {
 
     const fileName = filePath.split(/[/\\]/).pop();
     loadingText.innerText = `Avkodar ${fileName}...`;
+    announce("Transkriberingen har startat");
     loadingOverlay.classList.remove("hidden");
     if (progressContainer) progressContainer.classList.remove("hidden");
     if (progressBar) progressBar.style.width = "0%";
@@ -2109,6 +2267,7 @@ async function processAudioFile(filePath) {
       speakerNotice = null;
     }
     outputText.scrollTop = outputText.scrollHeight;
+    announce(`Transkriberingen är klar. ${transcriptSegments.length} segment.`);
     if (pendingVocabChanges.length > 0) {
       showNotice(`Ordlistan rättade ${pendingVocabChanges.length} ord: ${summarizeChanges(pendingVocabChanges)}.`);
     }
@@ -2410,7 +2569,7 @@ function renderVocab() {
     label.className = "flex items-center gap-3 min-w-0 flex-1 cursor-pointer";
     const cb = document.createElement("input");
     cb.type = "checkbox";
-    cb.className = "w-4 h-4 accent-primary shrink-0";
+    cb.className = "w-5 h-5 accent-primary shrink-0";
     cb.checked = list.enabled;
     cb.setAttribute("aria-label", `Använd ordlistan ${list.name} vid transkribering`);
     cb.addEventListener("change", () => { list.enabled = cb.checked; saveVocabSoon(); });
