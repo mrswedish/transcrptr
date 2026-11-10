@@ -272,7 +272,16 @@ pub(crate) async fn get_available_models(app_handle: AppHandle) -> Result<Vec<Mo
 }
 
 #[tauri::command]
-pub(crate) async fn delete_model(app_handle: AppHandle, size: String, quantized: bool, revision: String) -> Result<(), String> {
+pub(crate) async fn delete_model(
+    app_handle: AppHandle,
+    state: tauri::State<'_, crate::AppState>,
+    size: String,
+    quantized: bool,
+    revision: String,
+) -> Result<(), String> {
+    if let Ok(mut cache) = state.inner().engine_cache.lock() {
+        *cache = None;
+    }
     let model_path = get_model_path(&app_handle, &size, quantized, &revision)?;
     if size == pianissimo::ENGINE_ID {
         if model_path.exists() {

@@ -4,7 +4,7 @@ Underlag för IT-avdelning, förvaltare och utvecklingsenhet. Beskriver var data
 vilken nätverkstrafik som förekommer, vad som händer vid avinstallation och hur systemet är
 byggt.
 
-Avser **version 2.2.4** och **enbart Windows**. Senast genomgången mot källkoden 2026-11-10;
+Avser **version 2.3.0** och **enbart Windows**. Senast genomgången mot källkoden 2026-11-10;
 där en sökväg härleds ur Tauris API i stället för att vara hårdkodad anges det.
 
 - **Identifier:** `com.patriksvensk.transcrptr`
@@ -59,7 +59,9 @@ Varje inspelning får en egen mapp: `inspelning-ÅÅÅÅMMDD-TTMMSS[-valfritt-na
 
 Under inspelning skrivs råspåren `mic.wav`, `lb_console.wav` och `lb_comms.wav` löpande till
 disk — detta är ett medvetet skydd mot dataförlust vid krasch eller strömavbrott. Vid normalt
-stopp mixas de till `recording.wav` och **råspåren raderas**.
+stopp mixas de till `recording.wav` och **råspåren raderas**. När en inspelning transkriberas
+sparas även transkriptet och eventuella talarnamn lokalt som `transcript.json` i samma sessionsmapp,
+så att tidigare transkriberade inspelningar kan öppnas igen utan ny transkribering.
 
 > **Observera:** Vid krasch eller strömavbrott ligger råspåren kvar. Det är råinspelningar av
 > mikrofon och systemljud och ska betraktas som lika känsliga som den färdiga filen. Appen kan
@@ -299,7 +301,7 @@ src-tauri/
   vendor/speakrs/               Lokalt ändrad kopia av speakrs (se TRANSKRIBERA-PATCH.md)
 ```
 
-Frontend och backend kommunicerar via Tauris `invoke`-brygga med **32 namngivna kommandon**.
+Frontend och backend kommunicerar via Tauris `invoke`-brygga med **34 namngivna kommandon**.
 Det är den enda vägen för JavaScript att nå filsystem eller ljudenheter.
 
 ### Nyckelbeslut värda att känna till vid förvaltning

@@ -441,6 +441,37 @@ async function setupEventListeners() {
     loadingText.innerText = `Transkriberar... ${progress}%`;
   });
 
+  // Dra och släpp (Drag & Drop) ljudfiler eller sessionsmappar direkt i fönstret
+  await listen("tauri://drag-drop", async (event) => {
+    const paths = event.payload && event.payload.paths;
+    if (!Array.isArray(paths) || paths.length === 0) return;
+    if (isRecording || !loadingOverlay.classList.contains("hidden")) return;
+    const dropped = paths[0];
+    if (!dropped || typeof dropped !== "string") return;
+    const baseName = dropped.split(/[/\\]/).pop() || "";
+    const isSession = baseName.startsWith("inspelning-") || baseName.startsWith("recording-");
+    const ext = (baseName.split(".").pop() || "").toLowerCase();
+    const supportedExts = ["mp3", "m4a", "aac", "wav", "ogg", "flac", "mp4", "webm", "mkv", "wma"];
+    if (!isSession && !supportedExts.includes(ext)) {
+      await message("Filformatet stöds inte. Släpp en ljud- eller videofil (t.ex. .wav, .mp3, .m4a, .mp4).", {
+        title: "Okänt filformat",
+        kind: "warning",
+      });
+      return;
+    }
+    if ((outputText.value && outputText.value.trim()) || transcriptSegments.length > 0) {
+      const ok = await showConfirm("Du har en transkribering öppen. Vill du öppna den släppta filen i stället?", "Öppna fil");
+      if (!ok) return;
+    }
+    disableControls();
+    if (isSession) {
+      await importSessionFolder(dropped, false);
+      enableControls();
+    } else {
+      await processAudioFile(dropped);
+    }
+  });
+
   // Bläddra-knapp för inspelningsmapp
   const btnBrowseDir = document.getElementById("btn-browse-recording-dir");
   if (btnBrowseDir) {
@@ -509,7 +540,30 @@ function sessionStartFromFolderName(folderName) {
   return new Date();
 }
 
-// Importerar en sessionsmapp: mixar (recover_session) och lämnar över till post-recording-flödet.
+// Autospara transkriptet (och talarnamn) i sessionsmappen om filen tillhör en inspelning.
+let sessionTranscriptSaveTimer = null;
+function saveSessionTranscriptSoon() {
+  if (!lastTranscribedPath || transcriptSegments.length === 0) return;
+  clearTimeout(sessionTranscriptSaveTimer);
+  sessionTranscriptSaveTimer = setTimeout(saveSessionTranscriptNow, 400);
+}
+async function saveSessionTranscriptNow() {
+  clearTimeout(sessionTranscriptSaveTimer);
+  sessionTranscriptSaveTimer = null;
+  if (!lastTranscribedPath || transcriptSegments.length === 0) return;
+  try {
+    await invoke("save_session_transcript", {
+      audioPath: lastTranscribedPath,
+      segments: transcriptSegments,
+      speakerNames,
+    });
+  } catch (e) {
+    logToFile(`save_session_transcript: ${e}`);
+  }
+}
+
+// Importerar en sessionsmapp: mixar (recover_session). Finns redan ett sparat transkript
+// (transcript.json) öppnas det direkt på 0 s med ljudspelaren; annars visas post-recording-valet.
 async function importSessionFolder(dir, needsRepair = false) {
   // Nollställ ev. öppen post-recording-dialog innan vi tar över state (F6)
   pendingRecording = null;
@@ -520,11 +574,30 @@ async function importSessionFolder(dir, needsRepair = false) {
       : "Förbereder inspelning...";
     loadingOverlay.classList.remove("hidden");
     const recordedPath = await invoke("recover_session", { sessionDir: dir });
+    const saved = await invoke("load_session_transcript", { sessionDir: dir }).catch(() => null);
     loadingOverlay.classList.add("hidden");
     document.getElementById("settings-modal")?.classList.add("hidden");
-    const folderName = dir.split(/[/\\]/).pop() || "";
     wasapiRecordingReady = true;
-    pendingRecording     = { type: "wav-file", filePath: recordedPath };
+
+    if (saved && Array.isArray(saved.segments) && saved.segments.length > 0) {
+      lastTranscribedPath = recordedPath;
+      transcriptSegments = saved.segments.map(s => ({ ...s, tokens: s.tokens || [] }));
+      speakerNames = saved.speakerNames || {};
+      hideNotice();
+      outputText.value = buildPlainText();
+      renderSegmentEditor();
+      showSegmentView();
+      const btnSeg = document.getElementById("btn-segment-toggle");
+      if (btnSeg) { btnSeg.classList.remove("hidden"); btnSeg.style.display = "inline-flex"; }
+      btnRedo.classList.remove("hidden"); btnRedo.style.display = "inline-flex";
+      if (btnSaveAudio) { btnSaveAudio.classList.remove("hidden"); btnSaveAudio.style.display = "inline-flex"; }
+      await setupPlayerFromPath(recordedPath);
+      announce(`Öppnade sparad transkribering med ${transcriptSegments.length} segment.`);
+      return;
+    }
+
+    const folderName = dir.split(/[/\\]/).pop() || "";
+    pendingRecording = { type: "wav-file", filePath: recordedPath };
     const started = sessionStartFromFolderName(folderName);
     const when = started.toLocaleString("sv-SE", { day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" });
     showPostRecordingActions(dir, { title: `Inspelning från ${when}` });
@@ -1651,6 +1724,11 @@ async function showImportChoice() {
         w.className = "text-warn font-semibold";
         w.textContent = " · Avbruten – återställs när du öppnar den";
         d.appendChild(w);
+      } else if (rec.hasTranscript) {
+        const tr = document.createElement("span");
+        tr.className = "font-semibold";
+        tr.textContent = " · Transkriberad";
+        d.appendChild(tr);
       }
       b.append(t, d);
       const h = () => { cleanup(); resolve({ kind: "session", rec }); };
@@ -1773,6 +1851,7 @@ function buildSpeakerHeader(id) {
         document.querySelectorAll(`.segment-spk[data-speaker="${id}"] .spk-tag`)
           .forEach(t => { t.textContent = speakerLabel(id); t.setAttribute("aria-label", `${speakerLabel(id)}. Byt namn på talaren`); });
         outputText.value = buildPlainText();
+        saveSessionTranscriptSoon();
       }
       if (input.parentNode) input.replaceWith(btn);
       btn.textContent = speakerLabel(id);
@@ -1878,15 +1957,23 @@ function buildSegmentRow(seg, idx) {
     transcriptSegments[idx].tokens = [];
     outputText.value = buildPlainText();
     autoGrow();
+    saveSessionTranscriptSoon();
   });
   let textAtFocus = "";
   ta.addEventListener("focus", () => { textAtFocus = transcriptSegments[idx].text; });
+  const openEditView = (viewEl) => {
+    if (audioPlayer && audioPlayer.paused) seekPlayer(seg.startMs);
+    viewEl.classList.add("hidden");
+    ta.classList.remove("hidden");
+    requestAnimationFrame(autoGrow);
+    ta.focus();
+  };
   const finishEdit = () => {
     if (ta.classList.contains("hidden")) return;   // redan avslutad
     if (textAtFocus && ta.value !== textAtFocus) suggestVocabFromEdit(textAtFocus, ta.value);
     const newView = buildConfidenceView(transcriptSegments[idx]);
     makeViewEditable(newView);
-    newView.addEventListener("click", () => { newView.classList.add("hidden"); ta.classList.remove("hidden"); requestAnimationFrame(autoGrow); ta.focus(); });
+    newView.addEventListener("click", () => openEditView(newView));
     newView.addEventListener("keydown", viewKeydown);
     // Ersätt den befintliga vyn (eller sätt in en ny). Tidigare fanns här ett
     // extra replaceChild som kastade NotFoundError när confView redan bytts ut —
@@ -1903,12 +1990,7 @@ function buildSegmentRow(seg, idx) {
   });
 
   confView.addEventListener("keydown", viewKeydown);
-  confView.addEventListener("click", () => {
-    confView.classList.add("hidden");
-    ta.classList.remove("hidden");
-    requestAnimationFrame(autoGrow);
-    ta.focus();
-  });
+  confView.addEventListener("click", () => openEditView(confView));
 
   row.appendChild(ts);
   row.appendChild(confView);
@@ -2031,6 +2113,7 @@ async function setupPlayerFromPath(filePath) {
   currentPlaybackIsAsset = true;
   audioPlayer.src = assetUrl;
   audioPlayer.load();
+  audioPlayer.playbackRate = currentPlaybackRate;
   const playerBar = document.getElementById("player-bar");
   if (playerBar) playerBar.classList.remove("hidden");
   const fill = document.getElementById("player-fill");
@@ -2282,7 +2365,11 @@ btnSave.addEventListener("click", async () => {
     : outputText.value;
   if (!content || !content.trim()) return;
   try {
-    await invoke("save_text_file", { content });
+    await invoke("save_text_file", {
+      content,
+      segments: transcriptSegments.length > 0 ? transcriptSegments : null,
+      speakerNames,
+    });
   } catch (err) {
     console.error("Save error:", err);
     const errorMsg = typeof err === 'string' ? err : err.message || String(err);
@@ -2315,8 +2402,11 @@ btnSegmentToggle && btnSegmentToggle.addEventListener("click", () => {
 });
 
 // -------------------------------------------------------------
-// Audio player play/pause button
+// Audio player play/pause & playback rate buttons
 // -------------------------------------------------------------
+const PLAYBACK_RATES = [1, 1.25, 1.5, 2, 0.75];
+let currentPlaybackRate = 1;
+
 const btnPlayPause = document.getElementById("btn-play-pause");
 const playIcon = document.getElementById("play-icon");
 btnPlayPause && btnPlayPause.addEventListener("click", () => {
@@ -2329,6 +2419,18 @@ btnPlayPause && btnPlayPause.addEventListener("click", () => {
     audioPlayer.pause();
     if (playIcon) playIcon.textContent = "play_arrow";
   }
+});
+
+const btnPlaybackRate = document.getElementById("btn-playback-rate");
+btnPlaybackRate && btnPlaybackRate.addEventListener("click", () => {
+  const idx = PLAYBACK_RATES.indexOf(currentPlaybackRate);
+  currentPlaybackRate = PLAYBACK_RATES[(idx + 1) % PLAYBACK_RATES.length];
+  if (audioPlayer) audioPlayer.playbackRate = currentPlaybackRate;
+  btnPlaybackRate.textContent = `${currentPlaybackRate}×`;
+  btnPlaybackRate.setAttribute(
+    "aria-label",
+    `Uppspelningshastighet ${currentPlaybackRate} gånger (klicka för att växla)`
+  );
 });
 
 // -------------------------------------------------------------
@@ -2461,8 +2563,8 @@ btnResetApp?.addEventListener("click", async () => {
 
   try {
     const disk = await invoke("get_disk_info");
-    if (modelsInfoEl && disk && typeof disk.models_size === "number") {
-      const sz = disk.models_size > 0 ? ` (${formatSize(disk.models_size)})` : " (0 B)";
+    if (modelsInfoEl && disk && typeof disk.models_dir_size === "number") {
+      const sz = disk.models_dir_size > 0 ? ` (${formatSize(disk.models_dir_size)})` : " (0 B)";
       modelsInfoEl.textContent = `Frigör diskutrymme${sz}. Standardmodellen laddas ner igen vid nästa start.`;
     }
   } catch (_) {}
@@ -2826,6 +2928,7 @@ async function applyVocabularyToTranscript(quiet) {
     });
     renderSegmentEditor();
     outputText.value = buildPlainText();
+    saveSessionTranscriptSoon();
   } else {
     outputText.value = res.texts[0];
   }

@@ -27,9 +27,23 @@ use session::default_recording_dir;
 mod application_loopback;
 use audio::AudioRecorder;
 
+#[derive(PartialEq, Eq, Clone)]
+pub(crate) struct EngineKey {
+    pub(crate) model_path: PathBuf,
+    pub(crate) use_gpu: bool,
+    pub(crate) gpu_device: Option<i32>,
+    pub(crate) thread_count: Option<u32>,
+}
+
+pub(crate) struct CachedEngine {
+    pub(crate) key: EngineKey,
+    pub(crate) engine: Box<dyn engine::Engine>,
+}
+
 pub struct AppState {
     pub cancel_flag: Arc<AtomicBool>,
     pub audio_recorder: Mutex<AudioRecorder>,
+    pub(crate) engine_cache: Arc<Mutex<Option<CachedEngine>>>,
 }
 
 #[tauri::command]
@@ -121,6 +135,7 @@ async fn transcribe_file(
         return Err("Modell saknas. Ladda ned den först.".to_string());
     }
     let cancel = Arc::clone(&state.inner().cancel_flag);
+    let engine_cache = Arc::clone(&state.inner().engine_cache);
     let app = app_handle.clone();
     // Personliga ordlistor: ledtråd till Whisper och efterkorrigering för alla motorer.
     let vocab_entries = vocabulary::active_entries(&vocabulary::load_store(&app_handle).unwrap_or_default());
@@ -137,33 +152,63 @@ async fn transcribe_file(
     };
 
     // Allt i en enda spawn_blocking: avkodaren hålls öppen hela vägen, ett chunk
-    // avkodas, transkriberas och kastas bort innan nästa börjar.
+    // avkodas, transkriberas och kastas bort innan nästa börjar (eller samlas upp om
+    // talaridentifiering är påslagen, så filen aldrig avkodas två gånger).
     let segments = tokio::task::spawn_blocking(move || -> Result<Vec<TranscriptSegment>, String> {
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<Vec<TranscriptSegment>, String> {
             // Öppna filen först så att ett läsfel visas innan den långsamma modellen laddas.
             let mut dec = StreamingDecoder::open(&file_path)?;
-            let mut engine: Box<dyn engine::Engine> = if size == pianissimo::ENGINE_ID {
-                Box::new(
-                    pianissimo::Pianissimo::load(&model_path, pianissimo::default_threads())
-                        .map_err(|e| format!("Kunde inte starta Pianissimo: {e}"))?,
-                )
-            } else {
-                Box::new(whisper::WhisperEngine::load(
-                    &model_path,
-                    use_gpu.unwrap_or(true),
-                    gpu_device,
-                    language,
-                    initial_prompt,
-                    thread_count,
-                )?)
+            let use_gpu_val = use_gpu.unwrap_or(true);
+            let key = EngineKey {
+                model_path: model_path.clone(),
+                use_gpu: use_gpu_val,
+                gpu_device,
+                thread_count,
             };
+
+            let mut engine: Box<dyn engine::Engine> = {
+                let mut guard = engine_cache.lock().ok();
+                let cached = guard.as_mut().and_then(|opt| opt.take());
+                match cached {
+                    Some(mut c) if c.key == key => {
+                        log_line("transcribe_file: återanvänder varm modell från cache");
+                        c.engine.set_run_options(&language, initial_prompt);
+                        c.engine
+                    }
+                    _ => {
+                        if size == pianissimo::ENGINE_ID {
+                            Box::new(
+                                pianissimo::Pianissimo::load(&model_path, pianissimo::default_threads())
+                                    .map_err(|e| format!("Kunde inte starta Pianissimo: {e}"))?,
+                            )
+                        } else {
+                            Box::new(whisper::WhisperEngine::load(
+                                &model_path,
+                                use_gpu_val,
+                                gpu_device,
+                                language,
+                                initial_prompt,
+                                thread_count,
+                            )?)
+                        }
+                    }
+                }
+            };
+
             let emit = |p: i32| {
                 let _ = app.emit("transcription_progress", TranscriptionProgressPayload { progress: p });
             };
             emit(0);
-            let mut segs = engine::run_file(engine.as_mut(), &mut dec, &cancel, &emit)?;
-            drop(engine);
+            let collect_samples = diar_dir.is_some();
+            let (mut segs, diar_samples) = engine::run_file(engine.as_mut(), &mut dec, collect_samples, &cancel, &emit)?;
             drop(dec);
+
+            if diar_dir.is_some() {
+                // Frigör modellen före talaridentifiering så att diariseringen får maximalt RAM.
+                drop(engine);
+            } else if let Ok(mut guard) = engine_cache.lock() {
+                *guard = Some(CachedEngine { key, engine });
+            }
 
             if !vocab_entries.is_empty() {
                 let mut changes: Vec<vocabulary::Change> = Vec::new();
@@ -188,9 +233,9 @@ async fn transcribe_file(
                         let _ = app.emit("diarization_phase", DiarizationPhasePayload { phase: "progress", speakers: 0, percent, eta_seconds, message: None });
                     };
                     phase("start", 0, None);
-                    log_line("diarization: startar");
+                    log_line("diarization: startar (återanvänder redan avkodat ljud)");
                     let started = std::time::Instant::now();
-                    match diarization::identify(&dir, &file_path, &mut segs, &cancel, &on_progress) {
+                    match diarization::identify_from_samples(&dir, diar_samples, &mut segs, &cancel, &on_progress) {
                         Ok(n) => {
                             log_line(&format!("diarization: {n} talare på {:.1} s", started.elapsed().as_secs_f64()));
                             phase("done", n, None);
@@ -206,6 +251,17 @@ async fn transcribe_file(
                             phase("failed", 0, Some(e));
                         }
                     }
+                }
+            }
+
+            // Autospara transkriptet direkt i sessionsmappen om ljudfilen tillhör en inspelning.
+            if !segs.is_empty() {
+                if let Err(e) = session::write_session_transcript_for_audio(
+                    std::path::Path::new(&file_path),
+                    &segs,
+                    &std::collections::HashMap::new(),
+                ) {
+                    log_line(&format!("transcribe_file: kunde inte autospara transcript.json: {e}"));
                 }
             }
             Ok(segs)
@@ -275,24 +331,129 @@ async fn stop_backend_recording(state: tauri::State<'_, AppState>) -> Result<(),
     result
 }
 
+fn format_srt_timestamp(ms: i64, sep: char) -> String {
+    let total_ms = ms.max(0);
+    let h = total_ms / 3_600_000;
+    let m = (total_ms % 3_600_000) / 60_000;
+    let s = (total_ms % 60_000) / 1_000;
+    let millis = total_ms % 1_000;
+    format!("{h:02}:{m:02}:{s:02}{sep}{millis:03}")
+}
+
+fn format_short_timestamp(ms: i64) -> String {
+    let total_sec = (ms.max(0)) / 1_000;
+    let h = total_sec / 3_600;
+    let m = (total_sec % 3_600) / 60;
+    let s = total_sec % 60;
+    if h > 0 {
+        format!("{h}:{m:02}:{s:02}")
+    } else {
+        format!("{m:02}:{s:02}")
+    }
+}
+
+fn speaker_name(id: i32, names: &std::collections::HashMap<i32, String>) -> String {
+    names
+        .get(&id)
+        .filter(|s| !s.trim().is_empty())
+        .cloned()
+        .unwrap_or_else(|| format!("Talare {id}"))
+}
+
+pub(crate) fn format_export_by_ext(
+    ext: &str,
+    plain_content: &str,
+    segments: &[TranscriptSegment],
+    speaker_names: &std::collections::HashMap<i32, String>,
+) -> String {
+    if segments.is_empty() {
+        return plain_content.to_string();
+    }
+    match ext {
+        "srt" => {
+            let mut out = String::new();
+            for (i, seg) in segments.iter().enumerate() {
+                let start = format_srt_timestamp(seg.start_ms, ',');
+                let end = format_srt_timestamp(seg.end_ms.max(seg.start_ms + 500), ',');
+                let prefix = seg
+                    .speaker_id
+                    .map(|id| format!("[{}] ", speaker_name(id, speaker_names)))
+                    .unwrap_or_default();
+                out.push_str(&format!("{}\n{} --> {}\n{}{}\n\n", i + 1, start, end, prefix, seg.text.trim()));
+            }
+            out
+        }
+        "vtt" => {
+            let mut out = String::from("WEBVTT\n\n");
+            for seg in segments {
+                let start = format_srt_timestamp(seg.start_ms, '.');
+                let end = format_srt_timestamp(seg.end_ms.max(seg.start_ms + 500), '.');
+                let prefix = seg
+                    .speaker_id
+                    .map(|id| format!("<v {}>", speaker_name(id, speaker_names)))
+                    .unwrap_or_default();
+                out.push_str(&format!("{} --> {}\n{}{}\n\n", start, end, prefix, seg.text.trim()));
+            }
+            out
+        }
+        "md" => {
+            let mut out = String::from("# Transkribering\n\n");
+            let mut prev_spk = None;
+            for seg in segments {
+                if seg.speaker_id.is_some() && seg.speaker_id != prev_spk {
+                    let spk = speaker_name(seg.speaker_id.unwrap(), speaker_names);
+                    out.push_str(&format!("\n### {spk}\n\n"));
+                    prev_spk = seg.speaker_id;
+                }
+                let ts = format_short_timestamp(seg.start_ms);
+                out.push_str(&format!("- **`[{ts}]`** {}\n", seg.text.trim()));
+            }
+            out
+        }
+        _ => plain_content.to_string(),
+    }
+}
+
 #[tauri::command]
-async fn save_text_file(app_handle: AppHandle, content: String) -> Result<(), String> {
+async fn save_text_file(
+    app_handle: AppHandle,
+    content: String,
+    segments: Option<Vec<TranscriptSegment>>,
+    speaker_names: Option<std::collections::HashMap<i32, String>>,
+) -> Result<(), String> {
     use tauri_plugin_dialog::FilePath;
-    
-    let file_path = app_handle.dialog()
+
+    let mut dialog = app_handle.dialog()
         .file()
         .set_title("Spara transkribering")
         .set_file_name("transkribering.txt")
-        .add_filter("Textfil", &["txt"])
-        .blocking_save_file();
+        .add_filter("Textfil (.txt)", &["txt"]);
+
+    let has_segments = segments.as_ref().map(|s| !s.is_empty()).unwrap_or(false);
+    if has_segments {
+        dialog = dialog
+            .add_filter("Markdown med tidsstämplar (.md)", &["md"])
+            .add_filter("Undertexter SubRip (.srt)", &["srt"])
+            .add_filter("Webb-undertexter WebVTT (.vtt)", &["vtt"]);
+    }
+
+    let file_path = dialog.blocking_save_file();
 
     match file_path {
         Some(path) => {
-            let path_str = match path {
+            let path_buf = match path {
                 FilePath::Path(p) => p,
                 _ => return Err("Ogiltigt filformat".to_string()),
             };
-            fs::write(&path_str, &content).map_err(|e| format!("Kunde inte spara: {}", e))?;
+            let ext = path_buf
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("txt")
+                .to_ascii_lowercase();
+            let segs = segments.unwrap_or_default();
+            let names = speaker_names.unwrap_or_default();
+            let formatted = format_export_by_ext(&ext, &content, &segs, &names);
+            fs::write(&path_buf, formatted).map_err(|e| format!("Kunde inte spara: {}", e))?;
             Ok(())
         },
         None => Err("cancelled".to_string()),
@@ -318,6 +479,7 @@ pub fn run() {
         .manage(AppState {
             cancel_flag: Arc::new(AtomicBool::new(false)),
             audio_recorder: Mutex::new(AudioRecorder::new()),
+            engine_cache: Arc::new(Mutex::new(None)),
         })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -351,6 +513,8 @@ pub fn run() {
             session::list_recordings,
             session::delete_all_recordings,
             session::reset_application,
+            session::save_session_transcript,
+            session::load_session_transcript,
             save_text_file,
             session::save_audio_file,
             pick_audio_file,
@@ -363,4 +527,40 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod export_tests {
+    use super::*;
+
+    #[test]
+    fn formaterar_srt_och_md_med_talare() {
+        let segs = vec![
+            TranscriptSegment {
+                start_ms: 1200,
+                end_ms: 3500,
+                text: "Hej och välkomna.".into(),
+                tokens: vec![],
+                speaker_id: Some(1),
+            },
+            TranscriptSegment {
+                start_ms: 4000,
+                end_ms: 6000,
+                text: "Tack så mycket.".into(),
+                tokens: vec![],
+                speaker_id: Some(2),
+            },
+        ];
+        let mut names = std::collections::HashMap::new();
+        names.insert(1, "Anna".to_string());
+
+        let srt = format_export_by_ext("srt", "råtext", &segs, &names);
+        assert!(srt.contains("1\n00:00:01,200 --> 00:00:03,500\n[Anna] Hej och välkomna."));
+        assert!(srt.contains("2\n00:00:04,000 --> 00:00:06,000\n[Talare 2] Tack så mycket."));
+
+        let md = format_export_by_ext("md", "råtext", &segs, &names);
+        assert!(md.contains("### Anna"));
+        assert!(md.contains("- **`[00:01]`** Hej och välkomna."));
+        assert!(md.contains("### Talare 2"));
+    }
 }

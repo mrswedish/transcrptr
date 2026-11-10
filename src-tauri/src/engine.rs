@@ -11,7 +11,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 /// 5 minuter per chunk — håller peak-minnet ~19 MB oavsett fillängd.
 pub(crate) const CHUNK_SAMPLES: usize = 16_000 * 300;
 
-pub(crate) trait Engine {
+pub(crate) trait Engine: Send {
+    /// Uppdaterar körspecifika parametrar (språk och ordliste-prompt) när en cachad motor återanvänds.
+    fn set_run_options(&mut self, _language: &str, _initial_prompt: Option<String>) {}
+
     /// `offset_ms`: chunkens start i hela inspelningen. `prev_text`: slutet av föregående
     /// chunk (används som kontext av motorer som stöder det). `on_progress`: 0..=100 inom chunken.
     fn transcribe_chunk(
@@ -31,14 +34,18 @@ pub(crate) fn panic_msg(p: Box<dyn std::any::Any + Send>) -> String {
 }
 
 /// Transkribera hela filen chunk för chunk. `on_overall` får total progress 0..=99.
+/// Om `collect_samples` är `true` (vid talaridentifiering) samlas de redan avkodade 16 kHz-samples
+/// upp och returneras så att ljudfilen inte behöver avkodas och omsamplas en andra gång.
 pub(crate) fn run_file(
     engine: &mut dyn Engine,
     dec: &mut StreamingDecoder,
+    collect_samples: bool,
     cancel: &AtomicBool,
     on_overall: &(dyn Fn(i32) + Sync),
-) -> Result<Vec<TranscriptSegment>, String> {
+) -> Result<(Vec<TranscriptSegment>, Vec<f32>), String> {
     let total_chunks = dec.estimate_total_chunks(CHUNK_SAMPLES).max(1) as i32;
     let mut all = Vec::<TranscriptSegment>::new();
+    let mut all_samples = Vec::<f32>::new();
     let mut prev_text: Option<String> = None;
     let mut cum_offset = 0i64;
     let mut idx = 0i32;
@@ -57,6 +64,10 @@ pub(crate) fn run_file(
         }))
         .unwrap_or_else(|p| Err(format!("Krasch i del {}: {}", idx + 1, panic_msg(p))))?;
 
+        if collect_samples {
+            all_samples.extend_from_slice(&chunk);
+        }
+
         if !segs.is_empty() {
             let text = segs.iter().map(|s| s.text.as_str()).collect::<Vec<_>>().join(" ");
             let words: Vec<&str> = text.split_whitespace().collect();
@@ -65,7 +76,7 @@ pub(crate) fn run_file(
         all.extend(segs);
         idx += 1;
     }
-    Ok(all)
+    Ok((all, all_samples))
 }
 
 #[cfg(test)]
@@ -82,7 +93,7 @@ mod tests {
         let mut eng = crate::pianissimo::Pianissimo::load(std::path::Path::new(&dir), 4).unwrap();
         let t0 = std::time::Instant::now();
         let last = std::sync::atomic::AtomicI32::new(-1);
-        let segs = run_file(&mut eng, &mut dec, &AtomicBool::new(false), &|p| last.store(p, Ordering::Relaxed)).unwrap();
+        let (segs, _) = run_file(&mut eng, &mut dec, false, &AtomicBool::new(false), &|p| last.store(p, Ordering::Relaxed)).unwrap();
         println!("{} segment på {:.1} s, sista progress {}", segs.len(), t0.elapsed().as_secs_f64(), last.load(Ordering::Relaxed));
         for s in segs.iter().take(3) { println!("[{} - {}] {}", s.start_ms, s.end_ms, s.text); }
         assert!(segs.windows(2).all(|w| w[0].start_ms <= w[1].start_ms), "tider ska vara monotona");

@@ -1,6 +1,7 @@
 //! Delade datatyper mot frontend.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 #[derive(Serialize, Clone)]
 pub(crate) struct ProgressPayload {
@@ -15,21 +16,32 @@ pub(crate) struct TranscriptionProgressPayload {
     pub(crate) progress: i32,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub(crate) struct TokenInfo {
     pub(crate) text: String,
     pub(crate) prob: f32,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TranscriptSegment {
     pub(crate) start_ms: i64,
     pub(crate) end_ms: i64,
     pub(crate) text: String,
+    #[serde(default)]
     pub(crate) tokens: Vec<TokenInfo>,
     /// 1, 2, … i den ordning talarna först hörs. None = talaridentifiering av eller osäker.
+    #[serde(default)]
     pub(crate) speaker_id: Option<i32>,
+}
+
+/// Sparat transkript i en sessionsmapp (`transcript.json`).
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SavedTranscript {
+    pub(crate) segments: Vec<TranscriptSegment>,
+    #[serde(default)]
+    pub(crate) speaker_names: HashMap<i32, String>,
 }
 
 #[derive(Serialize, Clone)]

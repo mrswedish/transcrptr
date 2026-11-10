@@ -12,8 +12,11 @@ use speakrs::inference::{EmbeddingModel, SegmentationModel};
 use speakrs::pipeline::DiarizationPipeline;
 use speakrs::{ExecutionMode, ModelBundle};
 
+#[cfg(test)]
 use crate::decode::StreamingDecoder;
-use crate::engine::{panic_msg, CHUNK_SAMPLES};
+#[cfg(test)]
+use crate::engine::CHUNK_SAMPLES;
+use crate::engine::panic_msg;
 use crate::types::TranscriptSegment;
 
 pub(crate) const MODEL_DIR: &str = "diarization";
@@ -205,6 +208,7 @@ pub(crate) fn assign_speakers(segments: &mut [TranscriptSegment], turns: &[Turn]
 }
 
 /// Avkodar hela filen till 16 kHz mono f32 (cirka 230 MB per timme ljud).
+#[cfg(test)]
 fn load_samples(path: &str, cancel: &AtomicBool) -> Result<Vec<f32>, String> {
     let mut dec = StreamingDecoder::open(path)?;
     let mut all = Vec::new();
@@ -217,16 +221,15 @@ fn load_samples(path: &str, cancel: &AtomicBool) -> Result<Vec<f32>, String> {
     Ok(all)
 }
 
-/// Hela steget: avkoda → diarisera → tilldela talare. Returnerar antal talare.
+/// Diariserar redan avkodade 16 kHz mono-samples och tilldelar talare till segmenten.
 /// Felet är aldrig ödesdigert för transkriptet — anroparen behåller texten utan talare.
-pub(crate) fn identify(
+pub(crate) fn identify_from_samples(
     model_dir: &Path,
-    audio_path: &str,
+    samples: Vec<f32>,
     segments: &mut [TranscriptSegment],
     cancel: &AtomicBool,
     on_progress: OnProgress,
 ) -> Result<i32, String> {
-    let samples = load_samples(audio_path, cancel)?;
     // speakrs kräver en viss minsta längd; för korta filer finns ingenting att skilja åt.
     if samples.len() < 16_000 * 5 {
         return Err("Ljudet är för kort för att skilja talare åt.".into());
@@ -235,6 +238,18 @@ pub(crate) fn identify(
         .unwrap_or_else(|p| Err(format!("Talaridentifieringen kraschade: {}.", panic_msg(p))))?;
     drop(samples);
     Ok(assign_speakers(segments, &turns))
+}
+
+#[cfg(test)]
+pub(crate) fn identify(
+    model_dir: &Path,
+    audio_path: &str,
+    segments: &mut [TranscriptSegment],
+    cancel: &AtomicBool,
+    on_progress: OnProgress,
+) -> Result<i32, String> {
+    let samples = load_samples(audio_path, cancel)?;
+    identify_from_samples(model_dir, samples, segments, cancel, on_progress)
 }
 
 #[cfg(test)]

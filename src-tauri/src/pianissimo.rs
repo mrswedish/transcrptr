@@ -158,14 +158,17 @@ fn session(path: &Path, threads: usize) -> Result<Session> {
         .with_context(|| format!("Kunde inte läsa {}", path.display()))
 }
 
-fn argmax(v: &[f32]) -> usize {
+fn argmax_finite(v: &[f32]) -> Result<usize> {
     let mut best = 0;
-    for (i, x) in v.iter().enumerate() {
-        if *x > v[best] {
+    let mut best_val = f32::NEG_INFINITY;
+    for (i, &x) in v.iter().enumerate() {
+        ensure!(x.is_finite(), "Ogiltiga logits från avkodaren");
+        if x > best_val {
+            best_val = x;
             best = i;
         }
     }
-    best
+    Ok(best)
 }
 
 impl Pianissimo {
@@ -208,7 +211,9 @@ impl Pianissimo {
             return Ok(out);
         }
         let core = if samples.len() <= MAX_PASS { samples.len() } else { CORE };
+        let total_len = samples.len() as f64;
         let mut begin = 0;
+        let mut last_pct = -1i32;
         while begin < samples.len() {
             if cancel.load(Ordering::Relaxed) {
                 break;
@@ -220,27 +225,46 @@ impl Pianissimo {
             if audio.len() < 512 {
                 audio.resize(512, 0.0);
             }
-            let t = self.transcribe_pass(&audio, cancel)?;
+            let p0 = (begin as f64 / total_len) * 100.0;
+            let p1 = (end as f64 / total_len) * 100.0;
+            let t = self.transcribe_pass(&audio, cancel, |frac| {
+                let pct = (p0 + frac.clamp(0.0, 1.0) * (p1 - p0)).round() as i32;
+                if pct != last_pct {
+                    last_pct = pct;
+                    progress(pct);
+                }
+            })?;
             out.extend(self.segments(
                 &t,
                 left as f64 / RATE as f64,
                 begin as f64 / RATE as f64,
                 end as f64 / RATE as f64,
             ));
-            progress((end as f64 / samples.len() as f64 * 100.0) as i32);
+            let done_pct = p1.round() as i32;
+            if done_pct != last_pct {
+                last_pct = done_pct;
+                progress(done_pct);
+            }
             begin = end;
         }
         Ok(out)
     }
 
-    fn transcribe_pass(&mut self, audio: &[f32], cancel: &AtomicBool) -> Result<Transcript> {
+    fn transcribe_pass(
+        &mut self,
+        audio: &[f32],
+        cancel: &AtomicBool,
+        mut on_pass_progress: impl FnMut(f64),
+    ) -> Result<Transcript> {
         let (features, frames, valid) = extract_features(audio)?;
+        on_pass_progress(0.12);
         let enc_in = Tensor::from_array(([1usize, 128, frames], features))?;
         let len_in = Tensor::from_array(([1usize], vec![valid as i64]))?;
         let enc_out = self.encoder.run(ort::inputs! {
             "audio_signal" => enc_in,
             "length" => len_in,
         })?;
+        on_pass_progress(0.75);
         let (shape, encoded) = enc_out["outputs"].try_extract_tensor::<f32>()?;
         let (_, lengths) = enc_out["encoded_lengths"].try_extract_tensor::<i64>()?;
         ensure!(shape.len() == 3 && shape[0] == 1 && shape[1] == 1024, "Oväntad encoder-form");
@@ -250,29 +274,35 @@ impl Pianissimo {
 
         let mut s1 = vec![0.0_f32; 1280];
         let mut s2 = vec![0.0_f32; 1280];
+        let mut frame = vec![0.0_f32; 1024];
         let mut ids: Vec<usize> = Vec::new();
         let mut stamps: Vec<f64> = Vec::new();
         let (mut t, mut emitted) = (0usize, 0usize);
+        let report_step = (n_frames / 10).max(1);
+        let mut next_report = report_step;
         while t < n_frames {
             if cancel.load(Ordering::Relaxed) {
                 break;
             }
-            let frame: Vec<f32> = (0..1024).map(|c| encoded[c * stride + t]).collect();
+            if t >= next_report {
+                on_pass_progress(0.75 + 0.25 * (t as f64 / n_frames.max(1) as f64));
+                next_report = t + report_step;
+            }
+            for (c, dst) in frame.iter_mut().enumerate() {
+                *dst = encoded[c * stride + t];
+            }
             let last = *ids.last().unwrap_or(&BLANK) as i32;
             let out = self.decoder.run(ort::inputs! {
-                "encoder_outputs" => Tensor::from_array(([1usize, 1024, 1], frame))?,
+                "encoder_outputs" => Tensor::from_array(([1usize, 1024, 1], frame.clone()))?,
                 "targets" => Tensor::from_array(([1usize, 1], vec![last]))?,
                 "target_length" => Tensor::from_array(([1usize], vec![1_i32]))?,
                 "input_states_1" => Tensor::from_array(([2usize, 1, 640], s1.clone()))?,
                 "input_states_2" => Tensor::from_array(([2usize, 1, 640], s2.clone()))?,
             })?;
             let (_, logits) = out["outputs"].try_extract_tensor::<f32>()?;
-            ensure!(
-                logits.len() == 8198 && logits.iter().all(|x| x.is_finite()),
-                "Ogiltiga logits från avkodaren"
-            );
-            let token = argmax(&logits[..=BLANK]);
-            let step = argmax(&logits[BLANK + 1..]);
+            ensure!(logits.len() == 8198, "Ogiltiga logits från avkodaren");
+            let token = argmax_finite(&logits[..=BLANK])?;
+            let step = argmax_finite(&logits[BLANK + 1..])?;
             if token != BLANK {
                 let (_, h) = out["output_states_1"].try_extract_tensor::<f32>()?;
                 let (_, c) = out["output_states_2"].try_extract_tensor::<f32>()?;

@@ -39,13 +39,16 @@ impl StreamingDecoder {
         Ok(StreamingDecoder { format, decoder, track_id, n_frames, src_rate, leftover: Vec::new() })
     }
 
-    // Returnerar nästa chunk med exakt `chunk_samples` samples (eller resten av filen).
+    // Returnerar nästa chunk med cirka `chunk_samples` samples (eller resten av filen).
+    // Om mer ljud följer klipps chunken vid den tystaste punkten under de sista 15 sekunderna
+    // så att vi inte klyver ett uttalat ord mitt itu vid 5-minutersgränsen.
     // None = EOF.
     pub(crate) fn next_chunk(&mut self, chunk_samples: usize) -> Result<Option<Vec<f32>>, String> {
         use symphonia::core::{audio::SampleBuffer, errors::Error as SymphoniaError};
         loop {
             if self.leftover.len() >= chunk_samples {
-                return Ok(Some(self.leftover.drain(..chunk_samples).collect()));
+                let split_at = find_silence_split(&self.leftover[..chunk_samples]);
+                return Ok(Some(self.leftover.drain(..split_at).collect()));
             }
             let packet = match self.format.next_packet() {
                 Ok(p)                              => p,
@@ -61,9 +64,15 @@ impl StreamingDecoder {
             let spec = *decoded.spec();
             let mut buf = SampleBuffer::<f32>::new(decoded.capacity() as u64, spec);
             buf.copy_interleaved_ref(decoded);
-            let mono      = crate::audio::to_mono(buf.samples(), spec.channels.count() as u16);
-            let resampled = crate::audio::resample_to_16k(&mono, spec.rate);
-            self.leftover.extend_from_slice(&resampled);
+            let ch = spec.channels.count() as u16;
+            if ch == 1 && spec.rate == 16_000 {
+                // Snabbväg för våra egna 16 kHz mono recording.wav-filer — noll extra allokering
+                self.leftover.extend_from_slice(buf.samples());
+            } else {
+                let mono      = crate::audio::to_mono(buf.samples(), ch);
+                let resampled = crate::audio::resample_to_16k(&mono, spec.rate);
+                self.leftover.extend_from_slice(&resampled);
+            }
         }
         if self.leftover.is_empty() { Ok(None) }
         else { Ok(Some(std::mem::take(&mut self.leftover))) }
@@ -80,4 +89,55 @@ impl StreamingDecoder {
         1
     }
 }
+
+/// Hittar den tystaste punkten (lägst energi i ett 200 ms-fönster) under de sista 15 sekunderna
+/// av `buf` (16 kHz). Om `buf` är kortare än 30 sekunder returneras `buf.len()` oförändrat.
+pub(crate) fn find_silence_split(buf: &[f32]) -> usize {
+    const RATE: usize = 16_000;
+    const MIN_LEN: usize = RATE * 30;
+    const SEARCH_TAIL: usize = RATE * 15;
+    const WIN: usize = RATE / 5;   // 200 ms = 3 200 samples
+    const STEP: usize = RATE / 20; // 50 ms = 800 samples
+
+    if buf.len() < MIN_LEN {
+        return buf.len();
+    }
+    let search_start = buf.len() - SEARCH_TAIL;
+    let mut best_center = buf.len();
+    let mut best_energy = f32::INFINITY;
+
+    let mut pos = search_start;
+    while pos + WIN <= buf.len() {
+        let slice = &buf[pos..pos + WIN];
+        let energy: f32 = slice.iter().map(|&x| x * x).sum();
+        if energy <= best_energy {
+            best_energy = energy;
+            best_center = pos + WIN / 2;
+        }
+        pos += STEP;
+    }
+    best_center
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hittar_tystnad_i_slutet_av_chunk() {
+        // 40 sekunder ton (0.5), men 300 ms tystnad vid 32.0 s
+        let mut buf = vec![0.5_f32; 16_000 * 40];
+        let silence_start = 16_000 * 32;
+        let silence_end = silence_start + 16_000 * 3 / 10;
+        for s in &mut buf[silence_start..silence_end] {
+            *s = 0.0;
+        }
+        let split = find_silence_split(&buf);
+        assert!(
+            split >= silence_start && split <= silence_end,
+            "split ({split}) borde hamna i tystnaden ({silence_start}..{silence_end})"
+        );
+    }
+}
+
 

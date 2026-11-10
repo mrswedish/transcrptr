@@ -319,6 +319,8 @@ pub(crate) struct RecordingInfo {
     pub(crate) has_ready: bool,
     /// Råspår finns men ingen färdig recording.wav — avbruten inspelning som kan återställas.
     pub(crate) recoverable: bool,
+    /// Färdigt transkript (transcript.json) finns sparat i sessionsmappen.
+    pub(crate) has_transcript: bool,
     pub(crate) size_bytes: u64,
 }
 
@@ -357,6 +359,7 @@ pub(crate) async fn list_recordings(
         if !has_ready && !has_parts {
             continue;
         }
+        let has_transcript = non_empty_file(&p.join("transcript.json"));
         let (started, label) = parse_session_name(&name).unwrap_or_else(|| {
             let t = entry.metadata().and_then(|m| m.modified()).ok()
                 .map(|t| chrono::DateTime::<chrono::Local>::from(t).format("%Y-%m-%dT%H:%M:%S").to_string())
@@ -369,6 +372,7 @@ pub(crate) async fn list_recordings(
             started,
             has_ready,
             recoverable: !has_ready && has_parts,
+            has_transcript,
             size_bytes: get_dir_size(&p),
         });
     }
@@ -496,6 +500,9 @@ pub(crate) async fn reset_application(
             *p = None;
         }
     }
+    if let Ok(mut cache) = state.inner().engine_cache.lock() {
+        *cache = None;
+    }
 
     let app_data_dir = app_handle.path().app_data_dir().map_err(|e| e.to_string())?;
 
@@ -546,4 +553,80 @@ pub(crate) async fn reset_application(
 
     Ok(())
 }
+
+/// Om `audio_path` ligger i en sessionsmapp (`inspelning-*` / `recording-*`), returnera mappen.
+pub(crate) fn session_dir_for_audio(audio_path: &std::path::Path) -> Option<PathBuf> {
+    if audio_path.is_dir() {
+        let name = audio_path.file_name()?.to_str()?;
+        if is_session_folder(name) {
+            return Some(audio_path.to_path_buf());
+        }
+    }
+    let parent = audio_path.parent()?;
+    let name = parent.file_name()?.to_str()?;
+    if is_session_folder(name) && parent.is_dir() {
+        Some(parent.to_path_buf())
+    } else {
+        None
+    }
+}
+
+/// Skriver `transcript.json` atomärt i sessionsmappen om `audio_path` tillhör en session.
+pub(crate) fn write_session_transcript_for_audio(
+    audio_path: &std::path::Path,
+    segments: &[TranscriptSegment],
+    speaker_names: &std::collections::HashMap<i32, String>,
+) -> Result<bool, String> {
+    let Some(dir) = session_dir_for_audio(audio_path) else {
+        return Ok(false);
+    };
+    let saved = SavedTranscript {
+        segments: segments.to_vec(),
+        speaker_names: speaker_names.clone(),
+    };
+    let json = serde_json::to_vec(&saved).map_err(|e| format!("Kunde inte serialisera transkript: {e}"))?;
+    let tmp = dir.join("transcript.json.tmp");
+    let dst = dir.join("transcript.json");
+    fs::write(&tmp, &json).map_err(|e| format!("Kunde inte spara transkript: {e}"))?;
+    fs::rename(&tmp, &dst).map_err(|e| format!("Kunde inte slutföra sparande av transkript: {e}"))?;
+    Ok(true)
+}
+
+#[tauri::command]
+pub(crate) async fn save_session_transcript(
+    audio_path: String,
+    segments: Vec<TranscriptSegment>,
+    speaker_names: std::collections::HashMap<i32, String>,
+) -> Result<bool, String> {
+    write_session_transcript_for_audio(std::path::Path::new(&audio_path), &segments, &speaker_names)
+}
+
+#[tauri::command]
+pub(crate) async fn load_session_transcript(
+    session_dir: String,
+) -> Result<Option<SavedTranscript>, String> {
+    let p = PathBuf::from(&session_dir);
+    let dir = if p.is_file() {
+        match session_dir_for_audio(&p) {
+            Some(d) => d,
+            None => return Ok(None),
+        }
+    } else {
+        p
+    };
+    let file = dir.join("transcript.json");
+    if !non_empty_file(&file) {
+        return Ok(None);
+    }
+    let bytes = fs::read(&file).map_err(|e| format!("Kunde inte läsa transcript.json: {e}"))?;
+    match serde_json::from_slice::<SavedTranscript>(&bytes) {
+        Ok(saved) if !saved.segments.is_empty() => Ok(Some(saved)),
+        Ok(_) => Ok(None),
+        Err(e) => {
+            log_line(&format!("load_session_transcript: ogiltig JSON i {}: {e}", file.display()));
+            Ok(None)
+        }
+    }
+}
+
 

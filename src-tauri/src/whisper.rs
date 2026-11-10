@@ -102,6 +102,11 @@ impl WhisperEngine {
 }
 
 impl Engine for WhisperEngine {
+    fn set_run_options(&mut self, language: &str, initial_prompt: Option<String>) {
+        self.language = language.to_string();
+        self.initial_prompt = initial_prompt;
+    }
+
     fn transcribe_chunk(
         &mut self,
         samples: &[f32],
