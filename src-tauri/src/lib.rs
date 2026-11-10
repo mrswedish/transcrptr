@@ -195,6 +195,11 @@ async fn transcribe_file(
                             log_line(&format!("diarization: {n} talare på {:.1} s", started.elapsed().as_secs_f64()));
                             phase("done", n, None);
                         }
+                        Err(e) if e == diarization::CANCELLED => {
+                            // Användaren avbröt: transkriptet behålls, utan talare.
+                            log_line(&format!("diarization: avbruten efter {:.1} s", started.elapsed().as_secs_f64()));
+                            phase("cancelled", 0, None);
+                        }
                         Err(e) => {
                             // Transkriptet är intakt; bara talarna saknas.
                             log_line(&format!("diarization: misslyckades efter {:.1} s: {e}", started.elapsed().as_secs_f64()));

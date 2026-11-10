@@ -53,6 +53,9 @@ pub(crate) struct Turn {
     pub(crate) speaker: i32,
 }
 
+/// Felsträng som betyder "avbruten av användaren" (inte ett fel).
+pub(crate) const CANCELLED: &str = "avbruten";
+
 /// Segmenteringssteg i sekunder. speakrs standard på CPU är 1 s (varje sekund bearbetas i
 /// ~10 överlappande fönster); 2 s halverar arbetet och gav samma talare och >99 % samma
 /// tidsgränser på referensfiler med känt antal talare. (3 s tappade en talare på en kort fil.)
@@ -67,7 +70,12 @@ pub(crate) type OnProgress<'a> = &'a (dyn Fn(i32, i64) + Sync);
 ///
 /// speakrs har ingen förloppsrapportering, så vi mäter hastigheten på de första sekunderna
 /// och räknar ut en uppskattning; en bakgrundstråd rapporterar sedan procent och tid kvar.
-pub(crate) fn diarize(model_dir: &Path, samples: &[f32], on_progress: OnProgress) -> Result<Vec<Turn>, String> {
+pub(crate) fn diarize(
+    model_dir: &Path,
+    samples: &[f32],
+    cancel: &AtomicBool,
+    on_progress: OnProgress,
+) -> Result<Vec<Turn>, String> {
     let load = |e: &dyn std::fmt::Display| format!("Kunde inte läsa talarmodellerna: {e}");
     let bundle = ModelBundle::from_dir(model_dir).map_err(|e| load(&e))?;
     let mut seg = SegmentationModel::with_mode(bundle.segmentation_path(), STEP_SECONDS, ExecutionMode::Cpu)
@@ -76,6 +84,12 @@ pub(crate) fn diarize(model_dir: &Path, samples: &[f32], on_progress: OnProgress
         .map_err(|e| load(&e))?;
     let mut pipeline = DiarizationPipeline::new(&mut seg, &mut emb, model_dir).map_err(|e| load(&e))?;
 
+    // speakrs har en global avbrytflagga som vi nollställer här och sätter när användaren trycker Avbryt.
+    speakrs::cancel::reset_cancel();
+    if cancel.load(Ordering::Relaxed) {
+        return Err(CANCELLED.into());
+    }
+
     let total_secs = samples.len() as f64 / 16_000.0;
 
     // Hastighetsmätning på början av ljudet (hoppas över för korta filer).
@@ -83,7 +97,11 @@ pub(crate) fn diarize(model_dir: &Path, samples: &[f32], on_progress: OnProgress
     if samples.len() > 16_000 * CALIBRATION_SECONDS * 3 {
         let slice = &samples[..16_000 * CALIBRATION_SECONDS];
         let t = std::time::Instant::now();
-        if pipeline.run(slice).is_ok() {
+        let cal = pipeline.run(slice);
+        if cancel.load(Ordering::Relaxed) {
+            return Err(CANCELLED.into());
+        }
+        if cal.is_ok() {
             let dt = t.elapsed().as_secs_f64().max(0.05);
             estimate_secs = total_secs / (CALIBRATION_SECONDS as f64 / dt) * 1.35;
             crate::log_line(&format!(
@@ -97,20 +115,31 @@ pub(crate) fn diarize(model_dir: &Path, samples: &[f32], on_progress: OnProgress
     let started = std::time::Instant::now();
     let result = std::thread::scope(|scope| {
         scope.spawn(|| {
+            let mut last_report = std::time::Instant::now() - std::time::Duration::from_secs(1);
             while !done.load(Ordering::Relaxed) {
+                if cancel.load(Ordering::Relaxed) {
+                    speakrs::cancel::request_cancel();
+                }
+                if last_report.elapsed() < std::time::Duration::from_millis(500) {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                    continue;
+                }
+                last_report = std::time::Instant::now();
                 let el = started.elapsed().as_secs_f64();
                 let pct = ((el / estimate_secs) * 100.0).clamp(0.0, 97.0) as i32;
                 let eta = (estimate_secs - el).max(0.0) as i64;
                 on_progress(pct, eta);
-                std::thread::sleep(std::time::Duration::from_millis(500));
             }
         });
-        let r = pipeline
-            .run(samples)
-            .map_err(|e| format!("Talaridentifieringen misslyckades: {e}"));
+        let r = pipeline.run(samples);
         done.store(true, Ordering::Relaxed);
         r
-    })?;
+    });
+    let result = match result {
+        Ok(r) => r,
+        Err(_) if cancel.load(Ordering::Relaxed) => return Err(CANCELLED.into()),
+        Err(e) => return Err(format!("Talaridentifieringen misslyckades: {e}")),
+    };
     Ok(turns_from_segments(
         result.exclusive_segments.iter().map(|s| (s.start, s.end, s.speaker.as_str())),
     ))
@@ -197,7 +226,7 @@ fn load_samples(path: &str, cancel: &AtomicBool) -> Result<Vec<f32>, String> {
     let mut all = Vec::new();
     while let Some(chunk) = dec.next_chunk(CHUNK_SAMPLES)? {
         if cancel.load(Ordering::Relaxed) {
-            return Err("avbruten".into());
+            return Err(CANCELLED.into());
         }
         all.extend_from_slice(&chunk);
     }
@@ -218,7 +247,7 @@ pub(crate) fn identify(
     if samples.len() < 16_000 * 5 {
         return Err("Ljudet är för kort för att skilja talare åt.".into());
     }
-    let turns = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| diarize(model_dir, &samples, on_progress)))
+    let turns = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| diarize(model_dir, &samples, cancel, on_progress)))
         .unwrap_or_else(|p| Err(format!("Talaridentifieringen kraschade: {}.", panic_msg(p))))?;
     drop(samples);
     Ok(assign_speakers(segments, &turns))
@@ -306,5 +335,29 @@ mod tests {
         let line: String = segs.iter().map(|s| s.speaker_id.map(|x| x.to_string()).unwrap_or("?".into())).collect();
         println!("talare per 5 s: {line}");
         assert!(n >= 2);
+    }
+
+    /// Avbryt under körning ska ge `CANCELLED` snabbt (inom ett par sekunder):
+    /// `SPK_MODELS=<katalog> SPK_WAV=<lång fil> cargo test --release e2e_cancel -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn e2e_cancel() {
+        let dir = std::env::var("SPK_MODELS").expect("SPK_MODELS");
+        let wav = std::env::var("SPK_WAV").expect("SPK_WAV");
+        let cancel = std::sync::Arc::new(AtomicBool::new(false));
+        let c2 = cancel.clone();
+        let t = std::time::Instant::now();
+        let h = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(5));
+            c2.store(true, Ordering::Relaxed);
+        });
+        let mut segs: Vec<TranscriptSegment> = (0..100).map(|i| seg(i * 5000, i * 5000 + 4500)).collect();
+        let r = identify(Path::new(&dir), &wav, &mut segs, &cancel, &|_, _| {});
+        h.join().unwrap();
+        let dt = t.elapsed().as_secs_f64();
+        println!("resultat: {r:?} efter {dt:.1} s (avbrott begärt efter 5 s)");
+        assert_eq!(r, Err(CANCELLED.to_string()));
+        assert!(dt < 9.0, "avbrottet tog för lång tid: {dt}");
+        assert!(segs.iter().all(|s| s.speaker_id.is_none()));
     }
 }

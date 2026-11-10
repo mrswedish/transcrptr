@@ -102,7 +102,7 @@ Kryssrutan **Identifiera talare** i huvudfönstret märker vem som säger vad ("
 - **Lokalt:** funktionen använder [speakrs](https://github.com/avencera/speakrs), en Rust-version av pyannotes community-1-pipeline, och körs på processorn utan grafikkort.
 - **Modeller:** två små modeller (ca 33 MB) hämtas från huggingface.co första gången kryssrutan används. Därefter fungerar den helt utan internet.
 - **Tid:** det tar några minuter extra per timme ljud (ca 4 minuter för 27 minuter ljud på en Ryzen-laptop). En förloppsrad visar hur långt det har kommit.
-- **Begränsning:** avbryt fungerar inte under själva talaridentifieringen.
+- **Avbryt:** knappen **Avbryt talaridentifiering** stoppar steget inom någon sekund. Transkriptet är då sparat, men utan talare.
 
 ## 📝 Ordlistor
 

@@ -444,6 +444,7 @@ pub(crate) mod binarize;
 pub(crate) mod clustering;
 /// Segmentation and embedding model wrappers
 #[cfg(feature = "_backend")]
+pub mod cancel;
 pub mod inference;
 #[cfg(feature = "_backend")]
 pub(crate) mod linalg;

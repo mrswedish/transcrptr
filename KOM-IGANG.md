@@ -35,7 +35,7 @@ Tryck **Öppna** uppe till höger och välj **Öppna ljud- eller videofil…** (
 
 ## 4. Vem sa vad? (valfritt)
 
-Kryssa i **Identifiera talare** *innan* du transkriberar. Första gången hämtas två små modeller (ca 33 MB). Det tar några minuter extra per timme ljud, och en förloppsrad visar hur långt det har kommit. Klicka på en talarrubrik ("Talare 1") för att skriva ett namn, så ändras det överallt.
+Kryssa i **Identifiera talare** *innan* du transkriberar. Första gången hämtas två små modeller (ca 33 MB). Det tar några minuter extra per timme ljud, och en förloppsrad visar hur långt det har kommit. Du kan avbryta när som helst. Texten blir då kvar, men utan talare. Klicka på en talarrubrik ("Talare 1") för att skriva ett namn, så ändras det överallt.
 
 ## 5. Läs, rätta och spara
 

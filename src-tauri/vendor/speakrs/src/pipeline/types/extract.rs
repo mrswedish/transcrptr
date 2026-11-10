@@ -64,6 +64,10 @@ impl DecodedSegmentations {
         embeddings: &mut Array3<f32>,
     ) -> Result<(), PipelineError> {
         for chunk_idx in 0..self.0.shape()[0] {
+            // Transkribera-patch: avbrott mellan chunks
+            if crate::cancel::is_cancelled() {
+                return Err(PipelineError::Other("cancelled".to_owned()));
+            }
             let chunk_audio = layout.chunk_audio(audio, chunk_idx);
             let chunk_segmentations = self.0.slice(s![chunk_idx, .., ..]);
             let clean_masks = clean_masks(&chunk_segmentations);
@@ -88,6 +92,10 @@ impl DecodedSegmentations {
         let mut pending = Vec::with_capacity(emb_model.primary_batch_size());
 
         for chunk_idx in 0..self.0.shape()[0] {
+            // Transkribera-patch: avbrott mellan chunks
+            if crate::cancel::is_cancelled() {
+                return Err(PipelineError::Other("cancelled".to_owned()));
+            }
             let chunk_audio = layout.chunk_audio(audio, chunk_idx);
             let chunk_segmentations = self.0.slice(s![chunk_idx, .., ..]);
             let clean_masks = clean_masks(&chunk_segmentations);
@@ -140,6 +148,10 @@ impl DecodedSegmentations {
         let mut active_items = 0usize;
 
         for chunk_idx in 0..self.0.shape()[0] {
+            // Transkribera-patch: avbrott mellan chunks
+            if crate::cancel::is_cancelled() {
+                return Err(PipelineError::Other("cancelled".to_owned()));
+            }
             let chunk_audio = layout.chunk_audio(audio, chunk_idx);
             let fbank = emb_model.compute_chunk_fbank(chunk_audio)?;
             fbanks.push(fbank);
@@ -216,6 +228,10 @@ impl DecodedSegmentations {
         let mut batches = 0usize;
 
         for chunk_idx in 0..num_chunks {
+            // Transkribera-patch: avbrott mellan chunks
+            if crate::cancel::is_cancelled() {
+                return Err(PipelineError::Other("cancelled".to_owned()));
+            }
             let chunk_audio = layout.chunk_audio(audio, chunk_idx);
             let fbank = emb_model.compute_chunk_fbank(chunk_audio)?;
             fbank_buffer.push(fbank);

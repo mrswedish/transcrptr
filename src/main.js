@@ -445,7 +445,11 @@ async function setupEventListeners() {
   await listen("diarization_phase", (event) => {
     const { phase, message, percent, etaSeconds } = event.payload;
     if (phase === "start") {
-      announce("Identifierar talare. Det kan ta några minuter.");
+      announce("Identifierar talare. Det kan ta några minuter. Avbryt är möjligt.");
+      if (btnCancelTranscription) {
+        btnCancelTranscription.textContent = "Avbryt talaridentifiering";
+        btnCancelTranscription.classList.remove("hidden");
+      }
       if (progressContainer) progressContainer.classList.remove("hidden");
       if (progressBar) progressBar.style.width = "0%";
       loadingText.innerText = "Identifierar talare…";
@@ -455,9 +459,11 @@ async function setupEventListeners() {
                  : etaSeconds > 5 ? `ca ${etaSeconds} s kvar`
                  : "snart klart";
       loadingText.innerText = `Identifierar talare… ${percent}% (uppskattning: ${left})`;
+    } else if (phase === "cancelled") {
+      speakerNotice = "Talaridentifieringen avbröts. Transkriptet är sparat, men utan talare.";
     } else if (phase === "failed") {
       logToFile(`diarization: ${message}`);
-      speakerNotice = message || "Talarna kunde inte identifieras.";
+      speakerNotice = `Talarna kunde inte identifieras: ${message || "okänt fel"}`;
     }
   });
 
@@ -2267,7 +2273,7 @@ async function processAudioFile(filePath) {
     showRawView();
 
     isCancelling = false;
-    if (btnCancelTranscription) btnCancelTranscription.classList.remove("hidden");
+    if (btnCancelTranscription) { btnCancelTranscription.textContent = "Avbryt"; btnCancelTranscription.classList.remove("hidden"); }
     // Rust beräknar overall-progress (0–99%) och emitterar det direkt.
     // Sätt totalChunks=1 så att JS-lyssnaren passerar Rusts värde rakt igenom.
     totalChunks     = 1;
@@ -2300,15 +2306,14 @@ async function processAudioFile(filePath) {
     const elSec   = elapsed % 60;
     loadingText.innerText = `Klar! (${elMin > 0 ? `${elMin}m ` : ""}${elSec}s)`;
     outputText.value += `\n\n[Transkribering klar]`;
-    if (speakerNotice) {
-      outputText.value += `\n[Talarna kunde inte identifieras: ${speakerNotice}]`;
-      speakerNotice = null;
-    }
     outputText.scrollTop = outputText.scrollHeight;
     announce(`Transkriberingen är klar. ${transcriptSegments.length} segment.`);
+    const notices = [];
     if (pendingVocabChanges.length > 0) {
-      showNotice(`Ordlistan rättade ${pendingVocabChanges.length} ord: ${summarizeChanges(pendingVocabChanges)}.`);
+      notices.push(`Ordlistan rättade ${pendingVocabChanges.length} ord: ${summarizeChanges(pendingVocabChanges)}.`);
     }
+    if (speakerNotice) { notices.push(speakerNotice); speakerNotice = null; }
+    if (notices.length > 0) showNotice(notices.join(" "));
 
     if (transcriptSegments.length > 0) {
       logToFile(`processAudioFile: anropar renderSegmentEditor (${transcriptSegments.length} segment)`);

@@ -81,6 +81,13 @@ impl SegmentationModel {
         let mut next_idx = 0;
 
         while let Some(remaining) = NonZeroUsize::new(total_windows - next_idx) {
+            // Transkribera-patch: avbrott mellan fönsterbatcher
+            if crate::cancel::is_cancelled() {
+                return Err(SegmentationError::Invariant {
+                    context: "segmentation",
+                    message: "cancelled".to_owned(),
+                });
+            }
             let plan = batching.plan(remaining, Delivery::Collected);
             results.extend(self.run_planned(&windows, next_idx, plan, &[])?);
             next_idx += plan.useful();
