@@ -22,9 +22,7 @@ window.addEventListener("unhandledrejection", (e) => {
 // UI Elements
 const badge = document.getElementById("status-badge");
 const btnRecord = document.getElementById("btn-record");
-const btnPause = document.getElementById("btn-pause");
 const btnFile = document.getElementById("btn-file");
-const fileInput = document.getElementById("file-input");
 const btnCopy = document.getElementById("btn-copy");
 const btnSave = document.getElementById("btn-save");
 const outputText = document.getElementById("output-text");
@@ -67,6 +65,7 @@ function announce(text) {
     "confirm-modal": "confirm-cancel",
     "import-choice-modal": "import-choice-cancel",
     "stereo-mix-modal": "btn-close-stereo-mix",
+    "reset-modal": "reset-cancel",
   };
   const stack = [];                 // öppna dialoger, den översta sist
   const openers = new Map();        // dialog -> elementet som hade fokus före
@@ -131,9 +130,9 @@ function announce(text) {
 
 // Central UI-state-växling för inspelningskontrollerna
 let lastRecUIState = "idle";
-function setRecordingUI(state) {                // "idle" | "recording" | "paused"
+function setRecordingUI(state) {                // "idle" | "recording"
   if (state !== lastRecUIState) {
-    announce(state === "recording" ? "Inspelning pågår" : state === "paused" ? "Inspelningen är pausad" : "Inspelningen är stoppad");
+    announce(state === "recording" ? "Inspelning pågår" : "Inspelningen är stoppad");
     lastRecUIState = state;
   }
   const recLabel = btnRecord && btnRecord.querySelector(".btn-record-label");
@@ -142,7 +141,6 @@ function setRecordingUI(state) {                // "idle" | "recording" | "pause
     if (btnRecord) btnRecord.classList.remove("is-recording");
     if (idleHint) idleHint.classList.remove("hidden");
     if (recordingIndicator) recordingIndicator.classList.add("hidden");
-    if (btnPause) btnPause.classList.add("hidden");
     if (btnRecord) btnRecord.setAttribute("aria-label", "Spela in");
   } else {
     // Röd knapp med stopp-fyrkant — tydligt att knappen nu STOPPAR
@@ -150,12 +148,10 @@ function setRecordingUI(state) {                // "idle" | "recording" | "pause
     if (btnRecord) btnRecord.classList.add("is-recording");
     if (idleHint) idleHint.classList.add("hidden");
     if (recordingIndicator) recordingIndicator.classList.remove("hidden");
-    if (btnPause) btnPause.classList.remove("hidden");
-    if (recordingStatusText) recordingStatusText.textContent = state === "paused" ? "Pausad" : "Spelar in";
+    if (recordingStatusText) recordingStatusText.textContent = "Spelar in";
     if (btnRecord) btnRecord.setAttribute("aria-label", "Stoppa inspelning");
   }
 }
-const segmentBadge = document.getElementById("segment-badge");
 const loadingOverlay = document.getElementById("loading-overlay");
 const loadingText = document.getElementById("loading-text");
 const progressContainer = document.getElementById("progress-container");
@@ -164,7 +160,6 @@ const progressBar = document.getElementById("progress-bar");
 // New UI Elements
 const recordingTimer = document.getElementById("recording-timer");
 const recordingSize = document.getElementById("recording-size");
-const diskForecast = document.getElementById("disk-forecast");
 const footerMic = document.getElementById("footer-mic");
 const footerModel = document.getElementById("footer-model");
 const footerDisk = document.getElementById("footer-disk");
@@ -177,7 +172,6 @@ const settingsModal = document.getElementById("settings-modal");
 const btnCloseSettings = document.getElementById("btn-close-settings");
 const btnSaveSettings = document.getElementById("btn-save-settings");
 const btnDownloadModel = document.getElementById("btn-download-model");
-const cbModelQuantized = document.getElementById("model-quantized");
 const selLanguage = document.getElementById("transcription-language");
 const selMic = document.getElementById("mic-select");
 const eqBar = document.getElementById("eq-bar");
@@ -212,7 +206,6 @@ btnCancelTranscription?.addEventListener("click", async () => {
 
 // State
 let isRecording = false;
-let isPaused = false;
 let modelSize = "pianissimo";
 let modelRevision = "standard";
 let modelQuantized = true;
@@ -254,19 +247,25 @@ let audioContext = null;
 let analyzer = null;
 let micStream = null;
 
-// Session/Segment state
-
-// Chunk progress state (used by transcription_progress listener)
-let currentChunkIdx = 0;
-let totalChunks = 1;
 let animationFrameId = null;
 
 // New Recording Metrics State
 let recordingStartTime = null;
 let recordingTimerInterval = null;
 let estimatedRecordingSize = 0;
-let lastRecordedSegments = []; // Store for "Redo" feature
 let lastTranscribedPath = null; // Senast transkriberade filen — "Gör om" kör om den via Rust
+
+// Hjälptexten visas bara när mötesljud är av, och bara där växeln finns (Windows).
+function syncWasapiVisual() {
+  const wasapiToggle = document.getElementById("wasapi-toggle");
+  const wasapiQuickEl = document.getElementById("wasapi-quick");
+  const on = !!(wasapiToggle && wasapiToggle.checked);
+  const hint = document.getElementById("wasapi-hint");
+  if (hint) {
+    const togglePresent = wasapiQuickEl && !wasapiQuickEl.classList.contains("hidden");
+    hint.classList.toggle("hidden", on || !togglePresent);
+  }
+}
 
 // Load config from local storage
 function loadSettings() {
@@ -294,36 +293,10 @@ function loadSettings() {
   const speakersToggle = document.getElementById("speakers-toggle");
   if (speakersToggle) speakersToggle.checked = identifySpeakers;
 
-  // Hjälptexten visas bara när mötesljud är av, och bara där växeln finns (Windows).
-  const wasapiQuickEl = document.getElementById("wasapi-quick");
-  const syncWasapiVisual = () => {
-    const on = !!(wasapiToggle && wasapiToggle.checked);
-    const hint = document.getElementById("wasapi-hint");
-    if (hint) {
-      const togglePresent = wasapiQuickEl && !wasapiQuickEl.classList.contains("hidden");
-      hint.classList.toggle("hidden", on || !togglePresent);
-    }
-  };
-  if (wasapiToggle) {
-    wasapiToggle.addEventListener("change", () => {
-      // v1.4.5: persistera DIREKT vid klick på huvud-UI:s Systemljud-knapp.
-      // Tidigare uppdaterades wasapiEnabled BARA via Spara inställningar — så klick
-      // på huvud-UI-toggle gav visuell PÅ men variabel = false → startRecording gick
-      // else-grenen (browser MediaRecorder) utan att anropa start_backend_recording
-      // → inga tempfiler på disk.
-      wasapiEnabled = wasapiToggle.checked;
-      localStorage.setItem("wasapiEnabled", wasapiEnabled.toString());
-      logToFile(`wasapi-toggle change: wasapiEnabled=${wasapiEnabled}`);
-      syncWasapiVisual();
-    });
-  }
   syncWasapiVisual();
 
   const gpuToggle = document.getElementById("gpu-toggle");
   if (gpuToggle) gpuToggle.checked = useGpu;
-
-  const autoMaskToggle = document.getElementById("auto-mask-toggle");
-  if (autoMaskToggle) autoMaskToggle.checked = autoMaskPii;
 
   const confSlider = document.getElementById("confidence-threshold-slider");
   const confLabel = document.getElementById("confidence-threshold-label");
@@ -338,7 +311,6 @@ function loadSettings() {
   const verbatimEl = document.getElementById("model-verbatim");
   if (verbatimEl) verbatimEl.checked = modelRevision === "strict";
   if (typeof applyQuality === "function") applyQuality(savedQuality);
-  if (cbModelQuantized) cbModelQuantized.checked = modelQuantized;
   if (selLanguage) selLanguage.value = transcriptionLanguage;
 
   updateFooter();
@@ -369,11 +341,6 @@ async function updateDiskInfo() {
     if (footerDisk) {
       const freeGb = (info.available_space / (1024 * 1024 * 1024)).toFixed(1);
       footerDisk.innerText = `Ledigt: ${freeGb} GB`;
-    }
-    
-    // Update forecast if we are recording
-    if (isRecording) {
-      updateDiskForecast(info.available_space);
     }
   } catch (err) {
     console.warn("Kunde inte ladda diskinfo:", err);
@@ -469,15 +436,9 @@ async function setupEventListeners() {
 
   await listen("transcription_progress", (event) => {
     const { progress } = event.payload;
-    // Calculate overall progress across all chunks
-    const overallProgress = Math.round((currentChunkIdx * 100 + progress) / totalChunks);
     if (progressContainer) progressContainer.classList.remove("hidden");
-    if (progressBar) progressBar.style.width = `${overallProgress}%`;
-    if (totalChunks > 1) {
-      loadingText.innerText = `Transkriberar del ${currentChunkIdx + 1} av ${totalChunks}... (${overallProgress}%)`;
-    } else {
-      loadingText.innerText = `Transkriberar... ${overallProgress}%`;
-    }
+    if (progressBar) progressBar.style.width = `${progress}%`;
+    loadingText.innerText = `Transkriberar... ${progress}%`;
   });
 
   // Bläddra-knapp för inspelningsmapp
@@ -564,7 +525,6 @@ async function importSessionFolder(dir, needsRepair = false) {
     const folderName = dir.split(/[/\\]/).pop() || "";
     wasapiRecordingReady = true;
     pendingRecording     = { type: "wav-file", filePath: recordedPath };
-    lastRecordedSegments = [{ startTime: sessionStartFromFolderName(folderName) }];
     const started = sessionStartFromFolderName(folderName);
     const when = started.toLocaleString("sv-SE", { day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" });
     showPostRecordingActions(dir, { title: `Inspelning från ${when}` });
@@ -796,6 +756,9 @@ function setupV11Handlers() {
   stereoMixModal && stereoMixModal.addEventListener("click", (e) => {
     if (e.target === stereoMixModal) closeStereoMix();
   });
+  document.getElementById("btn-open-win-sound")?.addEventListener("click", () => {
+    window.__TAURI__.opener.openUrl("ms-settings:sound").catch(() => {});
+  });
 
 }
 
@@ -880,20 +843,6 @@ function formatSize(bytes) {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
 }
 
-function updateDiskForecast(availableBytes) {
-  if (!diskForecast) return;
-  // whisper audio is 16kHz mono 32-bit float = 16000 * 4 bytes per second
-  const bytesPerSec = 16000 * 4;
-  const totalSeconds = availableBytes / bytesPerSec;
-  const totalHours = Math.floor(totalSeconds / 3600);
-  
-  if (totalHours > 24) {
-    diskForecast.innerText = `Prognos: >24h kvar`;
-  } else {
-    diskForecast.innerText = `Prognos: ~${totalHours}h kvar`;
-  }
-}
-
 function startRecordingMetrics() {
   recordingStartTime = Date.now();
   estimatedRecordingSize = 0;
@@ -910,8 +859,8 @@ function startRecordingMetrics() {
     
     if (recordingTimer) recordingTimer.innerText = `${hrs}:${mins}:${s}`;
     
-    // Estimate size
-    estimatedRecordingSize = (elapsedMs / 1000) * (16000 * 4); // 16kHz mono f32
+    // Estimate size: 16kHz mono 16-bit PCM = 32 000 bytes/s
+    estimatedRecordingSize = (elapsedMs / 1000) * (16000 * 2);
     if (recordingSize) {
       recordingSize.innerText = (estimatedRecordingSize / (1024 * 1024)).toFixed(1) + " MB";
     }
@@ -1089,14 +1038,12 @@ function formatMb(mb) {
 }
 
 // Visar nedladdningsstorleken på knappen så den syns innan man klickar.
-// Uppdateras när storlek eller kvantisering ändras.
 function updateDownloadButtonLabel() {
   const btn = document.getElementById("btn-download-model");
   if (!btn) return;
   const label = btn.querySelector(".download-label");
   if (!label) return;
-  const quantized = cbModelQuantized ? cbModelQuantized.checked : true;
-  label.textContent = `Ladda ner · ${formatMb(modelSizeMb(dlSize, quantized))}`;
+  label.textContent = `Ladda ner · ${formatMb(modelSizeMb(dlSize, true))}`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1234,27 +1181,6 @@ btnSaveSettings.addEventListener("click", async () => {
   updateFooter();
 });
 
-// Kvantiseringen påverkar nedladdningsstorleken — uppdatera knappetiketten.
-// Varna direkt vid urkryssning: "kvantiserad" låter som en försämring, men är
-// rekommendationen. Utan detta laddar folk ner 3 GB i tron att de får bättre kvalitet.
-if (cbModelQuantized) {
-  cbModelQuantized.addEventListener("change", async () => {
-    updateDownloadButtonLabel();
-    if (!cbModelQuantized.checked) {
-      const full = formatMb(modelSizeMb(dlSize, false));
-      const comp = formatMb(modelSizeMb(dlSize, true));
-      const ok = await showConfirm(
-        `Den okomprimerade modellen är ${full} i stället för ${comp}, utan märkbart bättre ` +
-        "resultat.\n\nVill du ändå välja den?",
-        "Större nedladdning");
-      if (!ok) {
-        cbModelQuantized.checked = true;
-        updateDownloadButtonLabel();
-      }
-    }
-  });
-}
-
 // "Ladda ner vald modell" — always downloads the selected combination.
 // Skyddar mot oavsiktliga stora hämtningar: visar storleken, bekräftar över 1 GB
 // och varnar om disken inte räcker. Tidigare startade nedladdningen direkt utan
@@ -1263,7 +1189,7 @@ const LARGE_DOWNLOAD_MB = 1000;
 
 if (btnDownloadModel) {
   btnDownloadModel.addEventListener("click", async () => {
-    const quantized = (dlSize === "pianissimo") ? true : (cbModelQuantized ? cbModelQuantized.checked : true);
+    const quantized = true;
     const sizeMb = modelSizeMb(dlSize, quantized);
     const sizeText = formatMb(sizeMb);
 
@@ -1312,7 +1238,7 @@ btnRedo.addEventListener("click", async () => {
 // Audio Recording Logic – Session/Segment model
 // -------------------------------------------------------------
 btnRecord.addEventListener("click", async () => {
-  if (!isRecording && !isPaused) {
+  if (!isRecording) {
     // F2: varna om det finns en transkribering — kolla BÅDE råtext och segmentvy
     // (segmentvyns text ligger i transcriptSegments, inte i outputText).
     if ((outputText.value && outputText.value.trim()) || transcriptSegments.length > 0) {
@@ -1349,13 +1275,6 @@ function showConfirm(msg, title) {
     };
     confirmOk.addEventListener("click", onOk);
     confirmCancel.addEventListener("click", onCancel);
-  });
-}
-
-function formatTimestamp(date) {
-  return date.toLocaleString('sv-SE', {
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit'
   });
 }
 
@@ -1455,7 +1374,7 @@ async function startRecording() {
         numberOfInputs: 1, numberOfOutputs: 1, channelCount: 1,
       });
       wasapiProcessor.port.onmessage = (e) => {
-        if (!isRecording || isPaused) return;
+        if (!isRecording) return;
         // Rå binär payload (f32 LE) — ingen JSON-array av tal.
         invoke("append_mic_chunk", new Uint8Array(e.data), { headers: { "x-sample-rate": String(wasapiSampleRate) } })
           .catch(err => console.warn("append_mic_chunk:", err));
@@ -1477,7 +1396,6 @@ async function startRecording() {
       logToFile(`startRecording: start_backend_recording returnerade loopback_active=${result.loopback_active}`);
 
       isRecording = true;
-      isPaused = false;
       drawVisualizer();
       startRecordingMetrics();
 
@@ -1499,9 +1417,6 @@ async function startRecording() {
     btnRecord.classList.add("recording");
     setRecordingUI("recording");
     if (recordingStatusText) recordingStatusText.textContent = recordingStatusMsg;
-    // Paus stöds inte i Rust-backend-flödet
-    if (btnPause) btnPause.classList.add("hidden");
-    if (segmentBadge) segmentBadge.classList.add("hidden");
     disableControls();
     btnRecord.disabled = false;
   } catch (err) {
@@ -1517,7 +1432,6 @@ async function startRecording() {
       audioContext.close();
     }
     isRecording = false;
-    isPaused = false;
     enableControls();
     // Skilj på nekad behörighet (vanligast, och åtgärdbart) och övriga fel.
     const namn = err && err.name ? err.name : "";
@@ -1630,7 +1544,6 @@ async function stopSession() {
   // oavsett om systemljud (wasapiEnabled) är aktiverat eller inte.
   if (isWindows) {
     isRecording = false;
-    isPaused = false;
     stopRecordingMetrics();
 
     btnRecord.classList.remove("recording");
@@ -1667,7 +1580,6 @@ async function stopSession() {
       // (inga 1 GB Float32-allokationer som i v1.3.x).
       // recording_path är satt i AudioRecorder; vi använder den för både save och transcribe.
       pendingRecording = { type: "wav-file", filePath: null };  // null = "använd Rusts recording_path"
-      lastRecordedSegments = [{ startTime: new Date() }];
       loadingOverlay.classList.add("hidden");
       // Hämta sessionsmappen så dialogen kan visa + öppna sökvägen
       let sessionDir = "";
@@ -1798,12 +1710,6 @@ async function checkInterruptedRecordings() {
       },
     });
   } catch (e) { logToFile(`checkInterruptedRecordings: ${e}`); }
-}
-
-// Returns the last N words of a text string (for chunk context continuity)
-function lastWords(text, n) {
-  const words = text.trim().split(/\s+/);
-  return words.slice(-n).join(" ");
 }
 
 // Format milliseconds as M:SS or H:MM:SS
@@ -2285,10 +2191,6 @@ async function processAudioFile(filePath) {
 
     isCancelling = false;
     if (btnCancelTranscription) { btnCancelTranscription.textContent = "Avbryt"; btnCancelTranscription.classList.remove("hidden"); }
-    // Rust beräknar overall-progress (0–99%) och emitterar det direkt.
-    // Sätt totalChunks=1 så att JS-lyssnaren passerar Rusts värde rakt igenom.
-    totalChunks     = 1;
-    currentChunkIdx = 0;
     const startTime = performance.now();
 
     logToFile(`processAudioFile: anropar invoke("transcribe_file") för ${filePath}`);
@@ -2316,7 +2218,6 @@ async function processAudioFile(filePath) {
     const elMin   = Math.floor(elapsed / 60);
     const elSec   = elapsed % 60;
     loadingText.innerText = `Klar! (${elMin > 0 ? `${elMin}m ` : ""}${elSec}s)`;
-    outputText.value += `\n\n[Transkribering klar]`;
     outputText.scrollTop = outputText.scrollHeight;
     announce(`Transkriberingen är klar. ${transcriptSegments.length} segment.`);
     const notices = [];
@@ -2504,6 +2405,127 @@ const wasapiToggleEl = document.getElementById("wasapi-toggle");
 wasapiToggleEl && wasapiToggleEl.addEventListener("change", () => {
   wasapiEnabled = wasapiToggleEl.checked;
   localStorage.setItem("wasapiEnabled", wasapiEnabled.toString());
+  logToFile(`wasapi-toggle change: wasapiEnabled=${wasapiEnabled}`);
+  syncWasapiVisual();
+});
+
+// Nollställ applikationen — selektiv modal där användaren väljer vad som ska tas bort/behållas
+const resetModal = document.getElementById("reset-modal");
+const btnResetApp = document.getElementById("btn-reset-app");
+const resetCancel = document.getElementById("reset-cancel");
+const resetConfirm = document.getElementById("reset-confirm");
+const resetOptModels = document.getElementById("reset-opt-models");
+const resetOptSettings = document.getElementById("reset-opt-settings");
+const resetOptVocab = document.getElementById("reset-opt-vocab");
+const resetOptRecordings = document.getElementById("reset-opt-recordings");
+
+function syncResetConfirmBtn() {
+  if (!resetConfirm) return;
+  const anyChecked = Boolean(
+    resetOptModels?.checked ||
+    resetOptSettings?.checked ||
+    resetOptVocab?.checked ||
+    resetOptRecordings?.checked
+  );
+  resetConfirm.disabled = !anyChecked;
+}
+
+[resetOptModels, resetOptSettings, resetOptVocab, resetOptRecordings].forEach(cb => {
+  cb?.addEventListener("change", syncResetConfirmBtn);
+});
+
+btnResetApp?.addEventListener("click", async () => {
+  if (!resetModal) return;
+  // Standardval: radera modeller + inställningar, behåll ordlistor och inspelningar
+  if (resetOptModels) resetOptModels.checked = true;
+  if (resetOptSettings) resetOptSettings.checked = true;
+  if (resetOptVocab) resetOptVocab.checked = false;
+  if (resetOptRecordings) resetOptRecordings.checked = false;
+  syncResetConfirmBtn();
+
+  // Fyll i aktuella storlekar/antal så användaren ser vad som påverkas
+  const modelsInfoEl = document.getElementById("reset-models-info");
+  const vocabInfoEl = document.getElementById("reset-vocab-info");
+  const recInfoEl = document.getElementById("reset-recordings-info");
+  if (modelsInfoEl) modelsInfoEl.textContent = "Frigör diskutrymme. Standardmodellen laddas ner igen vid nästa start.";
+  if (vocabInfoEl) {
+    const nLists = vocabStore?.lists?.length || 0;
+    const nWords = (vocabStore?.lists || []).reduce((acc, l) => acc + vocabEntryCount(l.text || ""), 0);
+    vocabInfoEl.textContent = nLists > 0
+      ? `Behålls om ej ikryssad (${nLists} ordlist${nLists === 1 ? "a" : "or"}, ${nWords} ord).`
+      : "Inga sparade ordlistor just nu.";
+  }
+  if (recInfoEl) recInfoEl.textContent = "Behålls om ej ikryssad.";
+
+  resetModal.classList.remove("hidden");
+
+  try {
+    const disk = await invoke("get_disk_info");
+    if (modelsInfoEl && disk && typeof disk.models_size === "number") {
+      const sz = disk.models_size > 0 ? ` (${formatSize(disk.models_size)})` : " (0 B)";
+      modelsInfoEl.textContent = `Frigör diskutrymme${sz}. Standardmodellen laddas ner igen vid nästa start.`;
+    }
+  } catch (_) {}
+
+  try {
+    const sum = await invoke("count_recordings", { dir: recordingDir });
+    if (recInfoEl && sum) {
+      recInfoEl.textContent = sum.count > 0
+        ? `Behålls om ej ikryssad (${sum.count} inspelning${sum.count === 1 ? "" : "ar"}, ${formatSize(sum.total_bytes)}).`
+        : "Inga sparade inspelningar just nu.";
+    }
+  } catch (_) {}
+});
+
+resetCancel?.addEventListener("click", () => {
+  resetModal?.classList.add("hidden");
+});
+resetModal?.addEventListener("click", (e) => {
+  if (e.target === resetModal) resetModal.classList.add("hidden");
+});
+
+resetConfirm?.addEventListener("click", async () => {
+  const deleteModels = Boolean(resetOptModels?.checked);
+  const deleteSettings = Boolean(resetOptSettings?.checked);
+  const deleteVocab = Boolean(resetOptVocab?.checked);
+  const deleteRecordings = Boolean(resetOptRecordings?.checked);
+  if (!deleteModels && !deleteSettings && !deleteVocab && !deleteRecordings) return;
+
+  resetConfirm.disabled = true;
+  try {
+    teardownPlayer();
+    await invoke("reset_application", {
+      deleteModels,
+      deleteVocab,
+      deleteRecordings,
+      deleteLogs: deleteSettings,
+      recordingDir: recordingDir || null,
+    });
+    if (deleteSettings) {
+      localStorage.clear();
+    }
+    resetModal?.classList.add("hidden");
+    if (deleteSettings || deleteModels) {
+      window.location.reload();
+      return;
+    }
+    // Om bara ordlistor och/eller inspelningar raderades: uppdatera vyerna på plats
+    if (deleteVocab) {
+      vocabStore = { version: 1, lists: [] };
+      vocabSelected = null;
+      renderVocab();
+    }
+    if (deleteRecordings) {
+      refreshRecordingsUsage();
+    }
+    updateFooter();
+    await message("Valda delar har nollställts.", { title: "Nollställning klar" });
+  } catch (err) {
+    const msg = typeof err === "string" ? err : err.message || String(err);
+    await message(`Kunde inte nollställa applikationen: ${msg}`, { title: "Fel", kind: "error" });
+  } finally {
+    syncResetConfirmBtn();
+  }
 });
 
 const gpuToggleEl = document.getElementById("gpu-toggle");

@@ -1,4 +1,6 @@
+#[cfg(not(target_os = "windows"))]
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+#[cfg(not(target_os = "windows"))]
 use cpal::Stream;
 use std::fs::File;
 use std::io::BufWriter;
@@ -6,8 +8,11 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 // SendStream: wraps cpal::Stream to satisfy Send+Sync for Tauri managed state.
+#[cfg(not(target_os = "windows"))]
 struct SendStream(Stream);
+#[cfg(not(target_os = "windows"))]
 unsafe impl Send for SendStream {}
+#[cfg(not(target_os = "windows"))]
 unsafe impl Sync for SendStream {}
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -163,6 +168,7 @@ fn write_samples(writer: &mut DiskWriter, samples: &[f32]) {
 // Vid stop_recording mixas alla källor till en recording.wav i sessionsmappen.
 // ─────────────────────────────────────────────────────────────────────────────
 pub struct AudioRecorder {
+    #[cfg(not(target_os = "windows"))]
     mic_stream: Option<SendStream>,
     pub loopback_active: bool,
 
@@ -172,6 +178,7 @@ pub struct AudioRecorder {
     session_dir: Arc<Mutex<Option<PathBuf>>>,
 
     /// Mic kvar i RAM (Mac/cpal-flödet — oförändrat från tidigare)
+    #[cfg(not(target_os = "windows"))]
     mic_samples: Arc<Mutex<Vec<f32>>>,
 
     /// WAV-writers för loopback streamas direkt till disk under inspelning (Windows)
@@ -199,10 +206,12 @@ pub struct AudioRecorder {
 impl AudioRecorder {
     pub fn new() -> Self {
         Self {
+            #[cfg(not(target_os = "windows"))]
             mic_stream: None,
             loopback_active: false,
             recording_path: Arc::new(Mutex::new(None)),
             session_dir: Arc::new(Mutex::new(None)),
+            #[cfg(not(target_os = "windows"))]
             mic_samples: Arc::new(Mutex::new(Vec::new())),
             #[cfg(target_os = "windows")]
             lb_writer: Arc::new(Mutex::new(None)),
@@ -222,13 +231,13 @@ impl AudioRecorder {
     }
 
     /// `loopback_only`: when true, skip the cpal mic stream — the browser handles mic capture
-    ///                  (Windows-flödet använder ScriptProcessorNode + append_mic_chunk).
+    ///                  (Windows-flödet använder AudioWorklet + append_mic_chunk).
     /// `with_loopback`: when true, starta WASAPI loopback-trådar för att fånga systemljud.
     ///                  When false: skippa loopback men behåll mic-flödet → tempfiler skapas
     ///                  ändå, så krasch-skydd fungerar även när användaren inte vill ha datorljud.
     /// `base_dir`: användarens valda rotmapp där en ny `inspelning-<timestamp>/`-undermapp
-    ///             skapas för streaming. Användaren ansvarar för att välja lokal path
-    ///             (default = .exe-parent). Streaming + destination är samma path.
+    ///             skapas för streaming.
+    #[cfg_attr(target_os = "windows", allow(unused_variables))]
     #[cfg_attr(not(target_os = "windows"), allow(unused_variables))]
     pub fn start_recording(
         &mut self,
@@ -247,6 +256,7 @@ impl AudioRecorder {
         self.loopback_active = false;
 
         // Nollställ mic-buffert + loopback-writers
+        #[cfg(not(target_os = "windows"))]
         self.mic_samples.lock().unwrap().clear();
         #[cfg(target_os = "windows")]
         {
@@ -257,10 +267,10 @@ impl AudioRecorder {
             *self.mic_path.lock().unwrap() = Some(session.join("mic.wav"));
         }
 
-        let host = cpal::default_host();
-
-        // ── 1. Microphone stream (skipped in loopback_only mode) ──────────────
+        // ── 1. Microphone stream (endast macOS; på Windows sköts mic via AudioWorklet) ──
+        #[cfg(not(target_os = "windows"))]
         if !loopback_only {
+            let host = cpal::default_host();
             let mic_device = host
                 .default_input_device()
                 .ok_or("Ingen mikrofonenhet hittades")?;
@@ -440,8 +450,11 @@ impl AudioRecorder {
     /// vid 1.5h-inspelning orsakade "invalid array length" i Tauri IPC-serialiseringen).
     pub fn stop_recording(&mut self) -> Result<(), String> {
         crate::log_line("stop_recording: fas 1 — stoppa mic_stream");
-        // 1. Stoppa cpal mic-stream
-        self.mic_stream = None;
+        // 1. Stoppa cpal mic-stream (macOS)
+        #[cfg(not(target_os = "windows"))]
+        {
+            self.mic_stream = None;
+        }
 
         // 2. Signalera + vänta in loopback-trådar (Windows)
         #[cfg(target_os = "windows")]
@@ -476,11 +489,9 @@ impl AudioRecorder {
             .clone()
             .ok_or_else(|| "Ingen aktiv inspelningssession".to_string())?;
         let recording_path = session.join("recording.wav");
-        crate::log_line(&format!("stop_recording: fas 4 — session={}, target={}", session.display(), recording_path.display()));
+        crate::log_line("stop_recording: fas 4 — mixar till recording.wav");
 
         // 5. Mixa allt till recording.wav
-        let mic = self.mic_samples.lock().unwrap().clone();
-        crate::log_line(&format!("stop_recording: fas 5 — mix till recording.wav (mic_in_memory={} samples)", mic.len()));
         #[cfg(target_os = "windows")]
         {
             let lb_path    = session.join("lb_console.wav");
@@ -488,16 +499,16 @@ impl AudioRecorder {
             // Mic på Windows ligger på disk (mic.wav) skriven av append_mic_chunk
             let mic_path = self.mic_path.lock().unwrap().clone();
             let mic_path_ref = mic_path.as_ref().filter(|p| p.exists()).map(|p| p.as_path());
-            mix_to_wav_streaming(&mic, mic_path_ref, Some(&lb_path), Some(&comms_path), &recording_path)?;
+            mix_to_wav_streaming(&[], mic_path_ref, Some(&lb_path), Some(&comms_path), &recording_path)?;
         }
         #[cfg(not(target_os = "windows"))]
         {
+            let mic = self.mic_samples.lock().unwrap().clone();
             mix_to_wav_streaming(&mic, None, None, None, &recording_path)?;
         }
         crate::log_line("stop_recording: fas 5 — mix klar");
 
         eprintln!("[audio] Mix klar → {}", recording_path.display());
-        crate::log_line(&format!("stop_recording: KLART, recording_path={}", recording_path.display()));
         *self.recording_path.lock().unwrap() = Some(recording_path);
         Ok(())
     }
@@ -508,6 +519,8 @@ impl AudioRecorder {
 // Läser samples från WAV-filer en åt gången via hound::WavReader,
 // summerar med mic-buffer (in-memory), skalar och skriver till utfil.
 // Peak memory: ~64 KB (BufWriter + några samples). Hanterar timmar utan OOM.
+// Om endast en källa på disk har data (t.ex. enbart mic.wav vid inspelning utan
+// mötesljud) döps filen om direkt på 0 ms utan onödig omkodning.
 // ─────────────────────────────────────────────────────────────────────────────
 fn mix_to_wav_streaming(
     mic_in_memory: &[f32],
@@ -535,7 +548,45 @@ fn mix_to_wav_streaming(
     let total_len    = mic_len.max(lb_len).max(comms_len);
 
     let active = (mic_len > 0) as u32 + (lb_len > 0) as u32 + (comms_len > 0) as u32;
-    let scale  = if active > 0 { 1.0 / active as f32 } else { 1.0 };
+
+    // Snabbväg: om endast EN ljudkälla på disk innehåller ljud (t.ex. bara mic.wav),
+    // döp om filen direkt till recording.wav i stället för att läsa och skriva om hela filen.
+    if active == 1 && mic_mem_len == 0 {
+        let single_src = if mic_disk_len > 0 {
+            mic_path
+        } else if lb_len > 0 {
+            lb_path
+        } else {
+            comms_path
+        };
+        if let Some(src) = single_src {
+            drop(mic_reader);
+            drop(lb_reader);
+            drop(comms_reader);
+            if std::fs::rename(src, out_path).is_ok() {
+                for p in [mic_path, lb_path, comms_path].into_iter().flatten() {
+                    if p != out_path && p.exists() {
+                        let _ = std::fs::remove_file(p);
+                    }
+                }
+                eprintln!("[audio] Snabb-mix (rename) klar — total={:.1}s", total_len as f32 / 16000.0);
+                return Ok(());
+            }
+            // Om rename mot förmodan misslyckades, öppna läsarna igen nedan.
+        }
+    }
+
+    let mic_reader = mic_path
+        .filter(|p| p.exists())
+        .and_then(|p| hound::WavReader::open(p).ok());
+    let lb_reader = lb_path
+        .filter(|p| p.exists())
+        .and_then(|p| hound::WavReader::open(p).ok());
+    let comms_reader = comms_path
+        .filter(|p| p.exists())
+        .and_then(|p| hound::WavReader::open(p).ok());
+
+    let scale = if active > 0 { 1.0 / active as f32 } else { 1.0 };
 
     let mut writer = make_writer(out_path)?;
 

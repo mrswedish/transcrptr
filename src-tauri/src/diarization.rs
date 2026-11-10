@@ -60,16 +60,15 @@ pub(crate) const CANCELLED: &str = "avbruten";
 /// ~10 överlappande fönster); 2 s halverar arbetet och gav samma talare och >99 % samma
 /// tidsgränser på referensfiler med känt antal talare. (3 s tappade en talare på en kort fil.)
 const STEP_SECONDS: f32 = 2.0;
-/// Så mycket av ljudet körs först för att mäta hastigheten (och ge en tidsuppskattning).
-const CALIBRATION_SECONDS: usize = 30;
 
 /// Förlopp: (procent 0–97, uppskattad tid kvar i sekunder).
 pub(crate) type OnProgress<'a> = &'a (dyn Fn(i32, i64) + Sync);
 
 /// Kör diariseringen på hela ljudet (16 kHz mono f32).
 ///
-/// speakrs har ingen förloppsrapportering, så vi mäter hastigheten på de första sekunderna
-/// och räknar ut en uppskattning; en bakgrundstråd rapporterar sedan procent och tid kvar.
+/// Vår vendrade `speakrs`-kopia uppdaterar en atomär förloppsräknare (0..970 promille) under
+/// segmenterings- och embedding-looparna; en bakgrundstråd läser den och rapporterar verklig
+/// procent och återstående tid utan någon separat kalibreringskörning.
 pub(crate) fn diarize(
     model_dir: &Path,
     samples: &[f32],
@@ -84,31 +83,10 @@ pub(crate) fn diarize(
         .map_err(|e| load(&e))?;
     let mut pipeline = DiarizationPipeline::new(&mut seg, &mut emb, model_dir).map_err(|e| load(&e))?;
 
-    // speakrs har en global avbrytflagga som vi nollställer här och sätter när användaren trycker Avbryt.
+    // speakrs har en global avbrytflagga och förloppsräknare som vi nollställer här.
     speakrs::cancel::reset_cancel();
     if cancel.load(Ordering::Relaxed) {
         return Err(CANCELLED.into());
-    }
-
-    let total_secs = samples.len() as f64 / 16_000.0;
-
-    // Hastighetsmätning på början av ljudet (hoppas över för korta filer).
-    let mut estimate_secs = total_secs / 4.0; // försiktig gissning om mätningen inte görs
-    if samples.len() > 16_000 * CALIBRATION_SECONDS * 3 {
-        let slice = &samples[..16_000 * CALIBRATION_SECONDS];
-        let t = std::time::Instant::now();
-        let cal = pipeline.run(slice);
-        if cancel.load(Ordering::Relaxed) {
-            return Err(CANCELLED.into());
-        }
-        if cal.is_ok() {
-            let dt = t.elapsed().as_secs_f64().max(0.05);
-            estimate_secs = total_secs / (CALIBRATION_SECONDS as f64 / dt) * 1.35;
-            crate::log_line(&format!(
-                "diarization: mätning {CALIBRATION_SECONDS} s på {dt:.1} s ({:.1}× realtid) → uppskattad tid {:.0} s för {:.0} s ljud",
-                CALIBRATION_SECONDS as f64 / dt, estimate_secs, total_secs
-            ));
-        }
     }
 
     let done = AtomicBool::new(false);
@@ -125,9 +103,15 @@ pub(crate) fn diarize(
                     continue;
                 }
                 last_report = std::time::Instant::now();
+                let permille = speakrs::cancel::progress();
+                let pct = ((permille as f64 / 10.0).round() as i32).clamp(0, 97);
                 let el = started.elapsed().as_secs_f64();
-                let pct = ((el / estimate_secs) * 100.0).clamp(0.0, 97.0) as i32;
-                let eta = (estimate_secs - el).max(0.0) as i64;
+                let eta = if permille >= 30 && el > 0.5 {
+                    let frac = permille as f64 / 1000.0;
+                    ((el * (1.0 - frac) / frac).round() as i64).max(0)
+                } else {
+                    0
+                };
                 on_progress(pct, eta);
             }
         });

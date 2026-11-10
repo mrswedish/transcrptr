@@ -63,11 +63,13 @@ impl DecodedSegmentations {
         layout: &ChunkLayout,
         embeddings: &mut Array3<f32>,
     ) -> Result<(), PipelineError> {
+        let total = self.0.shape()[0].max(1);
         for chunk_idx in 0..self.0.shape()[0] {
-            // Transkribera-patch: avbrott mellan chunks
+            // Transkribera-patch: avbrott och förlopp mellan chunks
             if crate::cancel::is_cancelled() {
                 return Err(PipelineError::Other("cancelled".to_owned()));
             }
+            crate::cancel::set_progress(350 + (chunk_idx * 620 / total) as u32);
             let chunk_audio = layout.chunk_audio(audio, chunk_idx);
             let chunk_segmentations = self.0.slice(s![chunk_idx, .., ..]);
             let clean_masks = clean_masks(&chunk_segmentations);
@@ -91,11 +93,13 @@ impl DecodedSegmentations {
         let mut storage = Array3Writer(embeddings);
         let mut pending = Vec::with_capacity(emb_model.primary_batch_size());
 
+        let total = self.0.shape()[0].max(1);
         for chunk_idx in 0..self.0.shape()[0] {
-            // Transkribera-patch: avbrott mellan chunks
+            // Transkribera-patch: avbrott och förlopp mellan chunks
             if crate::cancel::is_cancelled() {
                 return Err(PipelineError::Other("cancelled".to_owned()));
             }
+            crate::cancel::set_progress(350 + (chunk_idx * 620 / total) as u32);
             let chunk_audio = layout.chunk_audio(audio, chunk_idx);
             let chunk_segmentations = self.0.slice(s![chunk_idx, .., ..]);
             let clean_masks = clean_masks(&chunk_segmentations);
@@ -147,11 +151,13 @@ impl DecodedSegmentations {
         let mut tail_batches = 0usize;
         let mut active_items = 0usize;
 
+        let total = self.0.shape()[0].max(1);
         for chunk_idx in 0..self.0.shape()[0] {
-            // Transkribera-patch: avbrott mellan chunks
+            // Transkribera-patch: avbrott och förlopp mellan chunks
             if crate::cancel::is_cancelled() {
                 return Err(PipelineError::Other("cancelled".to_owned()));
             }
+            crate::cancel::set_progress(350 + (chunk_idx * 620 / total) as u32);
             let chunk_audio = layout.chunk_audio(audio, chunk_idx);
             let fbank = emb_model.compute_chunk_fbank(chunk_audio)?;
             fbanks.push(fbank);
@@ -228,10 +234,11 @@ impl DecodedSegmentations {
         let mut batches = 0usize;
 
         for chunk_idx in 0..num_chunks {
-            // Transkribera-patch: avbrott mellan chunks
+            // Transkribera-patch: avbrott och förlopp mellan chunks
             if crate::cancel::is_cancelled() {
                 return Err(PipelineError::Other("cancelled".to_owned()));
             }
+            crate::cancel::set_progress(350 + (chunk_idx * 620 / num_chunks.max(1)) as u32);
             let chunk_audio = layout.chunk_audio(audio, chunk_idx);
             let fbank = emb_model.compute_chunk_fbank(chunk_audio)?;
             fbank_buffer.push(fbank);

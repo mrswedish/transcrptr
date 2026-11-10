@@ -4,7 +4,7 @@ Underlag för IT-avdelning, förvaltare och utvecklingsenhet. Beskriver var data
 vilken nätverkstrafik som förekommer, vad som händer vid avinstallation och hur systemet är
 byggt.
 
-Avser **version 2.2.0** och **enbart Windows**. Senast genomgången mot källkoden 2026-11-10;
+Avser **version 2.2.4** och **enbart Windows**. Senast genomgången mot källkoden 2026-11-10;
 där en sökväg härleds ur Tauris API i stället för att vara hårdkodad anges det.
 
 - **Identifier:** `com.patriksvensk.transcrptr`
@@ -48,9 +48,9 @@ Allt är **per användare**. Inget skrivs till maskingemensamma platser.
 | **ONNX Runtime** | `…\models\runtime\onnxruntime-1.24.2.dll` | några MB | Microsofts `onnxruntime.dll` ligger inbäddad i programfilen och packas upp hit första gången Pianissimo används. Se §8 om AppLocker/WDAC. |
 | **Talarmodeller** (valfria) | `…\models\diarization\` | ca **33 MB** | Hämtas först när användaren kryssar i "Identifiera talare". |
 | **Ordlistor** | `%APPDATA%\com.patriksvensk.transcrptr\ordlistor.json` | kB | En fil med alla ordlistor. Kan säkerhetskopieras. Se §3. |
-| **Loggfil** | `%LOCALAPPDATA%\com.patriksvensk.transcrptr\transcrptr.log` | kB–MB. **Ingen rotation — växer obegränsat** | Diagnostik. Ligger i Local eftersom den är maskinspecifik och inte bör roama. |
+| **Loggfil** | `%LOCALAPPDATA%\com.patriksvensk.transcrptr\transcrptr.log` (och `.old.log`) | Max **4 MB** (roteras var 7:e dag eller vid 2 MB) | Diagnostik. Ligger i Local eftersom den är maskinspecifik och inte bör roama. |
 | **Inställningar** (localStorage) | `%LOCALAPPDATA%\com.patriksvensk.transcrptr\EBWebView\Default\Local Storage\` | Några MB | WebView2:s egen lagring. Se §3. |
-| **Inspelningar** | Användarvald mapp, eller default bredvid programfilen: `<mapp med .exe>\Transkribera-Inspelningar\` | **~115 MB per timme** | Medvetet nära användaren och utanför AppData, så inspelningar inte raderas av misstag. |
+| **Inspelningar** | Användarvald mapp, eller default bredvid programfilen (`<mapp med .exe>\Transkribera-Inspelningar\`). Om mappen är skrivskyddad (t.ex. `C:\Program Files`) faller appen automatiskt tillbaka till `%LOCALAPPDATA%\com.patriksvensk.transcrptr\Transkribera-Inspelningar\`. | **~115 MB per timme** | Medvetet nära användaren när det går, med skrivbar fallback för MSI-installationer. |
 | **Exporterad text/ljud** | Där användaren väljer i spardialogen | Varierar | Användarstyrt. |
 
 ### Sessionsmappar
@@ -186,15 +186,22 @@ eftersom identifiern är densamma.
 > `C:\Users\<användare>\Downloads\Transkribera-Inspelningar\` — en mapp som sällan omfattas av
 > backup- eller gallringsrutiner, och som användare ofta uppfattar som tillfällig.
 
-### Fullständig rensning
+### Nollställning inifrån appen
+
+Under **Inställningar → Avancerat → Nollställ applikationen** kan användaren själv rensa appdata och välja vad som ska tas bort respektive behållas:
+- **Nedladdade modeller** (förvalt)
+- **Inställningar och diagnostiklogg** (förvalt)
+- **Ordlistor** (ej förvalt, så ordlistor behålls om de inte uttryckligen väljs)
+- **Sparade ljudinspelningar** (ej förvalt)
+
+### Fullständig rensning (kommandorad)
 
 ```bat
 rmdir /s /q "%APPDATA%\com.patriksvensk.transcrptr"
 rmdir /s /q "%LOCALAPPDATA%\com.patriksvensk.transcrptr"
 ```
 
-Därefter behöver inspelningsmappen gås igenom manuellt, eftersom dess placering beror på
-användarens val.
+Därefter behöver inspelningsmappen gås igenom manuellt om den ligger utanför `%LOCALAPPDATA%`.
 
 ---
 
@@ -209,20 +216,11 @@ skiljer sig åt enligt tabellen nedan; rekommendationen är NSIS-setup.
 | Administratör | Nej | Nej (per användare) | **Ja** (per maskin) |
 | Tyst installation | — | `/S` | `msiexec /i ... /qn` |
 | Lämpar sig för | Test, enskild användare | **Rekommenderas för utrullning** | Intune/SCCM |
-| Standardmapp för inspelningar | Bredvid .exe | I installationsmappen | **Program Files — problem, se nedan** |
+| Standardmapp för inspelningar | Bredvid .exe | I installationsmappen | `%LOCALAPPDATA%\com.patriksvensk.transcrptr\Transkribera-Inspelningar\` (automatisk fallback) |
 
-### ⚠️ MSI-versionen fungerar inte på låst dator
+### MSI-installation och skrivskyddade programkataloger
 
-Standardmappen för inspelningar beräknas som "mappen där programfilen ligger". Vid
-MSI-installation blir det `C:\Program Files\Transkribera\`, dit en vanlig användare **inte får
-skriva**. Inspelning misslyckas då med ett felmeddelande, och **det finns ingen automatisk
-fallback** till en skrivbar plats.
-
-**Rekommendation:** använd NSIS-setup. Krävs MSI för Intune måste inspelningsmappen
-för-konfigureras eller användaren instrueras att välja mapp vid första start.
-
-*Detta är också en buggrapport till förvaltaren: standardmappen bör falla tillbaka till
-användarens AppData när målmappen inte är skrivbar.*
+Standardmappen för inspelningar utgår från mappen där programfilen ligger, men verifieras med ett skrivtest vid uppstart. Vid MSI-installation i `C:\Program Files\Transkribera\` är mappen skrivskyddad för vanliga användare, varpå appen automatiskt faller tillbaka till `%LOCALAPPDATA%\com.patriksvensk.transcrptr\Transkribera-Inspelningar\`.
 
 ---
 
@@ -247,8 +245,7 @@ och tid.
 **Slutsats:** loggen innehåller inte vad som sades, men den kan avslöja **vad som spelats in
 och om vem**. Klassificera den därefter — särskilt om en användare skickar den till support.
 
-**Rekommendation till förvaltaren:** inför loggrotation (loggen växer obegränsat idag), och
-överväg att bara logga filnamn utan katalogsökväg.
+**Rotation:** Loggfilen roteras automatiskt vid programstart om `transcrptr.log` är äldre än **7 dagar** eller större än **2 MB**. Föregående period sparas som `transcrptr.old.log` (max en bakåtfil, totalt högst ~4 MB).
 
 ---
 
@@ -354,13 +351,8 @@ och resten av programmet fungerar utan.
 | Punkt | Konsekvens |
 |---|---|
 | **Kodsignering saknas** | SmartScreen, AppLocker-friktion (§8) |
-| **MSI + Program Files** | Inspelning misslyckas utan fallback (§6) |
-| **Loggrotation saknas** | Loggfilen växer obegränsat (§7) |
 | **Rust- och Tauri-versioner är inte låsta** | Ett bygge om sex månader kan ge annan verktygskedja. Överväg `rust-toolchain.toml`. |
-| **Utvecklarverktyg aktiverade i release** | WebView2:s devtools kan gå att öppna i produktionsbygget. Bör läggas bakom en felsökningsflagga. |
-| **Ingen Content Security Policy** | Låg risk eftersom allt innehåll är lokalt, men avviker från rekommendationen. |
-| **Versionsnummer ur synk** | `package.json` säger 1.1.75 medan programmet är 2.2.0. Kosmetiskt — `package.json`-versionen används inte vid paketering — men förvirrande. |
-| **Egen kopia av speakrs** | `src-tauri/vendor/speakrs` är en lokalt ändrad kopia (snabbare matrismultiplikation). Nya versioner uppströms måste tas in manuellt. |
+| **Egen kopia av speakrs** | `src-tauri/vendor/speakrs` är en lokalt ändrad kopia (snabbare matrismultiplikation, avbryt-stöd och förloppsmätning). Nya versioner uppströms måste tas in manuellt. |
 
 ---
 

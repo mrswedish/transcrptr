@@ -91,6 +91,7 @@ impl SegmentationModel {
             let plan = batching.plan(remaining, Delivery::Collected);
             results.extend(self.run_planned(&windows, next_idx, plan, &[])?);
             next_idx += plan.useful();
+            crate::cancel::set_progress((next_idx * 350 / total_windows.max(1)) as u32);
         }
 
         Ok(results)

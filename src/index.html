@@ -42,10 +42,6 @@
         <span class="btn-icon rec-glyph"></span>
         <span class="btn-record-label">Spela in</span>
       </button>
-      <button id="btn-pause" aria-label="Pausa" class="hidden btn">
-        <span class="material-symbols-outlined">pause</span>
-        <span>Pausa</span>
-      </button>
 
       <!-- Vila: mikrofon och mötesljud. Döljs under inspelning. -->
       <div id="idle-hint" class="flex-1 min-w-0 flex flex-wrap items-center gap-x-4 gap-y-2">
@@ -81,11 +77,8 @@
         <div class="flex-1"></div>
         <span class="font-mono text-sm tabular-nums" id="recording-timer">00:00:00</span>
         <span class="font-mono text-sm text-muted tabular-nums" id="recording-size">0 MB</span>
-        <span id="segment-badge" class="hidden text-xs font-mono text-muted"></span>
-        <span id="disk-forecast" class="hidden"></span>
       </div>
     </div>
-    <input type="file" id="file-input" accept="audio/*,video/mp4,video/webm,video/quicktime,video/x-matroska" class="hidden" />
   </section>
 
   <!-- Transkriptet -->
@@ -424,8 +417,17 @@
 
               <div>
                 <h4 class="text-sm font-semibold">Diagnostiklogg</h4>
-                <p class="hint mb-2">Loggfilen hjälper vid felsökning och innehåller transkriberingssteg och eventuella krascher.</p>
+                <p class="hint mb-2">Loggfilen hjälper vid felsökning och innehåller transkriberingssteg och eventuella krascher. Den roteras automatiskt en gång i veckan.</p>
                 <button id="btn-show-log" class="btn btn-sm">Öppna loggfil</button>
+              </div>
+
+              <div class="pt-4 border-t border-line">
+                <h4 class="text-sm font-semibold">Nollställ applikationen</h4>
+                <p class="hint mb-2">Återställ Transkribera till nyskick och välj vad du vill ta bort eller behålla (till exempel modeller, inställningar och ordlistor).</p>
+                <button id="btn-reset-app" type="button" class="btn btn-sm btn-danger">
+                  <span class="material-symbols-outlined">restart_alt</span>
+                  <span>Nollställ applikationen…</span>
+                </button>
               </div>
             </div>
           </details>
@@ -434,7 +436,57 @@
 
       <div class="px-6 py-4 border-t border-line shrink-0">
         <button id="btn-save-settings" class="btn btn-primary w-full">Spara inställningar</button>
-        <p class="text-center text-xs text-muted mt-3">Transkribera <span id="app-version">v1.2.1</span></p>
+        <p class="text-center text-xs text-muted mt-3">Transkribera <span id="app-version">v2.2.4</span></p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Nollställ applikationen -->
+  <div id="reset-modal" class="hidden fixed inset-0 bg-black/40 z-[200] flex justify-center items-center"
+    role="dialog" aria-modal="true" aria-labelledby="reset-title">
+    <div class="dialog w-11/12 max-w-md">
+      <div class="p-5">
+        <h3 id="reset-title" class="text-base font-semibold mb-1">Nollställ applikationen</h3>
+        <p class="text-sm text-muted mb-4 leading-relaxed">
+          Välj vad som ska tas bort. Avmarkerade delar behålls som de är.
+        </p>
+        <div class="flex flex-col gap-3">
+          <label class="flex items-start gap-3 cursor-pointer select-none">
+            <input type="checkbox" id="reset-opt-models" class="w-5 h-5 accent-primary cursor-pointer shrink-0 mt-0.5" checked>
+            <span class="text-sm">
+              <span class="font-semibold">Nedladdade modeller</span>
+              <span id="reset-models-info" class="text-xs text-muted ml-1"></span>
+              <span class="block hint">Tar bort språk- och talarmodeller. Standardmodellen hämtas igen vid nästa start.</span>
+            </span>
+          </label>
+          <label class="flex items-start gap-3 cursor-pointer select-none">
+            <input type="checkbox" id="reset-opt-settings" class="w-5 h-5 accent-primary cursor-pointer shrink-0 mt-0.5" checked>
+            <span class="text-sm">
+              <span class="font-semibold">Inställningar och diagnostiklogg</span>
+              <span class="block hint">Återställer val för språk, modell, mikrofon, tema och tömmer loggfilen.</span>
+            </span>
+          </label>
+          <label class="flex items-start gap-3 cursor-pointer select-none">
+            <input type="checkbox" id="reset-opt-vocab" class="w-5 h-5 accent-primary cursor-pointer shrink-0 mt-0.5">
+            <span class="text-sm">
+              <span class="font-semibold">Ordlistor</span>
+              <span id="reset-vocab-info" class="text-xs text-muted ml-1"></span>
+              <span class="block hint">Tar bort dina egna ordlistor (<code class="font-mono">ordlistor.json</code>). Lämna urkryssad för att behålla dem.</span>
+            </span>
+          </label>
+          <label class="flex items-start gap-3 cursor-pointer select-none">
+            <input type="checkbox" id="reset-opt-recordings" class="w-5 h-5 accent-primary cursor-pointer shrink-0 mt-0.5">
+            <span class="text-sm">
+              <span class="font-semibold">Sparade ljudinspelningar</span>
+              <span id="reset-recordings-info" class="text-xs text-muted ml-1"></span>
+              <span class="block hint">Tar bort alla sessionsmappar (<code class="font-mono">inspelning-…</code>) i inspelningsmappen.</span>
+            </span>
+          </label>
+        </div>
+      </div>
+      <div class="dialog-actions">
+        <button id="reset-cancel" type="button" class="btn" data-autofocus>Avbryt</button>
+        <button id="reset-confirm" type="button" class="btn btn-danger">Nollställ valda</button>
       </div>
     </div>
   </div>
@@ -498,7 +550,7 @@
             <span class="step-no">1</span>
             <div>
               <p class="font-semibold mb-2">Öppna ljudinställningar</p>
-              <button onclick="window.__TAURI__.opener.open('ms-settings:sound');" class="btn btn-sm">
+              <button id="btn-open-win-sound" type="button" class="btn btn-sm">
                 <span class="material-symbols-outlined">open_in_new</span>
                 <span>Öppna Windows inställningar</span>
               </button>

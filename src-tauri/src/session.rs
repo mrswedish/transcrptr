@@ -245,50 +245,37 @@ mod session_plan_tests {
     }
 }
 
-#[derive(Serialize)]
-pub(crate) struct SessionDirInfo {
-    is_session: bool,
-    has_ready_recording: bool,
-    recording_path: String,
-}
-
-/// Lättviktig kontroll om en mapp är en sessionsmapp (innehåller streamat material).
-/// Används av "Välj fil/mapp" i UI:t för att avgöra om mappen ska köras via recover_session.
-#[tauri::command]
-pub(crate) async fn inspect_session_dir(dir: String) -> Result<SessionDirInfo, String> {
-    let p = PathBuf::from(&dir);
-    if !p.is_dir() {
-        return Err("Mappen finns inte".to_string());
+/// Kontrollerar att `dir` går att skapa och skriva till (t.ex. ej `C:\Program Files\`).
+fn is_dir_writable(dir: &std::path::Path) -> bool {
+    if fs::create_dir_all(dir).is_err() {
+        return false;
     }
-    let has_part = ["mic.wav", "lb_console.wav", "lb_comms.wav", "recording.wav"]
-        .iter()
-        .any(|f| {
-            let fp = p.join(f);
-            fp.exists() && std::fs::metadata(&fp).map(|m| m.len() > 44).unwrap_or(false)
-        });
-    let rec = p.join("recording.wav");
-    let has_ready = rec.exists() && std::fs::metadata(&rec).map(|m| m.len() > 44).unwrap_or(false);
-    Ok(SessionDirInfo {
-        is_session: has_part,
-        has_ready_recording: has_ready,
-        recording_path: if has_ready { rec.to_string_lossy().into_owned() } else { String::new() },
-    })
+    let probe = dir.join(format!(".write-test-{}", std::process::id()));
+    match fs::write(&probe, b"") {
+        Ok(()) => {
+            let _ = fs::remove_file(&probe);
+            true
+        }
+        Err(_) => false,
+    }
 }
 
 /// Default-mapp för inspelningar = mappen där .exe ligger / Transkribera-Inspelningar.
 /// På företagsdatorer är Documents ofta GP-redirected till UNC-nätverksdisk, så
 /// Documents fungerar dåligt. Mappen där .exe körs ifrån är vanligen lokal SSD
-/// (Downloads för portable .exe). Fallback till app_local_data_dir om current_exe
-/// inte fungerar (dev-mode-edge-cases).
+/// (Downloads för portable .exe, %LOCALAPPDATA% för NSIS).
+/// Om .exe-mappen är skrivskyddad (t.ex. MSI-installation i C:\Program Files\) faller vi
+/// tillbaka till %LOCALAPPDATA%\com.patriksvensk.transcrptr\Transkribera-Inspelningar.
 pub(crate) fn default_recording_dir(app_handle: &AppHandle) -> Result<PathBuf, String> {
-    match std::env::current_exe().ok().and_then(|p| p.parent().map(|p| p.to_path_buf())) {
-        Some(exe_dir) => Ok(exe_dir.join("Transkribera-Inspelningar")),
-        None => {
-            let base = app_handle.path().app_local_data_dir()
-                .map_err(|e| format!("Kunde inte h\u{00e4}mta app_local_data_dir: {e}"))?;
-            Ok(base.join("sessions"))
+    if let Some(exe_dir) = std::env::current_exe().ok().and_then(|p| p.parent().map(|p| p.to_path_buf())) {
+        let candidate = exe_dir.join("Transkribera-Inspelningar");
+        if is_dir_writable(&candidate) {
+            return Ok(candidate);
         }
     }
+    let base = app_handle.path().app_local_data_dir()
+        .map_err(|e| format!("Kunde inte hämta app_local_data_dir: {e}"))?;
+    Ok(base.join("Transkribera-Inspelningar"))
 }
 
 #[tauri::command]
@@ -335,10 +322,6 @@ pub(crate) struct RecordingInfo {
     pub(crate) size_bytes: u64,
 }
 
-fn non_empty(p: &std::path::Path) -> bool {
-    p.is_file() && fs::metadata(p).map(|m| m.len() > 44).unwrap_or(false)
-}
-
 /// Tolkar `inspelning-20260906-134318[-namn]` → ("2026-09-06T13:43:18", "namn").
 fn parse_session_name(name: &str) -> Option<(String, String)> {
     let rest = name.strip_prefix("inspelning-").or_else(|| name.strip_prefix("recording-"))?;
@@ -369,8 +352,8 @@ pub(crate) async fn list_recordings(
         if !p.is_dir() || !is_session_folder(&name) {
             continue;
         }
-        let has_ready = non_empty(&p.join("recording.wav"));
-        let has_parts = ["mic.wav", "lb_console.wav", "lb_comms.wav"].iter().any(|f| non_empty(&p.join(f)));
+        let has_ready = non_empty_file(&p.join("recording.wav"));
+        let has_parts = ["mic.wav", "lb_console.wav", "lb_comms.wav"].iter().any(|f| non_empty_file(&p.join(f)));
         if !has_ready && !has_parts {
             continue;
         }
@@ -492,5 +475,75 @@ pub(crate) async fn get_disk_info(app_handle: AppHandle) -> Result<DiskInfo, Str
     } else {
         Err("Could not get disk info".to_string())
     }
+}
+
+/// Nollställer valda delar av applikationen.
+/// På Windows kan `models/runtime/onnxruntime-*.dll` vara låst i minnet om Pianissimo redan
+/// körts i samma session — vi raderar därför varje underkatalog/fil i `models/` var för sig
+/// och ignorerar ev. lås på `runtime/`.
+#[tauri::command]
+pub(crate) async fn reset_application(
+    app_handle: AppHandle,
+    state: tauri::State<'_, AppState>,
+    delete_models: bool,
+    delete_vocab: bool,
+    delete_recordings: bool,
+    delete_logs: bool,
+    recording_dir: Option<String>,
+) -> Result<(), String> {
+    if let Ok(rec) = state.inner().audio_recorder.lock() {
+        if let Ok(mut p) = rec.recording_path.lock() {
+            *p = None;
+        }
+    }
+
+    let app_data_dir = app_handle.path().app_data_dir().map_err(|e| e.to_string())?;
+
+    if delete_models {
+        let models_dir = app_data_dir.join("models");
+        if let Ok(entries) = fs::read_dir(&models_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let name = entry.file_name().to_string_lossy().to_string();
+                if path.is_dir() {
+                    if name == "runtime" {
+                        let _ = fs::remove_dir_all(&path);
+                    } else {
+                        fs::remove_dir_all(&path)
+                            .map_err(|e| format!("Kunde inte radera modellen {name}: {e}"))?;
+                    }
+                } else {
+                    fs::remove_file(&path)
+                        .map_err(|e| format!("Kunde inte radera modellfilen {name}: {e}"))?;
+                }
+            }
+        }
+    }
+
+    if delete_vocab {
+        let _ = fs::remove_file(app_data_dir.join("ordlistor.json"));
+        let _ = fs::remove_file(app_data_dir.join("ordlistor.json.skadad"));
+        let _ = fs::remove_file(app_data_dir.join("ordlistor.json.tmp"));
+    }
+
+    if delete_recordings {
+        let base = match recording_dir.as_deref() {
+            Some(p) if !p.is_empty() => PathBuf::from(p),
+            _ => default_recording_dir(&app_handle)?,
+        };
+        if base.is_dir() {
+            let _ = delete_all_recordings(base.to_string_lossy().into_owned()).await?;
+        }
+    }
+
+    if delete_logs {
+        crate::logging::clear_logs(&app_handle);
+    } else {
+        log_line(&format!(
+            "reset_application: models={delete_models}, vocab={delete_vocab}, recordings={delete_recordings}"
+        ));
+    }
+
+    Ok(())
 }
 

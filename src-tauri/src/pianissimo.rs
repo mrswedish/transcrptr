@@ -398,6 +398,48 @@ fn mel_to_hz(mel: f64) -> f64 {
     }
 }
 
+struct MelFrontend {
+    window: [f64; 512],
+    /// Gles (sparse) filterbank per mel-band: (start_bin, vikter).
+    /// Varje triangelfilter är bara nollskilt på ~2–15 av 257 frekvensband.
+    sparse_banks: Vec<(usize, Vec<f32>)>,
+}
+
+fn mel_frontend() -> &'static MelFrontend {
+    static FRONTEND: std::sync::OnceLock<MelFrontend> = std::sync::OnceLock::new();
+    FRONTEND.get_or_init(|| {
+        let top = hz_to_mel(8000.0);
+        let edges: Vec<f64> = (0..130).map(|i| mel_to_hz(top * i as f64 / 129.0)).collect();
+        let mut sparse_banks = Vec::with_capacity(128);
+        for band in 0..128 {
+            let mut first = None;
+            let mut weights = Vec::new();
+            for bin in 0..257 {
+                let freq = bin as f64 * 16000.0 / 512.0;
+                let tri = ((freq - edges[band]) / (edges[band + 1] - edges[band]))
+                    .min((edges[band + 2] - freq) / (edges[band + 2] - edges[band + 1]))
+                    .max(0.0);
+                let w = (tri as f32 as f64 * 2.0 / (edges[band + 2] - edges[band])) as f32;
+                if w > 0.0 {
+                    if first.is_none() {
+                        first = Some(bin);
+                    }
+                    weights.push(w);
+                } else if first.is_some() {
+                    break;
+                }
+            }
+            sparse_banks.push((first.unwrap_or(0), weights));
+        }
+
+        let mut window = [0.0_f64; 512];
+        for i in 0..400 {
+            window[i + 56] = 0.5 - 0.5 * (2.0 * std::f64::consts::PI * i as f64 / 399.0).cos();
+        }
+        MelFrontend { window, sparse_banks }
+    })
+}
+
 /// Returnerar (features [128 x frames] row-major, frames, valid)
 fn extract_features(audio: &[f32]) -> Result<(Vec<f32>, usize, usize)> {
     if audio.len() < 512 || audio.len() > MAX_PASS {
@@ -412,31 +454,17 @@ fn extract_features(audio: &[f32]) -> Result<(Vec<f32>, usize, usize)> {
         emphasized[i + 256] = s - 0.97 * if i == 0 { 0.0 } else { audio[i - 1] };
     }
 
-    let top = hz_to_mel(8000.0);
-    let edges: Vec<f64> = (0..130).map(|i| mel_to_hz(top * i as f64 / 129.0)).collect();
-    let mut banks = vec![0.0_f32; 128 * 257];
-    for band in 0..128 {
-        for bin in 0..257 {
-            let freq = bin as f64 * 16000.0 / 512.0;
-            let tri = ((freq - edges[band]) / (edges[band + 1] - edges[band]))
-                .min((edges[band + 2] - freq) / (edges[band + 2] - edges[band + 1]))
-                .max(0.0);
-            banks[band * 257 + bin] =
-                (tri as f32 as f64 * 2.0 / (edges[band + 2] - edges[band])) as f32;
-        }
-    }
+    let fe = mel_frontend();
+    const LOG_FLOOR: f32 = f32::from_bits(0x3380_0000); // exakt 2.0_f32.powi(-24)
 
-    let mut window = [0.0_f64; 512];
-    for i in 0..400 {
-        window[i + 56] = 0.5 - 0.5 * (2.0 * std::f64::consts::PI * i as f64 / 399.0).cos();
-    }
     let fft = FftPlanner::<f64>::new().plan_fft_forward(512);
     let mut buffer = vec![Complex::new(0.0_f64, 0.0); 512];
     let mut scratch = vec![Complex::new(0.0_f64, 0.0); fft.get_inplace_scratch_len()];
     let mut features = vec![0.0_f32; 128 * frames];
     for frame in 0..valid {
+        let base = frame * HOP;
         for i in 0..512 {
-            buffer[i] = Complex::new(emphasized[frame * HOP + i] as f64 * window[i], 0.0);
+            buffer[i] = Complex::new(emphasized[base + i] as f64 * fe.window[i], 0.0);
         }
         fft.process_with_scratch(&mut buffer, &mut scratch);
         let mut spectrum = [0.0_f32; 257];
@@ -444,9 +472,13 @@ fn extract_features(audio: &[f32]) -> Result<(Vec<f32>, usize, usize)> {
             let m = buffer[i].norm() as f32;
             spectrum[i] = m * m;
         }
-        for band in 0..128 {
-            let power: f32 = (0..257).map(|b| spectrum[b] * banks[band * 257 + b]).sum();
-            features[band * frames + frame] = (power + 2.0_f32.powi(-24)).ln();
+        for (band, (start_bin, weights)) in fe.sparse_banks.iter().enumerate() {
+            let power: f32 = spectrum[*start_bin..*start_bin + weights.len()]
+                .iter()
+                .zip(weights.iter())
+                .map(|(s, w)| s * w)
+                .sum();
+            features[band * frames + frame] = (power + LOG_FLOOR).ln();
         }
     }
     for band in features.chunks_mut(frames) {
@@ -456,8 +488,9 @@ fn extract_features(audio: &[f32]) -> Result<(Vec<f32>, usize, usize)> {
         } else {
             0.0
         };
+        let inv_std = 1.0 / (var.sqrt() + 1e-5);
         for v in &mut band[..valid] {
-            *v = (*v - mean) / (var.sqrt() + 1e-5);
+            *v = (*v - mean) * inv_std;
         }
     }
     Ok((features, frames, valid))
