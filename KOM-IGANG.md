@@ -42,7 +42,7 @@ Kryssa i **Identifiera talare** *innan* du transkriberar. Första gången hämta
 ![Transkript med talare](docs/img/transkript.png)
 
 - **Rätta:** klicka på en rad (eller tryck Enter när den är markerad), skriv, och tryck Esc när du är klar.
-- **Lyssna:** klicka på en tidsstämpel (till exempel `0:21`) för att hoppa dit i inspelningen.
+- **Lyssna:** klicka på en tidsstämpel (till exempel `0:17`) för att hoppa dit i inspelningen.
 - **Sök och ersätt:** tryck **Ctrl+F**.
 - **Spara:** **Kopiera** lägger texten i urklipp, **Spara text** skapar en `.txt`-fil.
 
