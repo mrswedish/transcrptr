@@ -1,6 +1,6 @@
 # Privacy Policy — Transcrptr
 
-**Last updated:** 2026-03-04
+**Last updated:** 2026-11-10
 
 ## Overview
 
@@ -15,13 +15,14 @@ Specifically:
 - **Audio data** — All audio recordings and uploaded files are processed locally using on-device AI models. Audio never leaves your computer.
 - **Transcription results** — All transcribed text remains on your device. Saving transcriptions to file is an explicit user action, stored only to a location you choose.
 - **Settings and preferences** — Model size, language, and microphone preferences are stored locally in the application's browser storage (localStorage). These are never transmitted externally.
-- **AI models** — Language models are downloaded once from [Hugging Face](https://huggingface.co/KBLab) and cached locally on your device. No user data is sent during this download.
+- **AI models** — Language models (and, if you enable speaker identification, two small speaker models) are downloaded once from [Hugging Face](https://huggingface.co) and cached locally on your device. No user data is sent during this download.
+- **Word lists** — Personal word lists are stored locally in a file (`ordlistor.json`) in the application's data directory. They are never transmitted.
 
 ## Network Usage
 
 Transcrptr connects to the internet **only** for:
 
-1. **Downloading AI models** — A one-time download of the selected speech recognition model from Hugging Face. No user data or identifiers are included in this request.
+1. **Downloading AI models** — A one-time download of the selected speech recognition model from Hugging Face, and optionally of the speaker identification models (about 33 MB). No user data or identifiers are included in these requests.
 
 No other network connections are made. Transcrptr functions fully offline after the initial model download.
 
@@ -35,6 +36,8 @@ All application data is stored locally on your device:
 
 - **AI models** — Stored in the application's data directory
 - **User settings** — Stored in localStorage (browser storage)
+- **Word lists** — Stored in `ordlistor.json` in the application's data directory
+- **Audio recordings** — Saved as session folders in the recording folder you choose (default: next to the application file)
 - **Transcriptions** — Only saved when you explicitly export to a `.txt` file
 
 No cloud storage or remote databases are used.

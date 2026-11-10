@@ -34,7 +34,7 @@ Standardmodellen **Snabbast** är [Pianissimo](https://klang.ai/pianissimo-sv/) 
 
 ## ✨ Funktioner
 - **🔒 Integritet:** Ditt ljud stannar på din dator. Inget skickas till externa servrar. [Integritetspolicy](PRIVACY.md)
-- **⚡ Hårdvaruaccelererad:** Vulkan (Windows) och Metal (Mac) utnyttjar din GPU för snabbare transkribering. Kan stängas av för äldre grafikkort.
+- **⚡ Snabbt på vanliga datorer:** Standardmodellen Pianissimo går på processorn och behöver inget grafikkort. Whisper-modellerna kan dessutom använda grafikkortet (Vulkan på Windows), vilket kan stängas av för äldre grafikkort.
 - **🎙️ Mötesinspelning (Windows):** Spela in både mikrofon och datorljud från t.ex. Teams/Zoom — via WASAPI Endpoint Loopback (fungerar från Windows 7) eller Stereo Mix (se guide nedan).
 - **🔌 Fungerar helt offline:** Inget hämtas från internet vid start — allt utseende och alla typsnitt finns i programmet. Endast modellnedladdning kräver nätverk, och den sker bara en gång.
 - **💽 Automatisk sparning till disk:** Allt inspelat material streamas direkt till en tidsstämplad sessionsmapp (`inspelning-...`) under inspelningens gång — skyddar mot dataförlust vid krasch eller strömavbrott. Efter stopp visas sökvägen till mappen direkt i appen (klicka för att öppna i Utforskaren).
@@ -61,74 +61,78 @@ Windows är det stödda målet. Inspelning och mötesljud fungerar bara i Window
 
 ## 📦 Välj rätt modell
 
-Byt modell via **kugghjulet** (⚙️) i appen. Välj storlek, stil och format — ladda ner flera och byt med ett klick.
+Byt modell under **Inställningar → Modell**. Där finns fyra färdiga val, och du kan ladda ner flera och byta med ett klick.
 
-### KB-whisper (svenska)
+| Val i appen | Modell | Storlek | Språk | Passar för |
+|---|---|---|---|---|
+| **Snabbast** *(förvalt)* | Pianissimo | ~0,7 GB | Svenska | De flesta möten på vanliga datorer |
+| **Snabbare** | KB-whisper Medium | ~0,9 GB | Svenska | Bra kvalitet med stöd för markering av osäkra ord |
+| **Bästa kvalitet** | KB-whisper Large | ~2,0 GB | Svenska | Mest exakt, men tar betydligt längre tid |
+| **Flera språk** | Whisper Large-v3-Turbo | ~1,5 GB | 100+ språk | Engelska facktermer, blandspråk, internationella möten |
 
-Specialtränad på 50 000+ timmar av svenskt tal — bäst val för svenska inspelningar.
-
-| Modell | Format | Storlek | Hastighet | Kvalitet |
-|--------|--------|---------|-----------|----------|
-| **Medium** *(rekommenderas)* | Standard | ~1.5 GB | ⚡⚡ | Mycket bra |
-| **Medium** *(rekommenderas)* | **q5_0 ✓** | ~900 MB | ⚡⚡ | Mycket bra |
-| **Large** | Standard | ~3.0 GB | ⚡ | Bäst |
-| **Large** | **q5_0 ✓** | ~2.0 GB | ⚡ | Bäst |
-
-> [!TIP]
-> **q5_0 rekommenderas** — 40% mindre filstorlek med i princip identisk kvalitet.
-
-### Whisper Turbo (flerspråkig)
-
-OpenAIs officiella large-v3-turbo-modell från [ggerganov/whisper.cpp](https://huggingface.co/ggerganov/whisper.cpp). Välj Turbo när du transkriberar på flera språk, blandar svenska med facktermer på engelska, eller när hastighet är viktigare än maximal noggrannhet på svenska.
-
-| Modell | Format | Storlek | Hastighet | Språk |
-|--------|--------|---------|-----------|-------|
-| **Large-v3-Turbo** | q8_0 | ~1.5 GB | ⚡⚡⚡ | 100+ språk |
-
-> [!NOTE]
-> KB-whisper slår Turbo på ren svenska. Välj Turbo för blandspråkigt innehåll eller internationella möten.
-
-### Identifiera talare (valfritt)
-
-Kryssrutan **Identifiera talare** märker vem som säger vad ("Talare 1", "Talare 2", …). Talarna kan döpas om genom att klicka på rubriken, och namnen följer med vid kopiering och sparande. Funktionen använder [speakrs](https://github.com/avencera/speakrs), en Rust-version av pyannotes community-1-pipeline, och körs på processorn utan grafikkort. Två små modeller (ca 33 MB) hämtas från huggingface.co första gången kryssrutan används; därefter fungerar den helt utan internet. Det tar några minuter extra per timme ljud.
+Första gången appen startar hämtas **Snabbast** automatiskt. Är språket engelska eller automatiskt (under Inställningar → Språk) används en nedladdad Whisper-modell i stället, eftersom Pianissimo bara kan svenska.
 
 ### Pianissimo — "Snabbast" (svenska, standardval)
 
-[Pianissimo](https://klang.ai/pianissimo-sv/) från Klang AI är en svensk taligenkänningsmodell (finjusterad NVIDIA Parakeet TDT 0.6B) som körs via ONNX Runtime **på processorn** – inget grafikkort behövs. Standardmodell från och med v1.8.0 och avsedd att gå snabbare än Whisper på vanliga datorer. Nackdelar: bara svenska, ingen ordnivå-markering av osäkra ord, och något högre felfrekvens än KB-whisper large på Klangs egna tester. Är språket engelska eller automatiskt används i stället en nedladdad Whisper-modell.
+[Pianissimo](https://klang.ai/pianissimo-sv/) från Klang AI är en svensk taligenkänningsmodell (finjusterad NVIDIA Parakeet TDT 0.6B) som körs via ONNX Runtime **på processorn** — inget grafikkort behövs. Standardmodell från och med v1.8.0 och avsedd att gå snabbare än Whisper på vanliga datorer. På en 27 minuter lång inspelning tog transkriberingen ca 2 minuter på en arbetslaptop (Ryzen).
 
-| Modell | Format | Storlek | Språk |
-|--------|--------|---------|-------|
-| **Pianissimo** | int8 (ONNX) | ~0.7 GB | Svenska |
+**Nackdelar:** bara svenska, ingen ordnivå-markering av osäkra ord, och något högre felfrekvens än KB-whisper Large i Klangs egna tester. Kräver Microsofts VC++-runtime, som finns på praktiskt taget alla Windows-datorer.
 
 Modellvikterna licensieras under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) (Klang AI, baserad på NVIDIA Parakeet TDT 0.6B v3). Förbehandling och avkodning följer den MIT-licensierade referensimplementationen i [Avskrift](https://github.com/Pluggentipsar/avskrift). Se `NOTICE`.
 
-### Stil (KB-whisper)
+### KB-whisper — "Snabbare" och "Bästa kvalitet" (svenska)
 
-| Stil | Passar för | Beskrivning |
-|------|-----------|-------------|
-| **Standard** *(standard)* | Generellt bruk | Balanserat transkript — bra för de flesta användningsfall |
-| **Ordagrann** | Diktering, protokoll | Mer verbalt transkript som följer det talade nära |
+[KB-whisper](https://huggingface.co/KBLab/kb-whisper-small) från Kungliga biblioteket, specialtränad på 50 000+ timmar svenskt tal. Alla modeller hämtas i formatet **q5_0**, som är ca 40 % mindre än standardformatet med i princip identisk kvalitet.
 
-> [!NOTE]
-> Välj stil i inställningarna innan nedladdning. Varje kombination av storlek + stil är en separat modell. Turbo har ingen stilvariant.
+| Modell | Storlek | Hastighet | Kvalitet |
+|--------|---------|-----------|----------|
+| **Medium** (*Snabbare*) | ~0,9 GB | ⚡⚡ | Mycket bra |
+| **Large** (*Bästa kvalitet*) | ~2,0 GB | ⚡ | Bäst |
 
-## 🎙️ Spela in möten — Systemljud (Windows)
+Välj **Ordagrann utskrift** i inställningarna innan nedladdning om du vill ha ett verbalt transkript som följer det talade nära (diktering, protokoll). Utan kryss städas texten lätt. Varje kombination av storlek och stil är en separat modell. Ordagrann utskrift finns inte för Flera språk.
 
-Det finns två sätt att spela in både mikrofon och datorns systemljud (Teams, Zoom, Spotify m.fl.):
+### Whisper Turbo — "Flera språk"
 
-| | **Spela in systemljud** *(WASAPI Loopback)* | **Stereo Mix** *(Windows-funktion)* |
+OpenAIs officiella large-v3-turbo-modell (q8_0) från [ggerganov/whisper.cpp](https://huggingface.co/ggerganov/whisper.cpp). Välj den när du transkriberar på flera språk, blandar svenska med engelska facktermer, eller när hastighet är viktigare än maximal noggrannhet på svenska. KB-whisper slår Turbo på ren svenska.
+
+## 👥 Identifiera talare (valfritt)
+
+Kryssrutan **Identifiera talare** i huvudfönstret märker vem som säger vad ("Talare 1", "Talare 2", …). Klicka på en talarrubrik för att döpa om talaren, och namnen följer med vid kopiering och sparande.
+
+- **Lokalt:** funktionen använder [speakrs](https://github.com/avencera/speakrs), en Rust-version av pyannotes community-1-pipeline, och körs på processorn utan grafikkort.
+- **Modeller:** två små modeller (ca 33 MB) hämtas från huggingface.co första gången kryssrutan används. Därefter fungerar den helt utan internet.
+- **Tid:** det tar några minuter extra per timme ljud (ca 4 minuter för 27 minuter ljud på en Ryzen-laptop). En förloppsrad visar hur långt det har kommit.
+- **Begränsning:** avbryt fungerar inte under själva talaridentifieringen.
+
+## 📝 Ordlistor
+
+Under **Inställningar → Ordlistor** kan du skapa flera ordlistor, till exempel en per avdelning. Efter transkriberingen rättas liknande felhörningar automatiskt, oavsett modell. Rättar du ett ord i texten kan du lägga till det i ordlistan med ett klick.
+
+```text
+Qulturum                      ← liknande stavningar rättas, även med ändelse (Kulturumet → Qulturumet)
+Kulturum => Qulturum          ← exakt felstavning som ska bli rätt ord
+=Qulturum                     ← bara exakt träff, inga liknande ord
+```
+
+Listorna ligger i filen `ordlistor.json` i appens datamapp, så de kan säkerhetskopieras.
+
+## 🎙️ Spela in möten — Mötesljud (Windows)
+
+Det finns två sätt att spela in både din mikrofon och datorns ljud (Teams, Zoom, Spotify m.fl.):
+
+| | **Spela in mötesljud** *(WASAPI Loopback)* | **Stereo Mix** *(Windows-funktion)* |
 |---|---|---|
-| **Kräver inställning** | Nej | Ja (engångsinställning) |
+| **Kräver inställning i Windows** | Nej | Ja (engångsinställning) |
 | **Windows-version** | Windows 7+ | Alla versioner |
 | **Välj mikrofon i appen** | Ja | Nej (styrs av Windows) |
-| **Systemljud** | Ja | Ja |
+| **Datorns ljud** | Ja | Ja |
 | **Drivrutinsstöd** | Oberoende av hårdvara | Beror på ljudkortet |
 
-### Alternativ 1: Spela in systemljud (rekommenderas)
+### Alternativ 1: Spela in mötesljud (rekommenderas)
 
-Aktivera **"Spela in systemljud"** i inställningarna (⚙️). Transkribera använder **klassisk WASAPI Endpoint Loopback** för att fånga datorns systemljud digitalt — oberoende av hårdvara och drivrutiner.
+Kryssa i **Spela in mötesljud** i huvudfönstret, intill mikrofonvalet, innan du trycker **Spela in**. Det är inte en inställning i kugghjulsmenyn. Transkribera använder **klassisk WASAPI Endpoint Loopback** för att fånga datorns ljud digitalt — oberoende av hårdvara och drivrutiner.
 
-**Hur det fungerar:** Transkribera lyssnar automatiskt på Windows standardljudenhet (t.ex. hörlurar eller högtalare) **och** på kommunikationsenheten (den enhet Teams, Zoom m.fl. använder). Om de är olika enheter — t.ex. Jabra Speak för möten men inbyggda högtalare för övrigt — fångas båda och mixas automatiskt. Under inspelning visas en <span style="color:red">●</span> röd pulserande punkt i inspelningsindikatorn som bekräftar att systemljudet spelas in.
+**Hur det fungerar:** Transkribera lyssnar automatiskt på Windows standardljudenhet (t.ex. hörlurar eller högtalare) **och** på kommunikationsenheten (den enhet Teams, Zoom m.fl. använder). Om de är olika enheter — t.ex. Jabra Speak för möten men inbyggda högtalare för övrigt — fångas båda och mixas automatiskt. Under inspelning står **Mötesljud med** i inspelningsraden, vilket bekräftar att datorns ljud spelas in. Är rutan inte ikryssad visas en påminnelse om att bara din egen mikrofon spelas in.
 
 > [!NOTE]
 > Fungerar från Windows 7 och uppåt — inget behov av en specifik Windows-version.
@@ -138,7 +142,7 @@ Aktivera **"Spela in systemljud"** i inställningarna (⚙️). Transkribera anv
 
 ### Alternativ 2: Stereo Mix (alternativ metod)
 
-Stereo Mix är en virtuell Windows-enhet som fångar allt systemljud och mixar det med valfri mikrofon. Kräver en engångsinställning i Windows.
+Stereo Mix är en virtuell Windows-enhet som fångar allt systemljud och mixar det med valfri mikrofon. Kräver en engångsinställning i Windows. En guide med steg finns också i appen under **Inställningar → Inspelningar → Hjälp med mötesljud**.
 
 1. **Öppna ljudinställningar:** Högerklicka på ljudikonen i aktivitetsfältet → välj **"Ljudinställningar"**.
 2. **Hitta detaljerade steg:** Scrolla längst ner och klicka på **"Mer ljudinställningar"** (viktigt för Windows 11).
@@ -151,7 +155,7 @@ Stereo Mix är en virtuell Windows-enhet som fångar allt systemljud och mixar d
 > Starta alltid mötet och se till att ljud spelas **innan** du trycker Spela in i Transkribera.
 
 > [!NOTE]
-> Syns inte Stereo Mix? Din dators ljudkort saknar stöd för det. Använd "Spela in systemljud" istället.
+> Syns inte Stereo Mix? Din dators ljudkort saknar stöd för det. Använd **Spela in mötesljud** i stället.
 
 ## 📥 Ladda ner och installera (Windows)
 
@@ -159,19 +163,21 @@ Gå till [Releases](https://github.com/mrswedish/transcrptr/releases) för senas
 
 ### Om transkriberingen kraschar
 
+Pianissimo ("Snabbast") använder inte grafikkortet, så det här gäller bara **Whisper-modellerna** (Snabbare, Bästa kvalitet och Flera språk). Det enklaste är då att byta till **Snabbast** under Inställningar → Modell.
+
 På datorer med **flera grafikkort eller en NPU** (t.ex. laptop med Intel Arc + NVIDIA, eller Intel AI Boost) kan Vulkan välja "fel" grafikkort och appen kraschar tyst när transkriberingen startar. Workaround:
 
-1. Öppna **Inställningar** (kugghjulet)
-2. Ange ett **GPU-index** under GPU-acceleration: testa `0`, sedan `1`, sedan `2` osv tills transkriberingen fungerar — detta tvingar whisper att bara använda just det grafikkortet
-3. Om inget GPU-index fungerar: sänk **CPU-trådar för transkribering** till **4** och stäng av växeln **GPU-acceleration** — det är långsammare men ska INTE krascha
+1. Öppna **Inställningar → Avancerat**.
+2. Ange ett **GPU-index** under GPU-acceleration: testa `0`, sedan `1`, sedan `2` osv tills transkriberingen fungerar — detta tvingar Whisper att bara använda just det grafikkortet.
+3. Om inget GPU-index fungerar: sänk **CPU-trådar för Whisper** till **4** och stäng av **GPU-acceleration** — det är långsammare men ska inte krascha.
 
-Om problemet kvarstår: öppna **Inställningar → Öppna loggfil** och skicka loggens innehåll för diagnostik.
+Om problemet kvarstår: öppna **Inställningar → Avancerat → Öppna loggfil** och skicka loggens innehåll för diagnostik.
 
 ### Mapp för inspelningar
 
-Sökvägen i **Inställningar → Mapp för inspelningar** används både som **streamningsmapp** under inspelning OCH som plats för den färdiga `recording.wav`. Som standard används mappen där `Transkribera-portable.exe` ligger (vanligen din Downloads-mapp), eftersom företagsdatorer ofta GP-redirectar Documents till en nätverksdisk vilket gör nätverksdisk-skrivningar långsamma och riskabla under långa inspelningar.
+Sökvägen under **Inställningar → Inspelningar → Mapp** används både som **streamningsmapp** under inspelning och som plats för den färdiga `recording.wav`. Varje inspelning får en egen undermapp (`inspelning-ÅÅÅÅMMDD-TTMMSS`). Som standard används mappen `Transkribera-Inspelningar` bredvid `Transkribera-portable.exe` (vanligen i din Downloads-mapp), eftersom företagsdatorer ofta omdirigerar Documents till en nätverksdisk, vilket gör skrivningar där långsamma och riskabla under långa inspelningar.
 
-**Tips:** Välj alltid en lokal mapp (t.ex. `C:\Users\<dittnamn>\Downloads`) — undvik UNC-paths (`\\server\...`) eftersom mid-recording-skrivningar mot nätverksdisk kan hänga och tappa hela inspelningen.
+**Tips:** Välj alltid en lokal mapp (t.ex. `C:\Users\<dittnamn>\Downloads`) — undvik UNC-paths (`\\server\...`) eftersom skrivningar mot nätverksdisk under pågående inspelning kan hänga och tappa hela inspelningen.
 
 **Öppna en gammal eller avbruten inspelning:** Klicka **Öppna** i appens överkant. Där ligger en lista över dina senaste inspelningar; välj en så öppnas den. Inspelningar som avbröts (till exempel om appen kraschade) är markerade och återställs automatiskt när du öppnar dem — råspåren mixas ihop till en spelbar inspelning. Vid start visar appen också en rad om den hittar en avbruten inspelning.
 
@@ -195,21 +201,25 @@ På vissa Windows-versioner kan filer laddade från internet blockeras. Om appen
 
 ## 🏗️ Teknisk arkitektur
 
-Transkribera bygger på **Tauri 2** — en Rust-backend kombinerad med ett webbfrontend. All tung bearbetning sker i Rust; webbvyn hanterar enbart UI.
+Transkribera bygger på **Tauri 2** — en Rust-backend kombinerad med ett webbfrontend. All tung bearbetning sker i Rust; webbvyn hanterar enbart gränssnittet.
 
 ### Kärnkomponenter
 
 | Komponent | Teknologi | Roll |
 |-----------|-----------|------|
 | **Desktop-ram** | Tauri 2 (Rust) | Fönsterhantering, IPC-brygga, systemdialog |
-| **Transkribering** | whisper-rs / whisper.cpp | C++-optimerad Whisper-inferens |
-| **GPU-acceleration** | Metal (Mac) / Vulkan (Windows) | Hårdvaruaccelererad modellkörning |
-| **Ljudavkodning (fil)** | Symphonia (Rust) | Avkodar MP3, M4A/AAC, WAV, OGG, FLAC utan JS-heap |
-| **Ljudavkodning (mic)** | Web Audio API | Avkodar MediaRecorder-output för Mac-mikrofon |
-| **Mikrofon (inspelning)** | cpal (Rust) + MediaRecorder | Rust fångar mic via WASAPI/CoreAudio; browser komplettar |
-| **Systemljud (Windows)** | WASAPI Endpoint Loopback | Fångar eConsole + eCommunications, mixas i Rust |
-| **WAV-kodning** | hound (Rust) | Skriver 16-bit PCM WAV direkt till disk |
-| **Frontend** | Vanilla JS + Tailwind CSS | Snabb, beroendefri UI |
+| **Motor: Pianissimo** | `ort` (ONNX Runtime) + egen Rust-kod | FastConformer/TDT-modell på CPU. ONNX Runtime laddas dynamiskt från en inbäddad `onnxruntime.dll`. Log-mel-features och TDT-avkodning är skrivna i Rust (`pianissimo.rs`) |
+| **Motor: Whisper** | whisper-rs / whisper.cpp | C++-optimerad Whisper-inferens (Vulkan på Windows) |
+| **Motorgränssnitt** | `Engine`-trait (`engine.rs`) | Gemensam chunk-loop för båda motorerna |
+| **Talaridentifiering** | speakrs (lokal kopia i `src-tauri/vendor/`) | pyannote community-1-pipelinen i ren Rust på CPU |
+| **Ordlistor** | `vocabulary.rs` | Lagring i `ordlistor.json` och efterkorrigering av transkriptet |
+| **Ljudavkodning (fil)** | Symphonia (Rust) | Avkodar MP3, M4A/AAC, WAV, OGG, FLAC strömmande, utan JS-heap |
+| **Mikrofon (inspelning)** | Webbläsarens `getUserMedia` + AudioWorklet | Mikrofonljudet skickas som rå binär f32-data till Rust (`append_mic_chunk`) |
+| **Mötesljud (Windows)** | WASAPI Endpoint Loopback | Fångar eConsole + eCommunications, skrivs direkt till disk i Rust |
+| **WAV-kodning** | hound (Rust) | Skriver 16-bit PCM-WAV direkt till disk |
+| **Frontend** | Vanilla JS + Tailwind CSS 3 | Beroendefritt UI med lokala typsnitt (IBM Plex) och inbyggda ikoner |
+
+Inställningar sparas i webbläsarens `localStorage`; ordlistor ligger i en egen fil. Se den [tekniska dokumentationen](TEKNISK-DOKUMENTATION.md) för var data lagras.
 
 ### Minneshantering och Windows-optimeringar
 
@@ -218,20 +228,15 @@ WebView2 (Chromium-motorn i Tauri på Windows) kan inte allokera stora sammanhä
 Transkribera löser detta genom att flytta all tung bearbetning till Rust:
 
 **Filimport — Rust-side avkodning med Symphonia:**
-- JS skickar enbart filsökvägen (en sträng) till Rust via Tauri-kommandot `transcribe_file`
-- Rust avkodar filen med Symphonia, resamplar till 16 kHz mono och delar upp i 5-minuters-chunks
-- Whisper-inferens sker direkt på varje chunk i Rust — JS-heap belastas aldrig med audiodata
-- Minnespeak: ~19 MB per chunk, oavsett fillängd
+- JS skickar enbart filsökvägen (en sträng) till Rust via Tauri-kommandot `transcribe_file`.
+- Rust avkodar filen med Symphonia, resamplar till 16 kHz mono (med lågpassfilter vid 7 kHz mot aliasing) och delar upp i 5-minuters-chunks.
+- Motorn transkriberar varje chunk direkt i Rust — JS-heapen belastas aldrig med ljuddata.
+- Minnespeak: ~19 MB per chunk, oavsett fillängd. Den valfria talaridentifieringen läser därefter in hela ljudet en gång (ca 230 MB per timme).
 
-**IPC-optimering — 16-bit PCM:**
-- Ljud skickas som 16-bit PCM (i16) över Tauri IPC-bryggan, inte 32-bit float
-- Halverar nyttolaststorleken: ~25 MB per 5-min-chunk istället för ~50 MB
-- Whisper.cpp använder 16-bit internt — ingen kvalitetsförlust
-
-**WASAPI-inspelning — omedelbar dialog och effektivt sparande:**
-- Vid inspelningsstopp lagrar Rust det mixade ljudet i minnet (`recorded_samples`) och returnerar omedelbart
-- Dialogen "Transkribera / Spara" visas direkt — JS-mix körs asynkront i bakgrunden
-- Sparande via "Spara inspelning" läser direkt från `recorded_samples` i Rust (`save_audio_file`) utan IPC-transfer — filväljaren öppnas omedelbart
+**Inspelning — direkt till disk:**
+- Allt inspelat material streamas till en sessionsmapp (`inspelning-…`) medan du spelar in, så inget går förlorat vid en krasch.
+- Mikrofonen skrivs till `mic.wav`, mötesljudet till `lb_console.wav` och `lb_comms.wav`. När du stoppar mixas spåren ihop till `recording.wav`.
+- Avbryts en inspelning mixas råspåren ihop när du öppnar den i listan över senaste inspelningar.
 
 ### Dataflöde — filimport
 
@@ -242,46 +247,56 @@ Fil på disk (MP3 / M4A / WAV / OGG / FLAC / …)
   │
   ▼  Rust: delar upp i 5-min-chunks (~19 MB/st)
   │
-  ▼  Rust: whisper.cpp transkriberar chunk för chunk
-  │        (cancel_flag kontrolleras mellan varje chunk)
+  ▼  Rust: vald motor (Pianissimo eller Whisper) transkriberar chunk för chunk
+  │        (avbrytflaggan kontrolleras mellan varje chunk)
   │
-  ▼  JS: tar emot segmentlista [{start_ms, end_ms, text, tokens}]
+  ▼  Rust: ordlistorna rättar texten
   │
-  ▼  UI: visar transkribering + segmentredigerare
+  ▼  Rust (valfritt): speakrs märker talare och tilldelar dem till segmenten
+  │
+  ▼  JS: tar emot segmentlista [{startMs, endMs, text, tokens, speakerId}]
+  │
+  ▼  UI: visar transkribering + segmentredigerare + spelare
 ```
 
-### Dataflöde — WASAPI-inspelning (Windows)
+### Dataflöde — inspelning (Windows)
 
 ```
-Mikrofon ──► cpal / WASAPI ──────────────────► Rust mic-buffer
-                                                        │
-Systemljud ► WASAPI Endpoint Loopback ────────► Rust loopback-buffer(ar)
-                                                        │
-                                stop_recording(): mix + resample → recorded_samples
-                                                        │
-                                      ┌─────────────────┴──────────────────────┐
-                                      │                                         │
-                            "Spara inspelning"                       "Transkribera"
-                                      │                                         │
-                            save_audio_file()                  decodeWasapiMix() (JS, asynkront)
-                            Rust läser recorded_samples         → Float32Array → chunks → whisper
-                            och visar filväljare direkt
+Mikrofon ──► getUserMedia + AudioWorklet ──► append_mic_chunk ──► mic.wav
+                                                                       │
+Mötesljud ─► WASAPI Endpoint Loopback ─────────────────────► lb_console.wav / lb_comms.wav
+                                                                       │
+                                  stopp: mix + resample ───────────────┘
+                                                      │
+                                                recording.wav
+                                                      │
+                                ┌─────────────────────┴───────────────────┐
+                                │                                         │
+                        "Spara för senare"                       "Transkribera nu"
+                        (ligger kvar på disk,                    transcribe_file(recording.wav)
+                         syns i Öppna)
 ```
 
 ## 🛠️ Bygga från källkod
 
 ### Förutsättningar
 - [Node.js](https://nodejs.org/) (v20+)
-- [Rust](https://www.rust-lang.org/tools/install)
-- [CMake](https://cmake.org/)
+- [Rust](https://www.rust-lang.org/tools/install) 1.89 eller senare
+- [CMake](https://cmake.org/) (för whisper.cpp)
+- **Windows:** Visual Studio Build Tools (C++) och [Vulkan SDK](https://vulkan.lunarg.com/)
 
-### Kom igång
+### Köra i utvecklingsläge
 ```bash
 git clone https://github.com/mrswedish/transcrptr.git
 cd transcrptr
 npm install
 npm run tauri dev
 ```
+
+`npm run build:css` bygger stilarna (körs automatiskt av Tauri). Rust-testerna körs med `cargo test` i `src-tauri/`.
+
+### Windows-bygge med Pianissimo
+Pianissimo laddar en inbäddad `onnxruntime.dll` (Microsofts ONNX Runtime 1.24.2). Release-bygget hämtar den, kontrollerar kontrollsumman och bygger med `--features embedded-ort`. Se `.github/workflows/build-windows.yml` för de exakta stegen.
 
 ## Tillgänglighet
 
