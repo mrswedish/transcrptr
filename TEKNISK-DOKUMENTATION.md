@@ -4,7 +4,7 @@ Underlag för IT-avdelning, förvaltare och utvecklingsenhet. Beskriver var data
 vilken nätverkstrafik som förekommer, vad som händer vid avinstallation och hur systemet är
 byggt.
 
-Avser **version 1.8.1** och **enbart Windows**. Uppgifterna är verifierade mot källkoden;
+Avser **version 2.2.0** och **enbart Windows**. Senast genomgången mot källkoden 2026-11-10;
 där en sökväg härleds ur Tauris API i stället för att vara hårdkodad anges det.
 
 - **Identifier:** `com.patriksvensk.transcrptr`
@@ -23,6 +23,7 @@ där en sökväg härleds ur Tauris API i stället för att vara hårdkodad ange
 | Automatisk uppdatering? | **Nej.** Appen kontrollerar aldrig efter nya versioner. |
 | Kräver administratörsrättigheter? | **Nej** för appen. Installationsformatet avgör (se §6). |
 | Fungerar utan internet? | **Ja**, fullständigt — efter att modellen laddats ned en gång. |
+| Särskilda beroenden? | **Visual C++-runtime** krävs för standardmotorn Pianissimo (se §9). Whisper-modellerna påverkas inte. |
 | Kodsignerad? | **Nej.** Se §8 — viktigaste åtgärdspunkten. |
 | Lämnar avinstallation spår? | **Ja.** Se §5 — flera GB kan bli kvar. |
 
@@ -42,7 +43,11 @@ Allt är **per användare**. Inget skrivs till maskingemensamma platser.
 
 | Vad | Sökväg | Storlek | Varför där |
 |---|---|---|---|
-| **Språkmodeller** | `%APPDATA%\com.patriksvensk.transcrptr\models\*.bin` | **0,9–3 GB per modell**, flera kan samexistera → **8+ GB möjligt** | Roaming-mappen är Tauris standard för applikationsdata. Modellerna är stora men användarspecifika. |
+| **Språkmodeller (Whisper)** | `%APPDATA%\com.patriksvensk.transcrptr\models\*.bin` | **0,9–3 GB per modell**, flera kan samexistera → **8+ GB möjligt** | Roaming-mappen är Tauris standard för applikationsdata. Modellerna är stora men användarspecifika. |
+| **Standardmodell (Pianissimo)** | `…\models\pianissimo-sv-int8\` | ca **0,7 GB** | Hämtas automatiskt vid första start. |
+| **ONNX Runtime** | `…\models\runtime\onnxruntime-1.24.2.dll` | några MB | Microsofts `onnxruntime.dll` ligger inbäddad i programfilen och packas upp hit första gången Pianissimo används. Se §8 om AppLocker/WDAC. |
+| **Talarmodeller** (valfria) | `…\models\diarization\` | ca **33 MB** | Hämtas först när användaren kryssar i "Identifiera talare". |
+| **Ordlistor** | `%APPDATA%\com.patriksvensk.transcrptr\ordlistor.json` | kB | En fil med alla ordlistor. Kan säkerhetskopieras. Se §3. |
 | **Loggfil** | `%LOCALAPPDATA%\com.patriksvensk.transcrptr\transcrptr.log` | kB–MB. **Ingen rotation — växer obegränsat** | Diagnostik. Ligger i Local eftersom den är maskinspecifik och inte bör roama. |
 | **Inställningar** (localStorage) | `%LOCALAPPDATA%\com.patriksvensk.transcrptr\EBWebView\Default\Local Storage\` | Några MB | WebView2:s egen lagring. Se §3. |
 | **Inspelningar** | Användarvald mapp, eller default bredvid programfilen: `<mapp med .exe>\Transkribera-Inspelningar\` | **~115 MB per timme** | Medvetet nära användaren och utanför AppData, så inspelningar inte raderas av misstag. |
@@ -72,16 +77,19 @@ Inställningar lagras i webbläsarens `localStorage`, fysiskt under WebView2:s d
 ```
 
 Följande nycklar sparas: `modelSize`, `modelRevision`, `modelQuantized`,
-`transcriptionLanguage`, `selectedMicId`, `wasapiEnabled`, `useGpu`, `personalVocabulary`,
+`transcriptionLanguage`, `selectedMicId`, `wasapiEnabled`, `useGpu`, `identifySpeakers`,
 `confidenceThreshold`, `recordingDir`, `threadCount`, `theme`, `gpuDeviceIndex`.
 
-**Två av dem kan innehålla känsliga uppgifter:**
+**Ordlistorna lagras inte här.** Från v2.1.0 ligger de i filen `ordlistor.json` i
+appens datamapp (`%APPDATA%\com.patriksvensk.transcrptr\`). En gammal `personalVocabulary`
+flyttas dit vid första start och raderas ur `localStorage`. Filen kan säkerhetskopieras.
+Den raderas vid avinstallation **bara** om kryssrutan "Delete application data" är ibockad
+(se §5).
 
-- **Ordlistor** — från v2.1.0 i filen `ordlistor.json` i appens datamapp
-  (`%APPDATA%\com.patriksvensk.transcrptr\`), inte längre i `localStorage` (en gammal
-  `personalVocabulary` flyttas dit vid första start och raderas ur `localStorage`). Innehåller
-  ofta verksamhetsspecifika termer, och kan innehålla personnamn, diagnoser eller interna
-  projektnamn. Filen kan säkerhetskopieras och tas inte bort vid avinstallation.
+**Känsliga uppgifter:**
+
+- **Ordlistorna** innehåller ofta verksamhetsspecifika termer och kan innehålla personnamn,
+  diagnoser eller interna projektnamn.
 - **`recordingDir`** — full sökväg, kan avslöja användarnamn och nätverksstruktur.
 
 Mappen `EBWebView` innehåller även WebView2:s cache och tas **inte** bort automatiskt vid
@@ -111,9 +119,11 @@ Pianissimo-filerna hämtas med fast revision och verifieras med SHA-256 efter ne
 
 **Frontend gör noll nätverksanrop.** Typsnitt och CSS är lokalt bundlade sedan v1.5.5.
 
-**Appen kan köras helt luftgapad.** IT kan för-deploya modellfilen till
-`%APPDATA%\com.patriksvensk.transcrptr\models\` och därefter blockera all nätverkstrafik för
-programmet.
+**Appen kan köras helt luftgapad.** IT kan för-deploya modellfilerna till
+`%APPDATA%\com.patriksvensk.transcrptr\models\` (mapparna `pianissimo-sv-int8\` och, vid
+behov, `diarization\`, samt Whisper-filerna) och därefter blockera all nätverkstrafik för
+programmet. Utan förinstallerad standardmodell försöker appen hämta Pianissimo vid första
+start.
 
 ### Behörigheter
 
@@ -125,16 +135,21 @@ programmet.
 | **Filsystem** | Skriv till AppData och inspelningsmapp | Vanlig användarbehörighet. |
 | **Administratör** | **Nej** | Appen begär aldrig förhöjda rättigheter. |
 
-Tauris behörighetsuppsättning är medvetet snäv: fönsterhantering, systemdialoger och
-"öppna sökväg i Utforskaren". **Filsystemspluginet är inte installerat** — JavaScript-lagret
+Tauris behörighetsuppsättning är medvetet snäv: Tauris grundbehörigheter, systemdialoger och
+"öppna sökväg i Utforskaren" (`core:default`, `dialog:default`, `opener:default`,
+`opener:allow-open-path`). **Filsystemspluginet är inte installerat** — JavaScript-lagret
 kan inte läsa eller skriva filer på egen hand; all filåtkomst går genom namngivna
 Rust-funktioner.
+
+**Uppspelning av inspelningen** sker via Tauris asset-protokoll. Dess tillåtna område är tomt
+(`"scope": []`); appen öppnar vid körning exakt **en fil åt gången**, den inspelning eller
+fil användaren själv valt, och bara för läsning (`allow_asset_path`).
 
 ### Systemljudsinspelning — vad den fångar
 
 Loopback-funktionen spelar in **allt ljud som spelas upp på datorn** — inklusive Teams- och
 Zoom-möten. Det är funktionens syfte, men värt att notera ur inspelningsjuridiskt perspektiv.
-Den är avstängd som standard och styrs av användaren via växeln "Mötesljud".
+Den är avstängd som standard och styrs av användaren via kryssrutan **Spela in mötesljud** i huvudfönstret.
 
 Appen lyssnar på två ljudutgångar samtidigt om standardenheten och kommunikationsenheten
 skiljer sig åt — vanligt när headset används för samtal och högtalare för övrigt.
@@ -153,7 +168,7 @@ Avinstalleraren visar en kryssruta **"Delete application data"**:
 
 | Kryssrutan | Resultat |
 |---|---|
-| **Ibockad** | AppData-mapparna tas bort: modeller, loggfil, inställningar (EBWebView) |
+| **Ibockad** | AppData-mapparna tas bort: modeller, ordlistor, loggfil, inställningar (EBWebView) |
 | **Ej ibockad** | Endast programfilerna tas bort. **Modeller på flera GB blir kvar.** |
 
 **Inspelningarna tas bort i inget av fallen.** De ligger utanför AppData — i användarens valda
@@ -185,9 +200,8 @@ användarens val.
 
 ## 6. Distributionsformat
 
-Bygget producerar tre filer. **Notera att release-steget explicit laddar upp portable och
-setup — MSI:n hamnar i releasen endast om byggverktyget lägger dit den.** Detta bör verifieras
-innan MSI dokumenteras som ett stött leveransformat.
+Bygget producerar tre filer, och alla tre laddas upp till releasen på GitHub. De tre formaten
+skiljer sig åt enligt tabellen nedan; rekommendationen är NSIS-setup.
 
 | | **Portable** | **Setup (NSIS)** | **MSI** |
 |---|---|---|---|
@@ -218,7 +232,9 @@ Loggen är enbart lokal och skickas aldrig någonstans. Den öppnas via Inställ
 Avancerat → Diagnostik-logg.
 
 **Transkriberad text loggas aldrig.** Samtliga loggrader kring transkribering innehåller
-enbart metadata: antal ljudsamplingar, längd, språkkod och om anropet lyckades.
+enbart metadata: antal ljudsamplingar, längd, språkkod och om anropet lyckades. Ordlistan
+loggar bara hur många ord som rättades, och talaridentifieringen bara antal talare, hastighet
+och tid.
 
 **Men följande kan förekomma och bör betraktas som känsligt:**
 
@@ -247,6 +263,11 @@ Konsekvenser för en säkerhetsdriven IT-miljö:
 - **AppLocker/WDAC kan inte använda utgivarregler** — måste använda hash- eller sökvägsregler,
   vilket kräver en ny regel för varje version
 - **Antivirus och EDR flaggar osignerade binärer oftare**
+- **`onnxruntime.dll` laddas från en användarskrivbar mapp.** Appen packar upp den till
+  `%APPDATA%\com.patriksvensk.transcrptr\models\runtime\` och laddar den därifrån. Är
+  AppLocker eller WDAC konfigurerat med DLL-regler kan laddningen blockeras, och Pianissimo
+  (standardmodellen) startar då inte. Whisper-modellerna påverkas inte. Filen är Microsofts
+  ONNX Runtime 1.24.2 och packas upp byte för byte; kontrollsumman verifieras vid bygget.
 
 **Rekommendation:** skaffa ett kodsigneringscertifikat (OV/EV eller Azure Trusted Signing) och
 koppla in det i byggkedjan. Detta är den enskilt viktigaste förbättringen för att programmet ska
@@ -263,51 +284,70 @@ src/                   Frontend — vanilla JavaScript, ingen bundler
   index.html           Enda sidan, endast lokala resurser
   main.js              All gränssnittslogik
   input.css → app.css  Tailwind (app.css genereras vid bygge, versionshanteras inte)
-  fonts/               Lokalt bundlade typsnitt
+  fonts/               Lokalt bundlade typsnitt (IBM Plex) och ikoner
 
 src-tauri/
-  src/lib.rs                    Tauri-kommandon, whisper, nedladdning, loggning
+  src/lib.rs                    Tauri-kommandon och uppstart
+  src/engine.rs                 Gemensamt motorgränssnitt och chunk-loop
+  src/pianissimo.rs             Standardmotorn (ONNX Runtime, CPU)
+  src/whisper.rs                Whisper-motorn (whisper.cpp)
+  src/diarization.rs            Talaridentifiering (speakrs)
+  src/vocabulary.rs             Ordlistor: fil och efterkorrigering
+  src/models.rs                 Modellsökvägar och nedladdning
+  src/decode.rs                 Strömmande ljudavkodning (Symphonia)
   src/audio.rs                  Inspelning, resampling, WAV-mixning
   src/application_loopback.rs   WASAPI loopback (Windows)
+  src/session.rs                Sessionsmappar, återställning, inspelningslista
+  src/logging.rs                Loggfilen
+  vendor/speakrs/               Lokalt ändrad kopia av speakrs (se TRANSKRIBERA-PATCH.md)
 ```
 
-Frontend och backend kommunicerar via Tauris `invoke`-brygga med **27 namngivna kommandon**.
+Frontend och backend kommunicerar via Tauris `invoke`-brygga med **32 namngivna kommandon**.
 Det är den enda vägen för JavaScript att nå filsystem eller ljudenheter.
 
 ### Nyckelbeslut värda att känna till vid förvaltning
 
-**All transkribering körs på separat tråd** (`spawn_blocking`) och omges av panikhantering,
-eftersom whisper.cpp är C++-kod som kan krascha hårt. Utan detta skulle en segfault ta ner hela
-programmet.
+**All transkribering körs på separat tråd** (`spawn_blocking`) och omges av panikhantering
+(`catch_unwind`). Det gäller båda motorerna, och särskilt Whisper, eftersom whisper.cpp är C++-kod
+som kan krascha hårt. Utan detta skulle en segfault ta ner hela programmet.
 
 **Framstegsrapportering sker via pollning**, inte via callback från C++. Att skicka händelser
 direkt från whisper.cpp:s callback orsakade tidigare tysta krascher över språkgränsen.
 
 **Minnesanvändningen är medvetet begränsad:** filtranskribering håller ~19 MB oavsett filens
 längd (strömmande avkodning i 5-minutersblock), och ljudmixningen ~64 kB. Detta löste tidigare
-minnesproblem vid långa inspelningar.
+minnesproblem vid långa inspelningar. **Undantag:** den valfria talaridentifieringen läser in
+hela ljudet en gång (ca 230 MB per timme) medan den körs.
 
 **Mikrofonen går via WebView2, inte via ljudbiblioteket** på Windows. Anledningen är att
 WebView2 inte klarade att allokera stora ljudbuffertar vid stopp av långa inspelningar.
-Ljuddata strömmas i stället i småbitar till Rust-sidan.
+Ljuddata (en `AudioWorklet`) strömmas i stället i småbitar som rå binär data till Rust-sidan,
+som skriver den direkt till `mic.wav`.
 
 ### Bygga själv
 
-Förutsättningar: Node.js 20+, Rust (stable, target `x86_64-pc-windows-msvc`), Visual Studio
-Build Tools med C++, CMake, Ninja, Vulkan SDK 1.4.309.0, samt långa sökvägar aktiverat i
+Förutsättningar: Node.js 20+, Rust 1.89 eller senare (target `x86_64-pc-windows-msvc`), Visual
+Studio Build Tools med C++, CMake, Ninja, Vulkan SDK 1.4.309.0, samt långa sökvägar aktiverat i
 registret.
+
+För att Pianissimo ska fungera i bygget behövs Microsofts `onnxruntime.dll` (1.24.2) i
+`src-tauri\embedded\`. Release-bygget hämtar den och kontrollerar SHA-256 (se
+`.github/workflows/build-windows.yml`), och bygger med `--features embedded-ort`.
 
 ```bat
 npm install
 npm run build:css      :: OBLIGATORISKT — app.css versionshanteras inte
-npm run tauri build
+npm run tauri build -- --features embedded-ort
 ```
 
 > **Vanligaste misstaget:** hoppa över `npm run build:css`. Programmet startar då helt utan
 > formatering, eftersom den genererade CSS-filen avsiktligt inte ligger i versionshanteringen.
 
-Byggkedjan länkar C-runtime statiskt, vilket innebär att **ingen Visual C++ Redistributable
-behövs** på klientdatorerna.
+Byggkedjan länkar C-runtime statiskt (`+crt-static`) för själva programmet. **Undantag:** den
+inbäddade `onnxruntime.dll` är byggd av Microsoft med den dynamiska runtimen och kräver att
+**Visual C++-runtime** (Microsoft Visual C++ Redistributable) finns på datorn för att
+Pianissimo ska starta. Den finns på praktiskt taget alla Windows-datorer. Whisper-modellerna
+och resten av programmet fungerar utan.
 
 ### Kända punkter att åtgärda
 
@@ -319,7 +359,8 @@ behövs** på klientdatorerna.
 | **Rust- och Tauri-versioner är inte låsta** | Ett bygge om sex månader kan ge annan verktygskedja. Överväg `rust-toolchain.toml`. |
 | **Utvecklarverktyg aktiverade i release** | WebView2:s devtools kan gå att öppna i produktionsbygget. Bör läggas bakom en felsökningsflagga. |
 | **Ingen Content Security Policy** | Låg risk eftersom allt innehåll är lokalt, men avviker från rekommendationen. |
-| **Versionsnummer ur synk** | `package.json` säger 1.1.75 medan programmet är 1.8.1. Kosmetiskt — `package.json`-versionen används inte vid paketering — men förvirrande. |
+| **Versionsnummer ur synk** | `package.json` säger 1.1.75 medan programmet är 2.2.0. Kosmetiskt — `package.json`-versionen används inte vid paketering — men förvirrande. |
+| **Egen kopia av speakrs** | `src-tauri/vendor/speakrs` är en lokalt ändrad kopia (snabbare matrismultiplikation). Nya versioner uppströms måste tas in manuellt. |
 
 ---
 
@@ -338,7 +379,7 @@ Att uppmärksamma vid införande:
 4. **Råspår kan ligga kvar efter krasch** och innehåller lika känsligt material som den färdiga
    inspelningen (§2).
 5. **Loggfilen kan avslöja mötesnamn** även om den inte innehåller samtalsinnehåll (§7).
-6. **Ordlistan kan innehålla personuppgifter** om användaren lagt in namn eller diagnoser (§3).
+6. **Ordlistorna kan innehålla personuppgifter** om användaren lagt in namn eller diagnoser (§3). De ligger i `ordlistor.json` och överlever avinstallation om kryssrutan "Delete application data" inte är ibockad.
 
 Vid utrullning på delade datorer: allt lagras per användarprofil, så data separeras mellan
 användare — men inspelningsmappen kan pekas mot en gemensam plats, vilket då delar materialet.
