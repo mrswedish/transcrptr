@@ -136,6 +136,37 @@ pub(crate) async fn save_audio_file(app_handle: AppHandle, state: tauri::State<'
     }
 }
 
+/// Vad som ska göras med en sessionsmapp för att få fram en spelbar `recording.wav`.
+#[derive(Debug, PartialEq)]
+enum SessionPlan {
+    /// Färdig, redan mixad inspelning — öppna direkt.
+    Ready(PathBuf),
+    /// Råspår finns (avbruten inspelning): laga huvuden och mixa.
+    Mix { mic: Option<PathBuf>, lb: Option<PathBuf>, comms: Option<PathBuf> },
+}
+
+fn non_empty_file(p: &std::path::Path) -> bool {
+    p.is_file() && fs::metadata(p).map(|m| m.len() > 44).unwrap_or(false)
+}
+
+fn plan_session(dir: &std::path::Path) -> Result<SessionPlan, String> {
+    let pick = |name: &str| {
+        let p = dir.join(name);
+        if non_empty_file(&p) { Some(p) } else { None }
+    };
+    let (mic, lb, comms) = (pick("mic.wav"), pick("lb_console.wav"), pick("lb_comms.wav"));
+    let ready = pick("recording.wav");
+    if mic.is_some() || lb.is_some() || comms.is_some() {
+        // Råspår kvar = avbruten inspelning (en färdig fil kan vara ofullständig): mixa om.
+        return Ok(SessionPlan::Mix { mic, lb, comms });
+    }
+    if let Some(r) = ready {
+        // Normalfallet: råspåren raderades efter mixningen, bara recording.wav finns.
+        return Ok(SessionPlan::Ready(r));
+    }
+    Err("Hittade ingen inspelning i mappen (varken recording.wav eller råspår).".to_string())
+}
+
 #[tauri::command]
 pub(crate) async fn recover_session(
     state: tauri::State<'_, AppState>,
@@ -145,25 +176,17 @@ pub(crate) async fn recover_session(
     if !dir.is_dir() {
         return Err("Vald mapp existerar inte".to_string());
     }
-    let lb    = dir.join("lb_console.wav");
-    let comms = dir.join("lb_comms.wav");
-    let mic_file  = dir.join("mic.wav");
-    let has_lb    = lb.exists() && std::fs::metadata(&lb).map(|m| m.len() > 44).unwrap_or(false);
-    let has_comms = comms.exists() && std::fs::metadata(&comms).map(|m| m.len() > 44).unwrap_or(false);
-    let has_mic   = mic_file.exists() && std::fs::metadata(&mic_file).map(|m| m.len() > 44).unwrap_or(false);
-    if !has_lb && !has_comms && !has_mic {
-        return Err("Inga loopback- eller mic-filer hittades i den valda mappen".to_string());
-    }
-    if has_lb    { audio::repair_wav_header(&lb)?; }
-    if has_comms { audio::repair_wav_header(&comms)?; }
-    if has_mic   { audio::repair_wav_header(&mic_file)?; }
-    let recording = dir.join("recording.wav");
-    audio::mix_session_to_wav(
-        if has_mic   { Some(&mic_file) } else { None },
-        if has_lb    { Some(&lb) }      else { None },
-        if has_comms { Some(&comms) }   else { None },
-        &recording,
-    )?;
+    let recording = match plan_session(&dir)? {
+        SessionPlan::Ready(path) => path,
+        SessionPlan::Mix { mic, lb, comms } => {
+            for p in [&mic, &lb, &comms].into_iter().flatten() {
+                audio::repair_wav_header(p)?;
+            }
+            let recording = dir.join("recording.wav");
+            audio::mix_session_to_wav(mic.as_deref(), lb.as_deref(), comms.as_deref(), &recording)?;
+            recording
+        }
+    };
     // Sätt recording_path så save_audio_file kan användas direkt
     if let Ok(rec) = state.inner().audio_recorder.lock() {
         if let Ok(mut path) = rec.recording_path.lock() {
@@ -171,6 +194,55 @@ pub(crate) async fn recover_session(
         }
     }
     Ok(recording.to_string_lossy().into_owned())
+}
+
+#[cfg(test)]
+mod session_plan_tests {
+    use super::*;
+
+    fn tmp(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("transkribera-test-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(&d).unwrap();
+        d
+    }
+    fn touch(d: &std::path::Path, f: &str) {
+        fs::write(d.join(f), vec![0u8; 100]).unwrap();
+    }
+
+    #[test]
+    fn fardig_inspelning_oppnas_direkt() {
+        let d = tmp("ready");
+        touch(&d, "recording.wav");
+        assert_eq!(plan_session(&d), Ok(SessionPlan::Ready(d.join("recording.wav"))));
+    }
+
+    #[test]
+    fn avbruten_inspelning_mixas() {
+        let d = tmp("raw");
+        touch(&d, "mic.wav");
+        touch(&d, "lb_console.wav");
+        match plan_session(&d).unwrap() {
+            SessionPlan::Mix { mic, lb, comms } => {
+                assert!(mic.is_some() && lb.is_some() && comms.is_none());
+            }
+            other => panic!("väntade Mix, fick {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rasparer_vinner_over_en_eventuellt_ofullstandig_fil() {
+        let d = tmp("both");
+        touch(&d, "recording.wav");
+        touch(&d, "mic.wav");
+        assert!(matches!(plan_session(&d), Ok(SessionPlan::Mix { .. })));
+    }
+
+    #[test]
+    fn tom_mapp_ger_fel() {
+        let d = tmp("empty");
+        assert!(plan_session(&d).is_err());
+    }
 }
 
 #[derive(Serialize)]
