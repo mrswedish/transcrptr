@@ -239,70 +239,13 @@
 
       <div class="flex-1 overflow-y-auto">
 
-        <!-- Språk -->
-        <section class="section">
-          <label for="transcription-language" class="section-title block">Språk</label>
-          <select id="transcription-language" class="field mt-2" data-autofocus>
-            <option value="sv" selected>Svenska</option>
-            <option value="en">Engelska</option>
-            <option value="auto">Automatisk identifiering</option>
-          </select>
-          <p id="engine-language-note" class="hidden hint mt-2">
-            Modellen "Snabbast" klarar bara svenska. För engelska eller automatiskt språk används i stället en Whisper-modell, om du har laddat ned någon.
-          </p>
-        </section>
-
-        <!-- Modell -->
-        <section class="section">
-          <h3 class="section-title">Modell</h3>
-          <p class="hint mb-3">Nedladdade modeller. Klicka på en för att använda den.</p>
-          <div id="model-list" class="flex flex-col gap-2 max-h-48 overflow-y-auto">
-            <p class="hint">Laddar modeller…</p>
-          </div>
-
-          <h4 class="text-sm font-semibold mt-6 mb-2">Ladda ned en modell</h4>
-          <div class="flex flex-col gap-2" id="quality-picker" role="group" aria-label="Kvalitet på modellen">
-            <button type="button" data-quality="fast" class="quality-btn choice">
-              <span class="choice-title">Snabbast <span class="font-normal text-muted">· rekommenderas, endast svenska</span></span>
-              <span class="choice-desc">Pianissimo. Körs på processorn och är oftast snabbast på vanliga datorer. Något lägre noggrannhet än Bästa kvalitet.</span>
-            </button>
-            <button type="button" data-quality="balanced" class="quality-btn choice">
-              <span class="choice-title">Snabbare</span>
-              <span class="choice-desc">Bra kvalitet på svenska, klart på halva tiden mot Bästa.</span>
-            </button>
-            <button type="button" data-quality="best" class="quality-btn choice">
-              <span class="choice-title">Bästa kvalitet</span>
-              <span class="choice-desc">Mest exakt på svenska, men tar betydligt längre tid.</span>
-            </button>
-            <button type="button" data-quality="multi" class="quality-btn choice">
-              <span class="choice-title">Flera språk</span>
-              <span class="choice-desc">För engelska facktermer, blandspråkigt eller internationella möten.</span>
-            </button>
-          </div>
-
-          <!-- Ordagrann — gäller hur texten skrivs, inte kvaliteten. -->
-          <div id="verbatim-row" class="mt-4">
-            <label class="flex items-start gap-3 cursor-pointer select-none">
-              <input type="checkbox" id="model-verbatim" class="w-5 h-5 accent-primary cursor-pointer shrink-0 mt-1">
-              <span class="text-sm">Ordagrann utskrift
-                <span class="block hint">Tar med upprepningar och talspråk. Passar diktering och protokoll. Utan kryss städas texten lätt.</span>
-              </span>
-            </label>
-          </div>
-
-          <button id="btn-download-model" class="btn btn-primary mt-4 w-full">
-            <span class="material-symbols-outlined">download</span>
-            <span class="download-label">Ladda ned</span>
-          </button>
-        </section>
-
         <!-- Ordlistor -->
         <section class="section" aria-labelledby="vocab-title">
           <h3 id="vocab-title" class="section-title">Ordlistor</h3>
           <p class="hint mb-3">Rättar ord som ofta hörs fel i texten, till exempel "Kulturum" till "Qulturum". Ordlistor som är ikryssade används vid transkribering.</p>
           <ul id="vocab-lists" class="flex flex-col gap-2 mb-3" role="list"></ul>
           <div class="flex gap-2 mb-4">
-            <button id="vocab-new" class="btn btn-sm">
+            <button id="vocab-new" class="btn btn-sm" data-autofocus>
               <span class="material-symbols-outlined">add</span>
               <span>Ny ordlista</span>
             </button>
@@ -345,6 +288,19 @@
           </div>
         </section>
 
+        <!-- Språk -->
+        <section class="section">
+          <label for="transcription-language" class="section-title block">Språk</label>
+          <select id="transcription-language" class="field mt-2">
+            <option value="sv" selected>Svenska</option>
+            <option value="en">Engelska</option>
+            <option value="auto">Automatisk identifiering</option>
+          </select>
+          <p id="engine-language-note" class="hidden hint mt-2">
+            Modellen "Snabbast" klarar bara svenska. För engelska eller automatiskt språk används i stället en Whisper-modell, om du har laddat ned någon.
+          </p>
+        </section>
+
         <!-- Inspelningar -->
         <section class="section">
           <h3 class="section-title">Inspelningar</h3>
@@ -369,6 +325,43 @@
               <span>Radera alla</span>
             </button>
           </div>
+        </section>
+
+        <!-- Modell -->
+        <section class="section">
+          <h3 class="section-title">Modell</h3>
+          <p class="hint mb-3">Nedladdade modeller. Klicka på en för att använda den.</p>
+          <div id="model-list" class="flex flex-col gap-2 max-h-48 overflow-y-auto">
+            <p class="hint">Laddar modeller…</p>
+          </div>
+          <div id="model-cleanup" class="hidden mt-3">
+            <p id="model-cleanup-text" class="hint mb-2"></p>
+            <button id="btn-cleanup-models" type="button" class="btn btn-sm">
+              <span class="material-symbols-outlined">delete</span>
+              <span>Rensa oanvända modeller</span>
+            </button>
+          </div>
+
+          <h4 class="text-sm font-semibold mt-6 mb-2">Ladda ned en modell</h4>
+          <div class="flex flex-col gap-2" id="quality-picker" role="group" aria-label="Typ av modell">
+            <button type="button" data-quality="fast" class="quality-btn choice">
+              <span class="choice-title">Snabbast <span class="font-normal text-muted">· rekommenderas, endast svenska</span></span>
+              <span class="choice-desc">Körs på processorn och är oftast snabbast på vanliga datorer.</span>
+            </button>
+            <button type="button" data-quality="accurate" class="quality-btn choice">
+              <span class="choice-title">Noggrann <span class="font-normal text-muted">· endast svenska</span></span>
+              <span class="choice-desc">Högre noggrannhet på svenska, men tar längre tid.</span>
+            </button>
+            <button type="button" data-quality="multi" class="quality-btn choice">
+              <span class="choice-title">Flera språk</span>
+              <span class="choice-desc">För engelska, blandspråkigt eller internationella möten.</span>
+            </button>
+          </div>
+
+          <button id="btn-download-model" class="btn btn-primary mt-4 w-full">
+            <span class="material-symbols-outlined">download</span>
+            <span class="download-label">Ladda ned</span>
+          </button>
         </section>
 
         <!-- Avancerat -->

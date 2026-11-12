@@ -307,9 +307,7 @@ function loadSettings() {
 
   // Sync pill pickers to current state
   // Spegla sparad modell i kvalitetsvalet
-  const savedQuality = modelSize === "pianissimo" ? "fast" : modelSize === "large" ? "best" : modelSize === "turbo" ? "multi" : "balanced";
-  const verbatimEl = document.getElementById("model-verbatim");
-  if (verbatimEl) verbatimEl.checked = modelRevision === "strict";
+  const savedQuality = modelSize === "pianissimo" ? "fast" : modelSize === "turbo" ? "multi" : "accurate";
   if (typeof applyQuality === "function") applyQuality(savedQuality);
   if (selLanguage) selLanguage.value = transcriptionLanguage;
 
@@ -762,6 +760,50 @@ function setupV11Handlers() {
 
 }
 
+// Modeller som motsvarar de tre valen i inställningarna. Allt annat (large, ordagrann,
+// icke-kvantiserad medium) är kvar från äldre versioner och kan rensas.
+function isCurrentModel(m) {
+  return m.size === "pianissimo" || m.size === "turbo"
+    || (m.size === "medium" && m.quantized && m.revision === "standard");
+}
+function isActiveModel(m) {
+  return m.size === modelSize && m.revision === modelRevision && m.quantized === modelQuantized;
+}
+let unusedModels = [];
+function updateModelCleanup(models) {
+  const box = document.getElementById("model-cleanup");
+  const text = document.getElementById("model-cleanup-text");
+  if (!box || !text) return;
+  unusedModels = models.filter(m => !isCurrentModel(m) && !isActiveModel(m));
+  const total = unusedModels.reduce((n, m) => n + m.size_bytes, 0);
+  box.classList.toggle("hidden", unusedModels.length === 0);
+  text.textContent = unusedModels.length === 1
+    ? `1 modell används inte längre (${formatSize(total)}).`
+    : `${unusedModels.length} modeller används inte längre (${formatSize(total)}).`;
+}
+document.getElementById("btn-cleanup-models")?.addEventListener("click", async () => {
+  if (unusedModels.length === 0) return;
+  const total = unusedModels.reduce((n, m) => n + m.size_bytes, 0);
+  const list = unusedModels.map(m => `• ${m.name} (${formatSize(m.size_bytes)})`).join("\n");
+  const ok = await showConfirm(
+    `Följande modeller tas bort (${formatSize(total)}):\n${list}\n\nDen modell du använder just nu behålls. Du kan ladda ned dem igen vid behov.`,
+    "Rensa oanvända modeller", "Radera");
+  if (!ok) return;
+  let failed = 0;
+  for (const m of unusedModels) {
+    try {
+      await invoke("delete_model", { size: m.size, quantized: m.quantized, revision: m.revision });
+      logToFile(`rensa modeller: raderade ${m.name}`);
+    } catch (e) {
+      failed++;
+      logToFile(`rensa modeller: kunde inte radera ${m.name}: ${e}`);
+    }
+  }
+  await refreshModelList();
+  announce(failed ? `${failed} modeller kunde inte raderas.` : "Oanvända modeller är raderade.");
+  if (failed) await message(`${failed} modeller kunde inte raderas.`, { title: "Rensning misslyckades", kind: "error" });
+});
+
 async function refreshModelList() {
   if (!modelList) return;
   try {
@@ -772,6 +814,8 @@ async function refreshModelList() {
       modelList.innerHTML = '<p class="hint">Inga modeller nedladdade ännu.</p>';
       return;
     }
+
+    updateModelCleanup(models);
 
     models.forEach(m => {
       const isActive = m.size === modelSize && m.revision === modelRevision && m.quantized === modelQuantized;
@@ -1047,15 +1091,15 @@ function updateDownloadButtonLabel() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Kvalitetsval — tre namngivna alternativ i stället för att låta användaren
-// kombinera Stil × Storlek × Format själv (9 varianter). Varje val motsvarar en
-// färdig kombination; "Ordagrann" är ortogonalt och ligger som egen kryssruta.
+// Modellval — tre namngivna alternativ i stället för att låta användaren kombinera
+// storlek, stil och format själv. Varje val motsvarar en färdig kombination (alltid
+// kvantiserad och standardstil). Äldre nedladdade varianter (large, ordagrann) fungerar
+// fortfarande om de redan finns, och kan rensas med "Rensa oanvända modeller".
 // ─────────────────────────────────────────────────────────────────────────────
 const QUALITY_PRESETS = {
-  fast:     { size: "pianissimo", supportsVerbatim: false }, // Pianissimo: svenska, CPU
-  balanced: { size: "medium", supportsVerbatim: true  },
-  best:     { size: "large",  supportsVerbatim: true  },
-  multi:    { size: "turbo",  supportsVerbatim: false }, // Turbo saknar KB-varianter
+  fast:     { size: "pianissimo" },                   // Pianissimo: svenska, CPU
+  accurate: { size: "medium" },                       // KB-Whisper medium, svenska
+  multi:    { size: "turbo" },                        // Whisper Turbo, flera språk
 };
 let dlQuality = "fast";
 
@@ -1063,16 +1107,11 @@ const QUALITY_ACTIVE = "quality-btn choice is-selected";
 const QUALITY_IDLE   = "quality-btn choice";
 
 function applyQuality(quality) {
-  const preset = QUALITY_PRESETS[quality] ?? QUALITY_PRESETS.balanced;
+  const preset = QUALITY_PRESETS[quality] ?? QUALITY_PRESETS.accurate;
   dlQuality = quality;
   dlSize = preset.size;
 
-  // Ordagrann gäller bara KB-modellerna; dölj valet för "Flera språk".
-  const verbatimRow = document.getElementById("verbatim-row");
-  const verbatim = document.getElementById("model-verbatim");
-  if (verbatimRow) verbatimRow.classList.toggle("hidden", !preset.supportsVerbatim);
-  if (!preset.supportsVerbatim && verbatim) verbatim.checked = false;
-  dlRevision = (preset.supportsVerbatim && verbatim && verbatim.checked) ? "strict" : "standard";
+  dlRevision = "standard";
 
   document.querySelectorAll("[data-quality]").forEach(b => {
     b.className = b.dataset.quality === quality ? QUALITY_ACTIVE : QUALITY_IDLE;
@@ -1083,10 +1122,6 @@ function applyQuality(quality) {
 
 document.querySelectorAll("[data-quality]").forEach(btn => {
   btn.addEventListener("click", () => applyQuality(btn.dataset.quality));
-});
-
-document.getElementById("model-verbatim")?.addEventListener("change", () => {
-  applyQuality(dlQuality);
 });
 
 applyQuality(dlQuality);
@@ -1258,9 +1293,10 @@ btnRecord.addEventListener("click", async () => {
 // (t.ex. "Radera N inspelningar" visades felaktigt vid ny inspelning).
 const CONFIRM_DEFAULT_MSG = "Du har en transkribering som inte sparats. En ny inspelning kommer att ersätta den.";
 const CONFIRM_DEFAULT_TITLE = "Ny inspelning";
-function showConfirm(msg, title) {
+function showConfirm(msg, title, okLabel) {
   return new Promise(resolve => {
     if (!confirmModal) { resolve(true); return; }
+    if (confirmOk) confirmOk.textContent = okLabel || "Fortsätt";
     const p = confirmModal.querySelector("p");
     if (p) p.innerText = msg || CONFIRM_DEFAULT_MSG;
     const h = document.getElementById("confirm-title");
