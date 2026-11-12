@@ -28,3 +28,6 @@ src/app.css
 
 # onnxruntime.dll som hämtas av CI och bäddas in (feature embedded-ort)
 src-tauri/embedded/
+
+# Signeringsverktyget
+tools/*/target

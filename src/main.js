@@ -582,6 +582,8 @@ async function initialize() {
     const version = await invoke("get_app_version");
     const versionLabel = document.getElementById("app-version");
     if (versionLabel) versionLabel.textContent = `v${version}`;
+    const updCurrent = document.getElementById("update-current");
+    if (updCurrent) updCurrent.textContent = version;
   } catch (e) {
     console.warn("Kunde inte hämta version:", e);
   }
@@ -651,6 +653,7 @@ async function initialize() {
   updateFooter();
   refreshModelList();
   checkInterruptedRecordings();
+  initUpdates();
   // Visa systemljud-toggle + GPU-inställning bara på Windows (Application Loopback API)
   if (navigator.userAgent.includes('Windows')) {
     const wasapiQuick = document.getElementById('wasapi-quick');
@@ -2861,6 +2864,101 @@ function showNotice(text, action) {
 function hideNotice() { noticeBar?.classList.add("hidden"); noticeActionHandler = null; }
 noticeAction?.addEventListener("click", () => { const h = noticeActionHandler; if (h) h(); });
 document.getElementById("notice-close")?.addEventListener("click", hideNotice);
+
+// ── Uppdateringar ───────────────────────────────────────────────────────────
+// Rust frågar GitHub (webbvyn får inte ansluta själv) och byter ut den portabla filen efter
+// signaturkontroll. Här visas bara erbjudandet, förloppet och eventuella fel.
+let pendingUpdate = null;
+
+function appBusy() {
+  return isRecording || btnFile.disabled || !loadingOverlay.classList.contains("hidden");
+}
+
+function setUpdateStatus(text) {
+  const el = document.getElementById("update-status");
+  if (el) el.textContent = text;
+}
+
+function offerUpdate(u) {
+  pendingUpdate = u;
+  const btn = document.getElementById("btn-install-update");
+  const label = u.canInstall ? `Uppdatera till ${u.version}` : "Öppna nedladdningssidan";
+  const run = () => (u.canInstall ? startUpdate() : window.__TAURI__.opener.openUrl(u.pageUrl).catch(() => {}));
+  if (btn) {
+    btn.textContent = label;
+    btn.classList.remove("hidden");
+    btn.onclick = run;
+  }
+  setUpdateStatus(`Version ${u.version} finns (${formatSize(u.size)}).`);
+  showNotice(`Version ${u.version} finns (${formatSize(u.size)}).`, { label: u.canInstall ? "Uppdatera" : "Öppna sidan", onClick: run });
+}
+
+async function startUpdate() {
+  if (!pendingUpdate) return;
+  if (appBusy()) {
+    await message("Slutför eller avbryt pågående inspelning eller transkribering först, och försök sedan igen.",
+      { title: "Appen är upptagen" });
+    return;
+  }
+  const u = pendingUpdate;
+  const ok = await showConfirm(
+    `Version ${u.version} (${formatSize(u.size)}) laddas ned och appen startas om. Dina inställningar, modeller och ordlistor behålls.`,
+    "Uppdatera Transkribera", "Uppdatera");
+  if (!ok) return;
+
+  settingsModal.classList.add("hidden");
+  disableControls();
+  loadingText.innerText = "Laddar ned uppdatering…";
+  loadingOverlay.classList.remove("hidden");
+  if (progressContainer) progressContainer.classList.remove("hidden");
+  if (progressBar) progressBar.style.width = "0%";
+  btnCancelTranscription?.classList.add("hidden");
+  announce("Laddar ned uppdatering. Appen startas om när den är klar.");
+  try {
+    await invoke("install_update");
+  } catch (e) {
+    loadingOverlay.classList.add("hidden");
+    enableControls();
+    logToFile(`install_update misslyckades: ${e}`);
+    await message(`Uppdateringen kunde inte genomföras.\n\n${e}`, { title: "Uppdateringen misslyckades", kind: "error" });
+  }
+}
+
+async function initUpdates() {
+  const auto = document.getElementById("update-auto");
+  try {
+    const s = await invoke("get_update_settings");
+    if (auto) auto.checked = !!s.autoCheck;
+  } catch (_) {}
+  auto?.addEventListener("change", () => {
+    invoke("set_update_auto_check", { enabled: auto.checked }).catch(() => {});
+  });
+
+  document.getElementById("btn-check-update")?.addEventListener("click", async () => {
+    setUpdateStatus("Söker…");
+    try {
+      const u = await invoke("check_for_update", { manual: true });
+      if (u) offerUpdate(u);
+      else setUpdateStatus("Du har den senaste versionen.");
+    } catch (e) {
+      setUpdateStatus(`Kunde inte söka: ${e}`);
+    }
+  });
+
+  await listen("update_progress", (event) => {
+    const { progress, downloaded, total } = event.payload;
+    if (progressBar) progressBar.style.width = `${progress}%`;
+    loadingText.innerText = `Laddar ned uppdatering… ${(downloaded / 1048576).toFixed(1)} MB / ${(total / 1048576).toFixed(1)} MB`;
+  });
+
+  // Tyst kontroll en kort stund efter start (högst en gång per dygn, styrs av Rust).
+  setTimeout(async () => {
+    try {
+      const u = await invoke("check_for_update", { manual: false });
+      if (u) offerUpdate(u);
+    } catch (_) {}
+  }, 4000);
+}
 
 function summarizeChanges(changes) {
   const counts = new Map();

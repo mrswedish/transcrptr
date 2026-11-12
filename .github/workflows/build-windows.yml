@@ -119,6 +119,24 @@ jobs:
             Write-Error "Could not find the executable."
           }
 
+      # Signerar den portabla filen så att appens uppdateringsfunktion kan kontrollera att en
+      # nedladdad version är äkta. Hemlig nyckel och lösenord ligger i GitHub Secrets
+      # (MINISIGN_KEY, MINISIGN_PASSWORD); saknas de hoppas signeringen över och appen
+      # kommer då inte att erbjuda uppdatering till den här versionen.
+      - name: Signera portabel exe
+        shell: pwsh
+        env:
+          MINISIGN_KEY: ${{ secrets.MINISIGN_KEY }}
+          MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
+        run: |
+          if (-not $env:MINISIGN_KEY -or -not $env:MINISIGN_PASSWORD) {
+            Write-Warning "MINISIGN_KEY/MINISIGN_PASSWORD saknas - portabel exe signeras inte."
+            exit 0
+          }
+          cargo build --release --manifest-path tools/minisign-sign/Cargo.toml
+          & tools/minisign-sign/target/release/minisign-sign.exe sign Transkribera-portable.exe
+          if ($LASTEXITCODE -ne 0) { throw "Signeringen misslyckades" }
+
       - name: Copy NSIS Installer
         env:
           CARGO_TARGET_DIR: D:\t
@@ -153,6 +171,7 @@ jobs:
           tag_name: transcrptr-v${{ env.APP_VERSION }}
           files: |
             Transkribera-portable.exe
+            Transkribera-portable.exe.minisig
             Transkribera_x64-setup.exe
           make_latest: ${{ github.ref_name == 'main' }}
           prerelease: ${{ github.ref_name != 'main' }}

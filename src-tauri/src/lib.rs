@@ -16,6 +16,7 @@ mod models;
 mod pianissimo;
 mod session;
 mod types;
+mod updater;
 mod vocabulary;
 mod whisper;
 use decode::StreamingDecoder;
@@ -325,10 +326,15 @@ pub fn run() {
             logging::init_logging(&app.handle());
             log_line(&format!("=== app start v{} ===", env!("CARGO_PKG_VERSION")));
             log_line(&format!("num_cpus::get() = {}", num_cpus::get()));
+            updater::cleanup_old_executable();
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             models::check_model_exists,
+            updater::get_update_settings,
+            updater::set_update_auto_check,
+            updater::check_for_update,
+            updater::install_update,
             models::download_model,
             models::get_available_models,
             models::delete_model,

@@ -18,9 +18,9 @@ där en sökväg härleds ur Tauris API i stället för att vara hårdkodad ange
 | Fråga | Svar |
 |---|---|
 | Skickas ljud eller text till någon server? | **Nej.** All transkribering sker lokalt. |
-| Utgående nätverkstrafik? | **Endast `huggingface.co`**, och bara vid nedladdning av språkmodell eller (valfritt) talarmodeller. |
+| Utgående nätverkstrafik? | **Endast `huggingface.co`** (modeller, vid nedladdning) och **`github.com`/`api.github.com`** (versionskontroll och uppdatering, se §4). |
 | Telemetri, analys, felrapportering? | **Nej, inget.** Verifierat genom sökning i hela kodbasen. |
-| Automatisk uppdatering? | **Nej.** Appen kontrollerar aldrig efter nya versioner. |
+| Automatisk uppdatering? | **Kontroll ja, installation aldrig utan klick.** Appen frågar GitHub högst en gång per dygn om en ny version finns (kan stängas av). Den portabla versionen kan efter användarens klick ladda ned och byta ut sig själv, men bara om filen har en giltig minisign-signatur (§4). |
 | Kräver administratörsrättigheter? | **Nej** för appen. Installationsformatet avgör (se §6). |
 | Fungerar utan internet? | **Ja**, fullständigt — efter att modellen laddats ned en gång. |
 | Särskilda beroenden? | **Visual C++-runtime** krävs för standardmotorn Pianissimo (se §9). Whisper-modellerna påverkas inte. |
@@ -101,7 +101,7 @@ avinstallation (se §5).
 
 ### All utgående trafik
 
-Endast en enda domän kontaktas, och bara vid nedladdning av språkmodell:
+Appen kontaktar två sorters servrar. **Språkmodeller** hämtas från Hugging Face, bara vid nedladdning:
 
 ```
 https://huggingface.co/KBLab/kb-whisper-{medium|large}/resolve/{main|strict}/...   (sedan v2.2.6 erbjuder gränssnittet bara medium/main; large och strict stöds i koden så att äldre nedladdningar fungerar)
@@ -125,13 +125,31 @@ behov, `diarization\`, samt Whisper-filerna) och därefter blockera all nätverk
 programmet. Utan förinstallerad standardmodell försöker appen hämta Pianissimo vid första
 start.
 
+### Uppdateringar (från v2.4.0)
+
+Den portabla versionen kan uppdatera sig själv. Allt sker i Rust; webbvyns CSP tillåter inga externa anrop.
+
+```
+GET https://api.github.com/repos/mrswedish/transcrptr/releases/latest     (versionsfråga, högst en per dygn)
+GET https://github.com/mrswedish/transcrptr/releases/download/...         (endast efter att användaren klickat Uppdatera)
+```
+
+- **Inget om användaren skickas.** Anropet innehåller bara `User-Agent: Transkribera`. GitHubs API ger 60 anrop per timme och IP-adress utan token; vid överskridet misslyckas den automatiska kontrollen tyst.
+- **Bara senaste riktiga release.** `/releases/latest` returnerar inte förhandsversioner (grenbyggen), så testbyggen erbjuds aldrig.
+- **Signaturkontroll är obligatorisk.** Varje release innehåller `Transkribera-portable.exe.minisig`, en minisign-signatur (Ed25519) skapad i byggkedjan med en hemlig nyckel som bara finns i GitHub Secrets (`MINISIGN_KEY`, `MINISIGN_PASSWORD`). Den publika nyckeln är inbyggd i programmet (`PUBLIC_KEY` i `src-tauri/src/updater.rs`). En nedladdad fil vars signatur inte stämmer, eller vars storlek avviker, raderas och installeras aldrig. Är den inbyggda nyckeln tom är uppdateringsfunktionen avstängd. Detta skyddar även om någon byter ut filen på GitHub, men inte om den hemliga nyckeln läcker.
+- **Filbyte:** filen hämtas till `%APPDATA%\com.patriksvensk.transcrptr\update\`, den körande filen döps om till `Transkribera-portable.old.exe`, den nya kopieras på plats och appen startas om; den gamla filen raderas vid nästa start. Misslyckas bytet återställs originalet.
+- **När självuppdatering inte erbjuds:** installerad version (en `uninstall.exe` ligger bredvid filen) eller en mapp utan skrivrättighet. Då visas bara "Öppna nedladdningssidan".
+- **Mark-of-the-Web:** filen skrivs av appen och får ingen webbmärkning, så SmartScreen visar ingen varning. Är **AppLocker/WDAC** konfigurerat med hash- eller utgivarregler för programfilen (se §8) blockeras däremot den utbytta filen tills en ny regel finns. Sökvägsregler påverkas inte.
+- **Avstängning:** kryssrutan "Sök efter uppdateringar automatiskt" under Inställningar → Uppdateringar (sparas i `updater.json` i appens datamapp). Den manuella knappen finns alltid. IT kan blockera `api.github.com` för att helt stänga av funktionen; appen fungerar då som förut.
+- **Förvaltning av nyckeln:** skapa nyckelparet med `cargo run --manifest-path tools/minisign-sign/Cargo.toml -- generate` (skapar ett slumpmässigt lösenord i `minisign.password`; ange mapp som sista argument). Lägg innehållet i `minisign.key` i GitHub Secret `MINISIGN_KEY` och lösenordet i `MINISIGN_PASSWORD`, klistra in den publika nyckeln i `PUBLIC_KEY`, och radera sedan `minisign.key` lokalt (eller förvara den säkert). Förloras nyckeln kan befintliga installationer inte längre uppdateras automatiskt och måste bytas manuellt en gång.
+
 ### Behörigheter
 
 | Resurs | Krävs | Kommentar |
 |---|---|---|
 | **Mikrofon** | Ja | Via WebView2. Windows sekretessinställning måste tillåta mikrofon. |
 | **Systemljud** | Endast om påslaget | WASAPI loopback. Kräver ingen särskild behörighet. |
-| **Nätverk** | Endast vid modellnedladdning | Utgående HTTPS. |
+| **Nätverk** | Vid modellnedladdning och versionskontroll | Utgående HTTPS. |
 | **Filsystem** | Skriv till AppData och inspelningsmapp | Vanlig användarbehörighet. |
 | **Administratör** | **Nej** | Appen begär aldrig förhöjda rättigheter. |
 
@@ -283,6 +301,8 @@ src/                   Frontend — vanilla JavaScript, ingen bundler
   input.css → app.css  Tailwind (app.css genereras vid bygge, versionshanteras inte)
   fonts/               Lokalt bundlade typsnitt (IBM Plex) och ikoner
 
+tools/minisign-sign/   Litet verktyg som skapar signeringsnyckel och signerar den portabla filen (byggkedjan)
+
 src-tauri/
   src/lib.rs                    Tauri-kommandon och uppstart
   src/engine.rs                 Gemensamt motorgränssnitt och chunk-loop
@@ -296,10 +316,11 @@ src-tauri/
   src/application_loopback.rs   WASAPI loopback (Windows)
   src/session.rs                Sessionsmappar, återställning, inspelningslista
   src/logging.rs                Loggfilen
+  src/updater.rs                Versionskontroll, signaturkontroll och självuppdatering (portabel)
   vendor/speakrs/               Lokalt ändrad kopia av speakrs (se TRANSKRIBERA-PATCH.md)
 ```
 
-Frontend och backend kommunicerar via Tauris `invoke`-brygga med **32 namngivna kommandon**.
+Frontend och backend kommunicerar via Tauris `invoke`-brygga med **36 namngivna kommandon**.
 Det är den enda vägen för JavaScript att nå filsystem eller ljudenheter.
 
 ### Nyckelbeslut värda att känna till vid förvaltning
