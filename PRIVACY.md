@@ -1,6 +1,6 @@
 # Privacy Policy — Transcrptr
 
-**Last updated:** 2026-11-10
+**Last updated:** 2026-11-12
 
 ## Overview
 
@@ -24,7 +24,9 @@ Transcrptr connects to the internet **only** for:
 
 1. **Downloading AI models** — A one-time download of the selected speech recognition model from Hugging Face, and optionally of the speaker identification models (about 33 MB). No user data or identifiers are included in these requests.
 
-No other network connections are made. Transcrptr functions fully offline after the initial model download.
+2. **Checking for and downloading updates** — Transcrptr asks GitHub (api.github.com) at most once a day whether a newer version has been released. The request contains no user data or identifiers. If you choose to update, the new version is downloaded from github.com and its digital signature is verified before it is installed. Nothing is installed without your click. You can turn the automatic check off in Settings → Updates.
+
+No other network connections are made. Transcrptr functions fully offline after the initial model download, and the update check can be switched off or blocked without affecting any other feature.
 
 ## Third-Party Services
 

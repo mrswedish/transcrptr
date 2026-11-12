@@ -155,6 +155,12 @@ Stereo Mix är en virtuell Windows-enhet som fångar allt systemljud och mixar d
 
 Gå till [Releases](https://github.com/mrswedish/transcrptr/releases) för senaste versionen och ladda ner `Transkribera-portable.exe`.
 
+### Uppdatera
+
+Appen kontrollerar högst en gång per dygn om det finns en nyare version på GitHub och visar då en rad med **Uppdatera**. Klickar du laddas den nya `Transkribera-portable.exe` ned, kontrolleras mot en digital signatur och ersätter den körande filen, varefter appen startas om. Inställningar, modeller och ordlistor behålls. Inget installeras utan att du klickar.
+
+Du kan söka manuellt eller stänga av den automatiska kontrollen under **Inställningar → Uppdateringar**. Fungerar inte självuppdatering (t.ex. om filen ligger i en mapp utan skrivrättigheter) visas en länk till nedladdningssidan i stället.
+
 ### Om transkriberingen kraschar
 
 Pianissimo ("Snabbast") använder inte grafikkortet, så det här gäller bara **Whisper-modellerna** (Noggrann och Flera språk). Det enklaste är då att byta till **Snabbast** under Inställningar → Modell.

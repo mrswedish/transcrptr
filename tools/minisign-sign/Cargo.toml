@@ -1,0 +1,11 @@
+[package]
+name = "minisign-sign"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Skapar signeringsnyckel och signerar Transkribera-portable.exe (minisign-kompatibelt)"
+
+[dependencies]
+minisign = "=0.7.9"
+
+[workspace]

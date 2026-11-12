@@ -364,6 +364,23 @@
           </button>
         </section>
 
+        <!-- Uppdateringar -->
+        <section class="section" aria-labelledby="update-title">
+          <h3 id="update-title" class="section-title">Uppdateringar</h3>
+          <p class="hint mb-3">Du använder version <span id="update-current" class="font-mono"></span>.</p>
+          <label class="flex items-start gap-3 cursor-pointer select-none">
+            <input type="checkbox" id="update-auto" class="w-5 h-5 accent-primary cursor-pointer shrink-0 mt-1" checked>
+            <span class="text-sm">Sök efter uppdateringar automatiskt
+              <span class="block hint">Appen frågar GitHub högst en gång per dygn om det finns en ny version. Inget om dig eller dina filer skickas. Något installeras aldrig utan att du klickar på Uppdatera.</span>
+            </span>
+          </label>
+          <div class="flex flex-wrap gap-2 mt-3">
+            <button id="btn-check-update" type="button" class="btn btn-sm">Sök efter uppdatering</button>
+            <button id="btn-install-update" type="button" class="hidden btn btn-sm btn-primary"></button>
+          </div>
+          <p id="update-status" class="hint mt-2" role="status"></p>
+        </section>
+
         <!-- Avancerat -->
         <section class="section border-b-0">
           <details id="advanced-settings" class="group">

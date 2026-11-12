@@ -1,6 +1,6 @@
 [package]
 name = "tauri-app"
-version = "2.2.6"
+version = "2.4.0"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -46,6 +46,7 @@ sha2 = "0.10"
 # Talaridentifiering: pyannote community-1-pipelinen i ren Rust (CPU, ingen onnxruntime).
 # Lokal patchad kopia (snabbare matrismultiplikation), se vendor/speakrs/TRANSKRIBERA-PATCH.md.
 speakrs = { path = "vendor/speakrs", default-features = false, features = ["cpu"] }
+minisign-verify = "0.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 cpal = "0.15.3"
@@ -61,4 +62,7 @@ windows = { version = "0.58", features = [
     "Win32_System_Com",
     "Win32_System_Threading",
 ] }
+
+[dev-dependencies]
+minisign = "0.7"
 
