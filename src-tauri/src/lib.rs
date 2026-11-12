@@ -350,6 +350,7 @@ pub fn run() {
             session::count_recordings,
             session::list_recordings,
             session::delete_all_recordings,
+            session::delete_recording,
             session::reset_application,
             save_text_file,
             session::save_audio_file,

@@ -1,7 +1,7 @@
 //! Sessionsmappar, inspelningsfiler, import/återställning och diskinfo.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use serde::Serialize;
 use sysinfo::Disks;
 use tauri::{AppHandle, Manager};
@@ -451,6 +451,38 @@ pub(crate) async fn delete_all_recordings(dir: String) -> Result<usize, String> 
     Ok(deleted)
 }
 
+/// Kontrollerar att `path` är en inspelningsmapp som ligger DIREKT i `base`.
+/// Skyddar mot att något annat än en inspelning raderas (t.ex. `..` eller en annan mapp).
+fn validate_recording_path(base: &Path, path: &Path) -> Result<PathBuf, String> {
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    if !is_session_folder(name) || !path.is_dir() {
+        return Err("Det här är ingen inspelningsmapp.".to_string());
+    }
+    let base_c = base.canonicalize().map_err(|e| format!("Inspelningsmappen hittas inte: {e}"))?;
+    let path_c = path.canonicalize().map_err(|e| format!("Inspelningen hittas inte: {e}"))?;
+    if path_c.parent() != Some(base_c.as_path()) {
+        return Err("Inspelningen ligger inte i inspelningsmappen.".to_string());
+    }
+    Ok(path_c)
+}
+
+/// Raderar en enskild inspelning (hela mappen: ljudfiler och transkript).
+#[tauri::command]
+pub(crate) async fn delete_recording(
+    app_handle: AppHandle,
+    recording_dir: Option<String>,
+    path: String,
+) -> Result<(), String> {
+    let base = match recording_dir.as_deref() {
+        Some(p) if !p.is_empty() => PathBuf::from(p),
+        _ => default_recording_dir(&app_handle)?,
+    };
+    let target = validate_recording_path(&base, Path::new(&path))?;
+    fs::remove_dir_all(&target).map_err(|e| format!("Kunde inte radera inspelningen: {e}"))?;
+    log_line(&format!("delete_recording: raderade {}", target.display()));
+    Ok(())
+}
+
 #[tauri::command]
 pub(crate) async fn get_disk_info(app_handle: AppHandle) -> Result<DiskInfo, String> {
     let app_data_dir = app_handle.path().app_data_dir().map_err(|e| e.to_string())?;
@@ -547,3 +579,47 @@ pub(crate) async fn reset_application(
     Ok(())
 }
 
+
+#[cfg(test)]
+mod delete_recording_tests {
+    use super::*;
+
+    fn tmp(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("transkribera-del-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn godkanner_inspelning_direkt_i_mappen() {
+        let base = tmp("ok");
+        let rec = base.join("inspelning-20261112-145058-test");
+        fs::create_dir_all(&rec).unwrap();
+        assert!(validate_recording_path(&base, &rec).is_ok());
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn nekar_andra_mappar_och_andra_platser() {
+        let base = tmp("nej");
+        let other = base.join("Dokument");
+        fs::create_dir_all(&other).unwrap();
+        assert!(validate_recording_path(&base, &other).is_err(), "fel prefix");
+        assert!(validate_recording_path(&base, &base).is_err(), "själva basmappen");
+
+        // Rätt namn men i en undermapp, eller i en helt annan mapp.
+        let nested = other.join("inspelning-20261112-145058");
+        fs::create_dir_all(&nested).unwrap();
+        assert!(validate_recording_path(&base, &nested).is_err(), "undermapp");
+        let elsewhere = tmp("annan");
+        let rec2 = elsewhere.join("inspelning-20261112-145058");
+        fs::create_dir_all(&rec2).unwrap();
+        assert!(validate_recording_path(&base, &rec2).is_err(), "annan bas");
+        // Sökväg med .. som pekar ut ur basmappen
+        let sneaky = base.join("inspelning-20261112-145058").join("..").join("Dokument");
+        assert!(validate_recording_path(&base, &sneaky).is_err());
+        let _ = fs::remove_dir_all(&base);
+        let _ = fs::remove_dir_all(&elsewhere);
+    }
+}

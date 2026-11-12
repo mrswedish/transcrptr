@@ -1258,9 +1258,10 @@ btnRecord.addEventListener("click", async () => {
 // (t.ex. "Radera N inspelningar" visades felaktigt vid ny inspelning).
 const CONFIRM_DEFAULT_MSG = "Du har en transkribering som inte sparats. En ny inspelning kommer att ersätta den.";
 const CONFIRM_DEFAULT_TITLE = "Ny inspelning";
-function showConfirm(msg, title) {
+function showConfirm(msg, title, okLabel) {
   return new Promise(resolve => {
     if (!confirmModal) { resolve(true); return; }
+    if (confirmOk) confirmOk.textContent = okLabel || "Fortsätt";
     const p = confirmModal.querySelector("p");
     if (p) p.innerText = msg || CONFIRM_DEFAULT_MSG;
     const h = document.getElementById("confirm-title");
@@ -1634,9 +1635,9 @@ async function showImportChoice() {
     if (!modal || !fileBtn || !cancelBtn || !list) { resolve({ kind: "file" }); return; }
 
     list.replaceChildren();
-    const rowHandlers = [];
     for (const rec of recs) {
       const li = document.createElement("li");
+      li.className = "recent-row";
       const b = document.createElement("button");
       b.type = "button";
       b.className = "choice";
@@ -1655,7 +1656,40 @@ async function showImportChoice() {
       b.append(t, d);
       const h = () => { cleanup(); resolve({ kind: "session", rec }); };
       b.addEventListener("click", h);
-      li.appendChild(b);
+
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "btn btn-ghost btn-sm btn-icon-only recent-del";
+      del.setAttribute("aria-label", `Radera inspelningen ${formatRecordingTitle(rec)}`);
+      del.title = "Radera inspelningen";
+      del.innerHTML = '<span class="material-symbols-outlined" aria-hidden="true">delete</span>';
+      del.addEventListener("click", async () => {
+        const ok = await showConfirm(
+          `Inspelningen ”${formatRecordingTitle(rec)}” och alla dess ljudfiler och transkript raderas. Det går inte att ångra.`,
+          "Radera inspelning", "Radera");
+        if (!ok) return;
+        try {
+          await invoke("delete_recording", { recordingDir: recordingDir || null, path: rec.path });
+          logToFile(`delete_recording: raderade ${rec.path}`);
+        } catch (e) {
+          logToFile(`delete_recording misslyckades: ${e}`);
+          await message(`Kunde inte radera inspelningen: ${e}`, { title: "Radering misslyckades", kind: "error" });
+          return;
+        }
+        const next = li.nextElementSibling?.querySelector(".choice") || li.previousElementSibling?.querySelector(".choice");
+        li.remove();
+        announce("Inspelningen är raderad.");
+        if (list.children.length === 0) {
+          const empty = document.createElement("li");
+          empty.className = "hint";
+          empty.textContent = "Inga inspelningar kvar.";
+          list.appendChild(empty);
+          fileBtn.focus();
+        } else if (next) {
+          next.focus();
+        }
+      });
+      li.append(b, del);
       list.appendChild(li);
     }
 

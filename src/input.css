@@ -188,6 +188,16 @@ body {
     border-color: rgb(var(--c-primary));
     color: rgb(var(--c-ink));
   }
+  /* Rad i "Senaste inspelningar": papperskorgen visas vid hover och tangentbordsfokus */
+  .recent-row { position: relative; }
+  .recent-row .choice { padding-right: 48px; }
+  .recent-del {
+    position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+    opacity: 0; transition: opacity 120ms;
+  }
+  .recent-row:hover .recent-del, .recent-row:focus-within .recent-del, .recent-del:focus-visible { opacity: 1; }
+  .recent-del:hover { color: rgb(var(--c-rec)); }
+  @media (hover: none) { .recent-del { opacity: 1; } }
   .choice-title { display: block; font-size: 14px; font-weight: 600; color: rgb(var(--c-ink)); }
   .choice-desc { display: block; font-size: 13px; }
 
