@@ -1,6 +1,6 @@
 //! Litet verktyg så att varken du eller bygget behöver installera minisign.
 //!
-//!   minisign-sign generate            → skriver minisign.key (hemlig) och minisign.pub (publik)
+//!   minisign-sign generate [mapp]     → skriver minisign.key (hemlig), minisign.password och minisign.pub (publik)
 //!   minisign-sign sign <fil>          → skriver <fil>.minisig
 //!   minisign-sign verify <fil> <pub>  → kontrollerar <fil> mot <fil>.minisig och minisign.pub
 //!
@@ -16,13 +16,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let password = std::env::var("MINISIGN_PASSWORD").ok().filter(|p| !p.is_empty());
     match args.first().map(String::as_str) {
         Some("generate") => {
-            let password = password.ok_or("Sätt MINISIGN_PASSWORD (lösenord för den hemliga nyckeln) först")?;
-            let kp = KeyPair::generate_encrypted_keypair(Some(password))?;
+            // Valfri målmapp som andra argument. Lösenord: MINISIGN_PASSWORD om satt, annars skapas
+            // ett slumpmässigt som sparas i minisign.password (lässbar bara av dig) och aldrig skrivs ut.
+            let dir = std::path::PathBuf::from(args.get(1).map(String::as_str).unwrap_or("."));
+            std::fs::create_dir_all(&dir)?;
+            let (password, generated) = match password {
+                Some(p) => (p, false),
+                None => (random_password()?, true),
+            };
+            let kp = KeyPair::generate_encrypted_keypair(Some(password.clone()))?;
             let pk_text = kp.pk.to_box()?.to_string();
-            std::fs::write("minisign.key", kp.sk.to_box(Some("Transkribera"))?.to_string())?;
-            std::fs::write("minisign.pub", &pk_text)?;
+            write_private(&dir.join("minisign.key"), &kp.sk.to_box(Some("Transkribera"))?.to_string())?;
+            std::fs::write(dir.join("minisign.pub"), &pk_text)?;
+            if generated {
+                write_private(&dir.join("minisign.password"), &password)?;
+            }
             let b64 = pk_text.lines().last().unwrap_or("").trim();
-            println!("Klart. Filer: minisign.key (HEMLIG, lägg i GitHub Secrets) och minisign.pub.");
+            println!("Klart. Filer i {}: minisign.key (HEMLIG){}, minisign.pub.", dir.display(),
+                if generated { ", minisign.password (HEMLIG)" } else { "" });
             println!("Publik nyckel att klistra in i updater.rs (PUBLIC_KEY):\n{b64}");
         }
         Some("sign") => {
@@ -50,4 +61,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     Ok(())
+}
+
+/// 32 slumpmässiga tecken (a–z, A–Z, 0–9) ur operativsystemets slumptalskälla.
+fn random_password() -> Result<String, Box<dyn std::error::Error>> {
+    use std::io::Read;
+    const ABC: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    let mut f = std::fs::File::open("/dev/urandom")?;
+    let mut out = String::new();
+    let mut b = [0u8; 1];
+    while out.len() < 32 {
+        f.read_exact(&mut b)?;
+        // 248 = största multipel av 62 under 256 → ingen snedfördelning
+        if b[0] < 248 {
+            out.push(ABC[(b[0] % 62) as usize] as char);
+        }
+    }
+    Ok(out)
+}
+
+/// Skriver en hemlig fil som bara ägaren får läsa (0600 på Unix).
+fn write_private(path: &std::path::Path, text: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    #[cfg(unix)]
+    let mut f = {
+        use std::os::unix::fs::OpenOptionsExt;
+        std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(path)?
+    };
+    #[cfg(not(unix))]
+    let mut f = std::fs::OpenOptions::new().write(true).create_new(true).open(path)?;
+    f.write_all(text.as_bytes())
 }

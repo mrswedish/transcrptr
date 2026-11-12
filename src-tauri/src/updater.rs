@@ -19,7 +19,7 @@ use crate::types::ProgressPayload;
 
 /// Publik minisign-nyckel (andra raden i `.pub`-filen). Den hemliga nyckeln ligger bara i
 /// GitHub Secrets (`MINISIGN_KEY`). Tom nyckel = uppdatering avstängd (inget installeras).
-pub(crate) const PUBLIC_KEY: &str = "";
+pub(crate) const PUBLIC_KEY: &str = "RWTFStkVlPyjeRjruPSPaDUyBIoOBuO5VwSJPdoc6doB6Hx2Ki7HE0k9";
 
 const LATEST_URL: &str = "https://api.github.com/repos/mrswedish/transcrptr/releases/latest";
 const ASSET_NAME: &str = "Transkribera-portable.exe";
