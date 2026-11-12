@@ -104,7 +104,7 @@ avinstallation (se §5).
 Endast en enda domän kontaktas, och bara vid nedladdning av språkmodell:
 
 ```
-https://huggingface.co/KBLab/kb-whisper-{medium|large}/resolve/{main|strict}/...
+https://huggingface.co/KBLab/kb-whisper-{medium|large}/resolve/{main|strict}/...   (sedan v2.2.6 erbjuder gränssnittet bara medium/main; large och strict stöds i koden så att äldre nedladdningar fungerar)
 https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q8_0.bin
 https://huggingface.co/KlangAI/pianissimo-sv-onnx/resolve/<fast revision>/{encoder-model.int8.onnx,decoder_joint-model.int8.onnx,vocab.txt,config.json}
 https://huggingface.co/avencera/speakrs-models/resolve/<fast revision>/{segmentation-3.0.safetensors,wespeaker-multimask-tail.safetensors,plda_*.npy,…}  (valfri talaridentifiering, ca 33 MB)

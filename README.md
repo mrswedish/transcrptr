@@ -61,13 +61,12 @@ Windows är det stödda målet. Inspelning och mötesljud fungerar bara i Window
 
 ## 📦 Välj rätt modell
 
-Byt modell under **Inställningar → Modell**. Där finns fyra färdiga val, och du kan ladda ner flera och byta med ett klick.
+Byt modell under **Inställningar → Modell**. Där finns tre färdiga val, och du kan ladda ner flera och byta med ett klick.
 
 | Val i appen | Modell | Storlek | Språk | Passar för |
 |---|---|---|---|---|
 | **Snabbast** *(förvalt)* | Pianissimo | ~0,7 GB | Svenska | De flesta möten på vanliga datorer |
-| **Snabbare** | KB-whisper Medium | ~0,9 GB | Svenska | Bra kvalitet med stöd för markering av osäkra ord |
-| **Bästa kvalitet** | KB-whisper Large | ~2,0 GB | Svenska | Mest exakt, men tar betydligt längre tid |
+| **Noggrann** | KB-whisper Medium | ~0,9 GB | Svenska | Högre noggrannhet och markering av osäkra ord, men tar längre tid |
 | **Flera språk** | Whisper Large-v3-Turbo | ~1,5 GB | 100+ språk | Engelska facktermer, blandspråk, internationella möten |
 
 Första gången appen startar hämtas **Snabbast** automatiskt. Är språket engelska eller automatiskt (under Inställningar → Språk) används en nedladdad Whisper-modell i stället, eftersom Pianissimo bara kan svenska.
@@ -76,20 +75,15 @@ Första gången appen startar hämtas **Snabbast** automatiskt. Är språket eng
 
 [Pianissimo](https://klang.ai/pianissimo-sv/) från Klang AI är en svensk taligenkänningsmodell (finjusterad NVIDIA Parakeet TDT 0.6B) som körs via ONNX Runtime **på processorn** — inget grafikkort behövs. Standardmodell från och med v1.8.0 och avsedd att gå snabbare än Whisper på vanliga datorer. På en 27 minuter lång inspelning tog transkriberingen ca 2 minuter på en arbetslaptop (Ryzen).
 
-**Nackdelar:** bara svenska, ingen ordnivå-markering av osäkra ord, och något högre felfrekvens än KB-whisper Large i Klangs egna tester. Kräver Microsofts VC++-runtime, som finns på praktiskt taget alla Windows-datorer.
+**Nackdelar:** bara svenska, ingen ordnivå-markering av osäkra ord, och något högre felfrekvens än KB-whisper i Klangs egna tester. Kräver Microsofts VC++-runtime, som finns på praktiskt taget alla Windows-datorer.
 
 Modellvikterna licensieras under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) (Klang AI, baserad på NVIDIA Parakeet TDT 0.6B v3). Förbehandling och avkodning följer den MIT-licensierade referensimplementationen i [Avskrift](https://github.com/Pluggentipsar/avskrift). Se `NOTICE`.
 
-### KB-whisper — "Snabbare" och "Bästa kvalitet" (svenska)
+### KB-whisper — "Noggrann" (svenska)
 
-[KB-whisper](https://huggingface.co/KBLab/kb-whisper-small) från Kungliga biblioteket, specialtränad på 50 000+ timmar svenskt tal. Alla modeller hämtas i formatet **q5_0**, som är ca 40 % mindre än standardformatet med i princip identisk kvalitet.
+[KB-whisper](https://huggingface.co/KBLab/kb-whisper-small) från Kungliga biblioteket, specialtränad på 50 000+ timmar svenskt tal. Medium-modellen hämtas i formatet **q5_0**, som är ca 40 % mindre än standardformatet med i princip identisk kvalitet.
 
-| Modell | Storlek | Hastighet | Kvalitet |
-|--------|---------|-----------|----------|
-| **Medium** (*Snabbare*) | ~0,9 GB | ⚡⚡ | Mycket bra |
-| **Large** (*Bästa kvalitet*) | ~2,0 GB | ⚡ | Bäst |
-
-Välj **Ordagrann utskrift** i inställningarna innan nedladdning om du vill ha ett verbalt transkript som följer det talade nära (diktering, protokoll). Utan kryss städas texten lätt. Varje kombination av storlek och stil är en separat modell. Ordagrann utskrift finns inte för Flera språk.
+Har du laddat ned större eller ordagranna KB-modeller i en äldre version fungerar de fortfarande. Under **Inställningar → Modell** finns knappen **Rensa oanvända modeller** som tar bort dem och frigör diskutrymme.
 
 ### Whisper Turbo — "Flera språk"
 
@@ -163,7 +157,7 @@ Gå till [Releases](https://github.com/mrswedish/transcrptr/releases) för senas
 
 ### Om transkriberingen kraschar
 
-Pianissimo ("Snabbast") använder inte grafikkortet, så det här gäller bara **Whisper-modellerna** (Snabbare, Bästa kvalitet och Flera språk). Det enklaste är då att byta till **Snabbast** under Inställningar → Modell.
+Pianissimo ("Snabbast") använder inte grafikkortet, så det här gäller bara **Whisper-modellerna** (Noggrann och Flera språk). Det enklaste är då att byta till **Snabbast** under Inställningar → Modell.
 
 På datorer med **flera grafikkort eller en NPU** (t.ex. laptop med Intel Arc + NVIDIA, eller Intel AI Boost) kan Vulkan välja "fel" grafikkort och appen kraschar tyst när transkriberingen startar. Workaround:
 
