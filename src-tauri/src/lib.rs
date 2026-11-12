@@ -201,11 +201,14 @@ async fn transcribe_file(
             emit(0);
             let collect_samples = diar_dir.is_some();
             let (mut segs, diar_samples) = engine::run_file(engine.as_mut(), &mut dec, collect_samples, &cancel, &emit)?;
+            log_line(&format!("transcribe_file: alla delar klara, {} segment", segs.len()));
             drop(dec);
 
             if diar_dir.is_some() {
                 // Frigör modellen före talaridentifiering så att diariseringen får maximalt RAM.
+                log_line("transcribe_file: frigör motorn");
                 drop(engine);
+                log_line("transcribe_file: motorn frigjord");
             } else if let Ok(mut guard) = engine_cache.lock() {
                 *guard = Some(CachedEngine { key, engine });
             }
@@ -264,6 +267,7 @@ async fn transcribe_file(
                     log_line(&format!("transcribe_file: kunde inte autospara transcript.json: {e}"));
                 }
             }
+            log_line("transcribe_file: klar, returnerar till gränssnittet");
             Ok(segs)
         }))
         .unwrap_or_else(|p| Err(format!("Transkriberingen kraschade: {}.", engine::panic_msg(p))))
@@ -485,6 +489,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             logging::init_logging(&app.handle());
+            logging::install_crash_logging();
             log_line(&format!("=== app start v{} ===", env!("CARGO_PKG_VERSION")));
             log_line(&format!("num_cpus::get() = {}", num_cpus::get()));
             Ok(())

@@ -155,6 +155,7 @@ impl Engine for WhisperEngine {
             done.store(true, Ordering::Relaxed);
             r
         });
+        log_line("whisper: full() klar");
         res.map_err(|e| format!("Transkribering misslyckades: {e:?}"))?;
 
         let mut out = Vec::new();
@@ -178,6 +179,9 @@ impl Engine for WhisperEngine {
             }
             out.push(TranscriptSegment { start_ms: t0, end_ms: t1, text: trimmed, tokens, speaker_id: None });
         }
+        log_line(&format!("whisper: {} segment lästa, frigör state", out.len()));
+        drop(wstate);
+        log_line("whisper: state frigjort");
         Ok(out)
     }
 }
