@@ -317,6 +317,19 @@ pub(crate) fn is_network_path(path: &Path) -> bool {
     false
 }
 
+/// Öppnar en inspelningsmapp (`inspelning-…`) i Utforskaren. Bara riktiga sessionsmappar
+/// tillåts, så gränssnittet kan inte öppna godtyckliga sökvägar.
+#[tauri::command]
+pub(crate) fn open_session_folder(app_handle: AppHandle, path: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let p = PathBuf::from(&path);
+    let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    if !p.is_dir() || !is_session_folder(&name) {
+        return Err("Inte en inspelningsmapp.".to_string());
+    }
+    app_handle.opener().open_path(path, None::<&str>).map_err(|e| format!("Kunde inte öppna mappen: {e}"))
+}
+
 /// För varningen i inställningarna: ligger den valda mappen på nätverket?
 #[tauri::command]
 pub(crate) fn is_network_folder(path: String) -> bool {

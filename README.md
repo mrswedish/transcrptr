@@ -177,7 +177,7 @@ På datorer med **flera grafikkort eller en NPU** (t.ex. laptop med Intel Arc + 
 2. Ange ett **GPU-index** under GPU-acceleration: testa `0`, sedan `1`, sedan `2` osv tills transkriberingen fungerar — detta tvingar Whisper att bara använda just det grafikkortet.
 3. Om inget GPU-index fungerar: sänk **CPU-trådar för Whisper** till **4** och stäng av **GPU-acceleration** — det är långsammare men ska inte krascha.
 
-Om problemet kvarstår: öppna **Inställningar → Avancerat → Öppna loggfil** och skicka loggens innehåll för diagnostik.
+Om problemet kvarstår: öppna **Inställningar → Felsökning**, tryck **Kopiera loggen** och klistra in den i ett mejl. Där finns också **Öppna loggfil**, **Visa i Utforskaren** och filens sökväg.
 
 ### Mapp för inspelningar
 

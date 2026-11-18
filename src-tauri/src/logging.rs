@@ -76,11 +76,64 @@ pub(crate) fn log_line(msg: &str) {
     }
 }
 
-#[tauri::command]
-pub(crate) fn get_log_path(app_handle: AppHandle) -> Result<String, String> {
+fn log_file(app_handle: &AppHandle) -> Result<PathBuf, String> {
     let dir = app_handle.path().app_local_data_dir()
         .map_err(|e| format!("Kunde inte hämta app_local_data_dir: {e}"))?;
-    Ok(dir.join("transcrptr.log").to_string_lossy().into_owned())
+    Ok(dir.join("transcrptr.log"))
+}
+
+#[tauri::command]
+pub(crate) fn get_log_path(app_handle: AppHandle) -> Result<String, String> {
+    Ok(log_file(&app_handle)?.to_string_lossy().into_owned())
+}
+
+// Öppning sker från Rust: opener-pluginens JS-API kräver en sökvägs-scope och nekade
+// loggfilen ("not allowed to open path"). Kommandona tar ingen sökväg från gränssnittet,
+// så de kan bara öppna just loggfilen.
+
+/// Öppnar loggfilen i standardprogrammet för textfiler (vanligen Anteckningar).
+#[tauri::command]
+pub(crate) fn open_log_file(app_handle: AppHandle) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let path = log_file(&app_handle)?;
+    if !path.exists() {
+        return Err("Loggfilen finns inte ännu.".to_string());
+    }
+    app_handle.opener().open_path(path.to_string_lossy(), None::<&str>)
+        .map_err(|e| format!("Kunde inte öppna loggfilen: {e}"))
+}
+
+/// Visar loggfilen markerad i Utforskaren.
+#[tauri::command]
+pub(crate) fn reveal_log_file(app_handle: AppHandle) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let path = log_file(&app_handle)?;
+    if !path.exists() {
+        return Err("Loggfilen finns inte ännu.".to_string());
+    }
+    app_handle.opener().reveal_item_in_dir(&path)
+        .map_err(|e| format!("Kunde inte visa loggfilen i Utforskaren: {e}"))
+}
+
+/// Högst så här mycket av loggens slut kopieras (nyaste raderna är de intressanta).
+const COPY_MAX_BYTES: usize = 300 * 1024;
+
+/// Loggens innehåll (de sista 300 kB) för knappen Kopiera loggen.
+#[tauri::command]
+pub(crate) fn read_log(app_handle: AppHandle) -> Result<String, String> {
+    let path = log_file(&app_handle)?;
+    let bytes = std::fs::read(&path).map_err(|_| "Loggfilen finns inte ännu.".to_string())?;
+    Ok(tail_text(&bytes, COPY_MAX_BYTES))
+}
+
+/// De sista `max` byten som text, utan en avhuggen första rad.
+fn tail_text(bytes: &[u8], max: usize) -> String {
+    if bytes.len() <= max {
+        return String::from_utf8_lossy(bytes).into_owned();
+    }
+    let tail = &bytes[bytes.len() - max..];
+    let start = tail.iter().position(|&b| b == b'\n').map(|i| i + 1).unwrap_or(0);
+    format!("[… äldre rader utelämnade …]\n{}", String::from_utf8_lossy(&tail[start..]))
 }
 
 /// JS skickar ett meddelande som skrivs till transcrptr.log. Används av JS för att
@@ -89,6 +142,24 @@ pub(crate) fn get_log_path(app_handle: AppHandle) -> Result<String, String> {
 #[tauri::command]
 pub(crate) fn log_message(msg: String) {
     log_line(&msg);
+}
+
+#[cfg(test)]
+mod tail_tests {
+    use super::tail_text;
+
+    #[test]
+    fn kort_logg_kopieras_hel() {
+        assert_eq!(tail_text(b"a\nb\n", 100), "a\nb\n");
+    }
+
+    #[test]
+    fn lang_logg_borjar_pa_hel_rad() {
+        let s = tail_text(b"rad ett\nrad tva\nrad tre\n", 12);
+        assert!(s.ends_with("rad tre\n"));
+        assert!(!s.contains("ett"));
+        assert!(s.starts_with("[… äldre rader"));
+    }
 }
 
 #[cfg(test)]

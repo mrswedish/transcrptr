@@ -476,19 +476,35 @@ async function setupEventListeners() {
     });
   }
 
-  // Öppna loggfil för diagnostik
-  const btnShowLog = document.getElementById("btn-show-log");
-  if (btnShowLog) {
-    btnShowLog.addEventListener("click", async () => {
+  // Felsökning: loggfilen öppnas, visas och kopieras via Rust (opener-pluginens JS-API
+  // nekade sökvägen). Sökvägen visas också som markerbar text.
+  invoke("get_log_path").then(p => {
+    const el = document.getElementById("log-path");
+    if (el) el.textContent = p;
+  }).catch(() => {});
+  const logAction = (id, command) => {
+    document.getElementById(id)?.addEventListener("click", async () => {
       try {
-        const logPath = await invoke("get_log_path");
-        await window.__TAURI__.opener.openPath(logPath);
+        await invoke(command);
       } catch (e) {
         const msg = typeof e === "string" ? e : e.message || String(e);
-        await message(`Kunde inte öppna loggfilen: ${msg}`, { title: "Fel", kind: "error" });
+        await message(`${msg} Använd Kopiera loggen i stället.`, { title: "Loggfilen", kind: "error" });
       }
     });
-  }
+  };
+  logAction("btn-show-log", "open_log_file");
+  logAction("btn-reveal-log", "reveal_log_file");
+  document.getElementById("btn-copy-log")?.addEventListener("click", async () => {
+    try {
+      const text = await invoke("read_log");
+      await copyText(text);
+      announce("Loggen är kopierad. Klistra in den i ett mejl eller meddelande.");
+      showNotice("Loggen är kopierad. Klistra in den i ett mejl eller meddelande.");
+    } catch (e) {
+      const msg = typeof e === "string" ? e : e.message || String(e);
+      await message(`Kunde inte kopiera loggen: ${msg}`, { title: "Loggfilen", kind: "error" });
+    }
+  });
 
   // (v1.5: recover-knappen i settings borttagen — importeras nu via "Öppna" i headern)
 }
@@ -2338,6 +2354,24 @@ async function processAudioFile(filePath) {
   }
 }
 
+// Kopierar text till urklipp; faller tillbaka på en dold textruta om urklipps-API:t nekas.
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return;
+  } catch (_) {}
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.setAttribute("readonly", "");
+  ta.style.position = "fixed";
+  ta.style.opacity = "0";
+  document.body.appendChild(ta);
+  ta.select();
+  const ok = document.execCommand("copy");
+  ta.remove();
+  if (!ok) throw new Error("Urklipp är inte tillgängligt");
+}
+
 // -------------------------------------------------------------
 // Copy Logic
 // -------------------------------------------------------------
@@ -2473,7 +2507,7 @@ document.getElementById("session-name-input")?.addEventListener("keydown", (e) =
 // Klick på sökvägen i post-recording-dialogen öppnar sessionsmappen i Utforskaren
 document.getElementById("post-recording-path")?.addEventListener("click", async () => {
   const p = document.getElementById("post-recording-path")?.dataset.path;
-  if (p) { try { await window.__TAURI__.opener.openPath(p); } catch (_) {} }
+  if (p) { try { await invoke("open_session_folder", { path: p }); } catch (e) { logToFile(`open_session_folder: ${e}`); } }
 });
 document.getElementById("btn-save-audio-only")?.addEventListener("click", async () => {
   await applySessionName();
@@ -2817,8 +2851,7 @@ document.getElementById("vocab-delete")?.addEventListener("click", async () => {
 });
 document.getElementById("vocab-open-dir")?.addEventListener("click", async () => {
   try {
-    const dir = await invoke("vocab_dir");
-    await window.__TAURI__.opener.openPath(dir);
+    await invoke("open_vocab_dir");
   } catch (err) { logToFile(`vocab-open-dir: ${err}`); }
 });
 invoke("vocab_dir").then(d => { const el = document.getElementById("vocab-dir"); if (el) el.textContent = d; }).catch(() => {});
@@ -2907,7 +2940,7 @@ async function checkCrashAndGpu() {
         setUseGpu(false);
         showNotice("Förra transkriberingen avbröts oväntat. GPU-acceleration har stängts av, så Whisper kör på processorn i stället. Du kan slå på den igen under Inställningar → Avancerat.");
       } else {
-        showNotice("Förra transkriberingen avbröts oväntat. Om det händer igen: skicka loggfilen (Inställningar → Avancerat) till den som stöttar appen.");
+        showNotice("Förra transkriberingen avbröts oväntat. Om det händer igen: skicka loggen (Inställningar → Felsökning → Kopiera loggen) till den som stöttar appen.");
       }
     }
   } catch (e) {

@@ -382,13 +382,25 @@
           <p id="update-status" class="hint mt-2" role="status"></p>
         </section>
 
+        <!-- Felsökning -->
+        <section class="section" aria-labelledby="log-title">
+          <h3 id="log-title" class="section-title">Felsökning</h3>
+          <p class="hint mb-2">Loggfilen visar vad appen gjorde, steg för steg, och eventuella krascher. Den innehåller inget av det som sades. Skicka den till den som stöttar appen om något går fel.</p>
+          <div class="flex flex-wrap gap-2">
+            <button id="btn-copy-log" type="button" class="btn btn-sm">Kopiera loggen</button>
+            <button id="btn-show-log" type="button" class="btn btn-sm">Öppna loggfil</button>
+            <button id="btn-reveal-log" type="button" class="btn btn-sm">Visa i Utforskaren</button>
+          </div>
+          <p class="hint mt-2">Fil: <span id="log-path" class="font-mono text-[13px] select-all break-all"></span></p>
+        </section>
+
         <!-- Avancerat -->
         <section class="section border-b-0">
           <details id="advanced-settings" class="group">
             <summary class="flex items-center gap-1 cursor-pointer select-none section-title mb-0">
               <span class="material-symbols-outlined transition-transform group-open:rotate-90">chevron_right</span>
               Avancerat
-              <span class="text-sm font-normal text-muted ml-1">prestanda och felsökning</span>
+              <span class="text-sm font-normal text-muted ml-1">prestanda och grafikkort</span>
             </summary>
             <div class="flex flex-col gap-6 pt-5">
 
@@ -424,12 +436,6 @@
                 </div>
                 <p class="hint mb-2">Osäkra ord får prickad understrykning i segmentvyn: <span class="tok tok-low">osäker</span> eller <span class="tok tok-very-low">mycket osäker</span>. Högre värde markerar fler ord.</p>
                 <input type="range" id="confidence-threshold-slider" min="10" max="99" value="60" step="1" class="w-full accent-primary cursor-pointer">
-              </div>
-
-              <div>
-                <h4 class="text-sm font-semibold">Diagnostiklogg</h4>
-                <p class="hint mb-2">Loggfilen hjälper vid felsökning och innehåller transkriberingssteg och eventuella krascher. Den roteras automatiskt en gång i veckan.</p>
-                <button id="btn-show-log" class="btn btn-sm">Öppna loggfil</button>
               </div>
 
               <div class="pt-4 border-t border-line">

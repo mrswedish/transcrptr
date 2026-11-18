@@ -58,4 +58,4 @@ Kryssa i **Identifiera talare** *innan* du transkriberar. Första gången hämta
 
 **Gör om.** Vill du prova en annan modell? Byt under **Inställningar → Modell** och tryck **Gör om**.
 
-**Går något fel?** Kraschar transkriberingen eller fungerar inte mötesljudet? Se [README](README.md#om-transkriberingen-kraschar). Inställningarna har en knapp **Öppna loggfil** som hjälper vid felsökning.
+**Går något fel?** Kraschar transkriberingen eller fungerar inte mötesljudet? Se [README](README.md#om-transkriberingen-kraschar). Under **Inställningar → Felsökning** kopierar du loggen med **Kopiera loggen** och klistrar in den i ett mejl till den som stöttar appen.
