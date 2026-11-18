@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex};
 use tauri_plugin_dialog::DialogExt;
 
 mod audio;
+mod crashguard;
 mod decode;
 mod diarization;
 mod engine;
@@ -141,6 +142,9 @@ async fn transcribe_file(
     // avkodas, transkriberas och kastas bort innan nästa börjar.
     let segments = tokio::task::spawn_blocking(move || -> Result<Vec<TranscriptSegment>, String> {
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<Vec<TranscriptSegment>, String> {
+            // Kraschvakt: markören ligger kvar om appen dör inne i en inbyggd komponent.
+            let gpu_run = size != pianissimo::ENGINE_ID && use_gpu.unwrap_or(true);
+            let _run_guard = crashguard::RunGuard::start(&app, &size, gpu_run);
             // Öppna filen först så att ett läsfel visas innan den långsamma modellen laddas.
             let mut dec = StreamingDecoder::open(&file_path)?;
             let mut engine: Box<dyn engine::Engine> = if size == pianissimo::ENGINE_ID {
@@ -163,7 +167,9 @@ async fn transcribe_file(
             };
             emit(0);
             let mut segs = engine::run_file(engine.as_mut(), &mut dec, &cancel, &emit)?;
+            log_line(&format!("transcribe_file: alla delar klara, {} segment", segs.len()));
             drop(engine);
+            log_line("transcribe_file: motorn frigjord");
             drop(dec);
 
             if !vocab_entries.is_empty() {
@@ -209,6 +215,7 @@ async fn transcribe_file(
                     }
                 }
             }
+            log_line("transcribe_file: klar, returnerar till gränssnittet");
             Ok(segs)
         }))
         .unwrap_or_else(|p| Err(format!("Transkriberingen kraschade: {}.", engine::panic_msg(p))))
@@ -324,6 +331,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             logging::init_logging(&app.handle());
+            logging::install_crash_logging();
             log_line(&format!("=== app start v{} ===", env!("CARGO_PKG_VERSION")));
             log_line(&format!("num_cpus::get() = {}", num_cpus::get()));
             updater::cleanup_old_executable();
@@ -352,6 +360,8 @@ pub fn run() {
             cancel_transcription,
             get_app_version,
             session::get_default_recording_dir,
+            session::is_network_folder,
+            session::legacy_network_recording_dir,
             session::recover_session,
             session::count_recordings,
             session::list_recordings,
@@ -366,8 +376,16 @@ pub fn run() {
             append_mic_chunk,
             session::get_recording_path,
             session::rename_session,
-            allow_asset_path
+            allow_asset_path,
+            crashguard::take_crash_marker,
+            crashguard::get_gpu_info
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        .run(|app, event| {
+            // Stängs appen normalt mitt i en transkribering är det ingen krasch.
+            if let tauri::RunEvent::Exit = event {
+                crashguard::clear_on_exit(app);
+            }
+        });
 }

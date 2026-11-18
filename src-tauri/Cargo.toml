@@ -1,6 +1,6 @@
 [package]
 name = "tauri-app"
-version = "2.4.1"
+version = "2.4.2"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -56,6 +56,7 @@ whisper-rs = { version = "0.16", features = ["metal"] }
 whisper-rs = { version = "0.16", features = ["vulkan"] }
 windows = { version = "0.58", features = [
     "Win32_Foundation",
+    "Win32_Graphics_Dxgi",
     "Win32_Media_Audio",
     "Win32_Media_Audio_Endpoints",
     "Win32_Security",

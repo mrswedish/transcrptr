@@ -50,7 +50,7 @@ Allt är **per användare**. Inget skrivs till maskingemensamma platser.
 | **Ordlistor** | `%APPDATA%\com.patriksvensk.transcrptr\ordlistor.json` | kB | En fil med alla ordlistor. Kan säkerhetskopieras. Se §3. |
 | **Loggfil** | `%LOCALAPPDATA%\com.patriksvensk.transcrptr\transcrptr.log` (och `.old.log`) | Max **4 MB** (roteras var 7:e dag eller vid 2 MB) | Diagnostik. Ligger i Local eftersom den är maskinspecifik och inte bör roama. |
 | **Inställningar** (localStorage) | `%LOCALAPPDATA%\com.patriksvensk.transcrptr\EBWebView\Default\Local Storage\` | Några MB | WebView2:s egen lagring. Se §3. |
-| **Inspelningar** | Användarvald mapp, eller default bredvid programfilen (`<mapp med .exe>\Transkribera-Inspelningar\`). Om mappen är skrivskyddad (t.ex. `C:\Program Files`) faller appen automatiskt tillbaka till `%LOCALAPPDATA%\com.patriksvensk.transcrptr\Transkribera-Inspelningar\`. | **~115 MB per timme** | Medvetet nära användaren när det går, med skrivbar fallback för MSI-installationer. |
+| **Inspelningar** | Användarvald mapp, eller default bredvid programfilen (`<mapp med .exe>\Transkribera-Inspelningar\`). Om mappen är skrivskyddad (t.ex. `C:\Program Files`) eller ligger på en nätverksdisk (UNC eller mappad enhet, från v2.4.2) faller appen automatiskt tillbaka till `%LOCALAPPDATA%\com.patriksvensk.transcrptr\Transkribera-Inspelningar\`. | **~115 MB per timme** | Medvetet nära användaren när det går, med skrivbar fallback för MSI-installationer. |
 | **Exporterad text/ljud** | Där användaren väljer i spardialogen | Varierar | Användarstyrt. |
 
 ### Sessionsmappar
@@ -238,7 +238,7 @@ skiljer sig åt enligt tabellen nedan; rekommendationen är NSIS-setup.
 
 ### MSI-installation och skrivskyddade programkataloger
 
-Standardmappen för inspelningar utgår från mappen där programfilen ligger, men verifieras med ett skrivtest vid uppstart. Vid MSI-installation i `C:\Program Files\Transkribera\` är mappen skrivskyddad för vanliga användare, varpå appen automatiskt faller tillbaka till `%LOCALAPPDATA%\com.patriksvensk.transcrptr\Transkribera-Inspelningar\`.
+Standardmappen för inspelningar utgår från mappen där programfilen ligger, men verifieras med ett skrivtest vid uppstart. Vid MSI-installation i `C:\Program Files\Transkribera\` är mappen skrivskyddad för vanliga användare, varpå appen automatiskt faller tillbaka till `%LOCALAPPDATA%\com.patriksvensk.transcrptr\Transkribera-Inspelningar\`. Samma fallback gäller från v2.4.2 när programfilen ligger på en nätverksdisk (UNC-sökväg eller mappad nätverksenhet, `GetDriveTypeW` = `DRIVE_REMOTE`).
 
 ---
 
@@ -315,12 +315,13 @@ src-tauri/
   src/audio.rs                  Inspelning, resampling, WAV-mixning
   src/application_loopback.rs   WASAPI loopback (Windows)
   src/session.rs                Sessionsmappar, återställning, inspelningslista
-  src/logging.rs                Loggfilen
+  src/logging.rs                Loggfilen och kraschloggning
+  src/crashguard.rs             Kraschvakt och val av grafikkort
   src/updater.rs                Versionskontroll, signaturkontroll och självuppdatering (portabel)
   vendor/speakrs/               Lokalt ändrad kopia av speakrs (se TRANSKRIBERA-PATCH.md)
 ```
 
-Frontend och backend kommunicerar via Tauris `invoke`-brygga med **36 namngivna kommandon**.
+Frontend och backend kommunicerar via Tauris `invoke`-brygga med **41 namngivna kommandon**.
 Det är den enda vägen för JavaScript att nå filsystem eller ljudenheter.
 
 ### Nyckelbeslut värda att känna till vid förvaltning
@@ -328,6 +329,28 @@ Det är den enda vägen för JavaScript att nå filsystem eller ljudenheter.
 **All transkribering körs på separat tråd** (`spawn_blocking`) och omges av panikhantering
 (`catch_unwind`). Det gäller båda motorerna, och särskilt Whisper, eftersom whisper.cpp är C++-kod
 som kan krascha hårt. Utan detta skulle en segfault ta ner hela programmet.
+
+**`catch_unwind` fångar bara Rust-panik**, inte inbyggda krascher (åtkomstfel i en drivrutin,
+otillåten instruktion). Därför finns från v2.4.2 tre lager till:
+
+- **Kraschloggning** (`logging.rs install_crash_logging`): en panikhook och ett Windows-undantagsfilter
+  (`SetUnhandledExceptionFilter`) skriver `KRASCH: undantag 0x<kod> på adress … i <modul>` till
+  loggen innan processen dör. Vanliga koder: `0xC000001D` otillåten instruktion (CPU saknar en
+  instruktion i bygget), `0xC0000005` åtkomstfel (ofta drivrutin), `0xC0000006` sidfel vid inläsning
+  (exe:n på nätverket tappade anslutningen).
+- **Kraschvakt** (`crashguard.rs`): `transcribe-run.json` i `%APPDATA%\com.patriksvensk.transcrptr\`
+  skrivs när en transkribering börjar och tas bort när den slutar (även vid fel och panik, och när
+  appen stängs normalt). Ligger den kvar vid start visar gränssnittet en notis och stänger av
+  GPU-acceleration om Whisper körde på grafikkortet.
+- **Intel-grafik:** `get_gpu_info` listar grafikkorten via DXGI (startar inte Vulkan). Har datorn
+  bara Intel-grafik och användaren aldrig valt själv blir `useGpu` av som standard.
+
+**Byggflaggor mot tysta krascher:** whisper.cpp byggs med `GGML_NATIVE=OFF` och AVX/AVX2/FMA/F16C
+på (miljövariabler i `build-windows.yml`, som `whisper-rs-sys` skickar vidare till CMake). Annars
+optimeras bygget för CI-maskinens processor, och har den AVX-512 kraschar Whisper på datorer utan.
+`build.rs` länkar exe:n med `/SWAPRUN:NET`, så att Windows kopierar hela programfilen till
+växlingsfilen när den startas från en nätverksmapp, i stället för att läsa kod från servern under
+körningen.
 
 **Framstegsrapportering sker via pollning**, inte via callback från C++. Att skicka händelser
 direkt från whisper.cpp:s callback orsakade tidigare tysta krascher över språkgränsen.

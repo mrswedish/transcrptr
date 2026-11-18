@@ -453,6 +453,7 @@ async function setupEventListeners() {
         if (typeof selected === "string" && selected) {
           recordingDir = selected;
           localStorage.setItem("recordingDir", selected);
+          updateNetworkDirHint();
           const dirInput = document.getElementById("recording-dir-path");
           if (dirInput) dirInput.value = selected;
         }
@@ -598,6 +599,15 @@ async function initialize() {
     }
     const dirInput = document.getElementById("recording-dir-path");
     if (dirInput) dirInput.value = recordingDir;
+    updateNetworkDirHint();
+    if (!(saved && saved.trim()) && !localStorage.getItem("legacyDirNoticeShown")) {
+      const legacy = await invoke("legacy_network_recording_dir");
+      if (legacy) {
+        localStorage.setItem("legacyDirNoticeShown", "true");
+        logToFile(`inspelningsmapp: exe ligger på nätverket, nya inspelningar sparas i ${recordingDir}; äldre finns kvar i ${legacy}`);
+        showNotice(`Nya inspelningar sparas nu lokalt på datorn i stället för på nätverksdisken. Tidigare inspelningar finns kvar i ${legacy}.`);
+      }
+    }
   } catch (e) {
     console.warn("Kunde inte hämta inspelningsmapp:", e);
   }
@@ -653,6 +663,7 @@ async function initialize() {
   updateFooter();
   refreshModelList();
   checkInterruptedRecordings();
+  await checkCrashAndGpu();
   initUpdates();
   // Visa systemljud-toggle + GPU-inställning bara på Windows (Application Loopback API)
   if (navigator.userAgent.includes('Windows')) {
@@ -2864,6 +2875,56 @@ function showNotice(text, action) {
 function hideNotice() { noticeBar?.classList.add("hidden"); noticeActionHandler = null; }
 noticeAction?.addEventListener("click", () => { const h = noticeActionHandler; if (h) h(); });
 document.getElementById("notice-close")?.addEventListener("click", hideNotice);
+
+// Varning under mappvalet när inspelningarna hamnar på en nätverksdisk.
+async function updateNetworkDirHint() {
+  const hint = document.getElementById("recording-dir-network");
+  if (!hint) return;
+  let network = false;
+  try { network = !!recordingDir && await invoke("is_network_folder", { path: recordingDir }); } catch (_) {}
+  hint.classList.toggle("hidden", !network);
+}
+
+// ── Kraschvakt och grafikkort ───────────────────────────────────────────────
+// Rust lämnar en markörfil under transkriberingen. Finns den kvar vid start dog appen förra
+// gången (oftast en grafikdrivrutin): stäng då av GPU om den användes. Har användaren aldrig
+// valt själv och datorn bara har Intel-grafik blir CPU standard (Intels Vulkan-drivrutiner
+// har kraschat Whisper).
+function setUseGpu(value) {
+  useGpu = value;
+  localStorage.setItem("useGpu", String(value));
+  const t = document.getElementById("gpu-toggle");
+  if (t) t.checked = value;
+}
+
+async function checkCrashAndGpu() {
+  if (!navigator.userAgent.includes("Windows")) return;
+  try {
+    const marker = await invoke("take_crash_marker");
+    if (marker) {
+      logToFile(`kraschvakt: förra körningen avslutades oväntat (motor=${marker.engine}, gpu=${marker.gpu})`);
+      if (marker.gpu && useGpu) {
+        setUseGpu(false);
+        showNotice("Förra transkriberingen avbröts oväntat. GPU-acceleration har stängts av, så Whisper kör på processorn i stället. Du kan slå på den igen under Inställningar → Avancerat.");
+      } else {
+        showNotice("Förra transkriberingen avbröts oväntat. Om det händer igen: skicka loggfilen (Inställningar → Avancerat) till den som stöttar appen.");
+      }
+    }
+  } catch (e) {
+    logToFile(`kraschvakt: kunde inte läsa markören: ${e}`);
+  }
+  if (localStorage.getItem("useGpu") === null) {
+    try {
+      const info = await invoke("get_gpu_info");
+      if (info && info.intelOnly) {
+        setUseGpu(false);
+        logToFile(`grafikkort: bara Intel (${info.adapters.join(", ")}), Whisper kör på processorn som standard`);
+      }
+    } catch (e) {
+      logToFile(`grafikkort: kunde inte läsa grafikkorten: ${e}`);
+    }
+  }
+}
 
 // ── Uppdateringar ───────────────────────────────────────────────────────────
 // Rust frågar GitHub (webbvyn får inte ansluta själv) och byter ut den portabla filen efter

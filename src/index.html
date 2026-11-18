@@ -310,6 +310,7 @@
             <input type="text" id="recording-dir-path" readonly class="field font-mono text-[13px] truncate" placeholder="Standardmapp" />
             <button id="btn-browse-recording-dir" class="btn shrink-0">Bläddra…</button>
           </div>
+          <p id="recording-dir-network" class="hidden hint mt-2" role="note">Mappen ligger på en nätverksdisk. Inspelningen skrivs då över nätverket, vilket går långsammare och kan avbrytas om anslutningen försvinner. Välj gärna en lokal mapp, till exempel i Hämtade filer.</p>
           <p id="recordings-usage" class="hint mt-2"></p>
 
           <button id="btn-stereo-mix-help" type="button" class="hidden btn btn-sm mt-4">
@@ -404,7 +405,7 @@
                 <label class="flex items-start gap-3 cursor-pointer select-none">
                   <input type="checkbox" id="gpu-toggle" class="w-5 h-5 accent-primary cursor-pointer shrink-0 mt-1" checked>
                   <span class="text-sm font-semibold">GPU-acceleration (Vulkan)
-                    <span class="block hint font-normal">Använder grafikkortet för snabbare transkribering med Whisper. Stäng av om du har flera grafikkort eller en NPU, äldre eller integrerade grafikkort, eller om transkriberingen kraschar.</span>
+                    <span class="block hint font-normal">Använder grafikkortet för snabbare transkribering med Whisper. Av som standard på datorer med bara Intel-grafik, och stängs av automatiskt om en transkribering kraschar. Stäng av om du har flera grafikkort eller en NPU, äldre eller integrerade grafikkort, eller om transkriberingen kraschar.</span>
                   </span>
                 </label>
                 <div class="flex items-center gap-3">

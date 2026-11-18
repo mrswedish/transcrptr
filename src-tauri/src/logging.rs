@@ -117,3 +117,70 @@ mod tests {
     }
 }
 
+
+
+/// Loggar panik (med plats) och, på Windows, ostädade systemundantag (t.ex. åtkomstfel i en
+/// grafikdrivrutin) till loggfilen. Utan detta försvinner appen tyst vid en inbyggd krasch.
+pub(crate) fn install_crash_logging() {
+    std::panic::set_hook(Box::new(|info| {
+        let place = info.location().map(|l| format!("{}:{}", l.file(), l.line())).unwrap_or_default();
+        let msg = if let Some(s) = info.payload().downcast_ref::<&str>() { s.to_string() }
+            else if let Some(s) = info.payload().downcast_ref::<String>() { s.clone() }
+            else { "okänt".to_string() };
+        log_line(&format!("PANIK: {msg} ({place})"));
+    }));
+    #[cfg(windows)]
+    win_crash::install();
+}
+
+#[cfg(windows)]
+mod win_crash {
+    use super::log_line;
+
+    #[repr(C)]
+    struct ExceptionRecord {
+        code: u32,
+        flags: u32,
+        record: *mut ExceptionRecord,
+        address: *mut core::ffi::c_void,
+        n_params: u32,
+        info: [usize; 15],
+    }
+    #[repr(C)]
+    struct ExceptionPointers {
+        record: *mut ExceptionRecord,
+        context: *mut core::ffi::c_void,
+    }
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn SetUnhandledExceptionFilter(
+            filter: Option<unsafe extern "system" fn(*const ExceptionPointers) -> i32>,
+        ) -> *mut core::ffi::c_void;
+        fn GetModuleHandleExW(flags: u32, addr: *const core::ffi::c_void, out: *mut *mut core::ffi::c_void) -> i32;
+        fn GetModuleFileNameW(module: *mut core::ffi::c_void, buf: *mut u16, len: u32) -> u32;
+    }
+
+    unsafe extern "system" fn handler(p: *const ExceptionPointers) -> i32 {
+        if !p.is_null() && !(*p).record.is_null() {
+            let rec = &*(*p).record;
+            let mut module = String::from("okänd modul");
+            let mut h: *mut core::ffi::c_void = core::ptr::null_mut();
+            // FROM_ADDRESS (4) | UNCHANGED_REFCOUNT (2)
+            if GetModuleHandleExW(4 | 2, rec.address, &mut h) != 0 {
+                let mut buf = [0u16; 260];
+                let n = GetModuleFileNameW(h, buf.as_mut_ptr(), buf.len() as u32) as usize;
+                if n > 0 { module = String::from_utf16_lossy(&buf[..n]); }
+            }
+            log_line(&format!(
+                "KRASCH: undantag 0x{:08X} på adress {:p} i {}",
+                rec.code, rec.address, module
+            ));
+        }
+        0 // EXCEPTION_CONTINUE_SEARCH: Windows hanterar krashen som vanligt
+    }
+
+    pub(super) fn install() {
+        unsafe { SetUnhandledExceptionFilter(Some(handler)); }
+    }
+}

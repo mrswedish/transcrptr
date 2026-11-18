@@ -78,6 +78,15 @@ jobs:
           CXXFLAGS: /MT
           CMAKE_POLICY_DEFAULT_CMP0091: NEW
           CMAKE_MSVC_RUNTIME_LIBRARY: MultiThreaded
+          # whisper.cpp optimeras annars för byggmaskinens processor (GGML_NATIVE=ON). Har den
+          # AVX-512 kraschar Whisper tyst på datorer utan (de flesta Intel-laptops). Bygg för AVX2,
+          # som alla x86-processorer sedan ca 2013 har. whisper-rs-sys skickar GGML_* till CMake.
+          GGML_NATIVE: 'OFF'
+          GGML_AVX: 'ON'
+          GGML_AVX2: 'ON'
+          GGML_FMA: 'ON'
+          GGML_F16C: 'ON'
+          GGML_AVX512: 'OFF'
         with:
           tagName: transcrptr-v__VERSION__
           releaseName: 'Transkribera v__VERSION__'

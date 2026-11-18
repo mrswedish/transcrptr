@@ -266,16 +266,76 @@ fn is_dir_writable(dir: &std::path::Path) -> bool {
 /// (Downloads för portable .exe, %LOCALAPPDATA% för NSIS).
 /// Om .exe-mappen är skrivskyddad (t.ex. MSI-installation i C:\Program Files\) faller vi
 /// tillbaka till %LOCALAPPDATA%\com.patriksvensk.transcrptr\Transkribera-Inspelningar.
+/// Ligger exe:n på en nätverksdisk (t.ex. ett skrivbord som omdirigerats till `\\server\…`)
+/// används den lokala mappen i stället: inspelning direkt till nätverket blir långsam och kan
+/// avbrytas om anslutningen försvinner.
 pub(crate) fn default_recording_dir(app_handle: &AppHandle) -> Result<PathBuf, String> {
-    if let Some(exe_dir) = std::env::current_exe().ok().and_then(|p| p.parent().map(|p| p.to_path_buf())) {
+    if let Some(exe_dir) = exe_dir() {
         let candidate = exe_dir.join("Transkribera-Inspelningar");
-        if is_dir_writable(&candidate) {
+        if !is_network_path(&exe_dir) && is_dir_writable(&candidate) {
             return Ok(candidate);
         }
     }
     let base = app_handle.path().app_local_data_dir()
         .map_err(|e| format!("Kunde inte hämta app_local_data_dir: {e}"))?;
     Ok(base.join("Transkribera-Inspelningar"))
+}
+
+fn exe_dir() -> Option<PathBuf> {
+    std::env::current_exe().ok().and_then(|p| p.parent().map(|p| p.to_path_buf()))
+}
+
+/// UNC-sökväg (`\\server\share`, även `\\?\UNC\…`). Ren strängkontroll, testbar på alla plattformar.
+fn is_unc(path: &str) -> bool {
+    let p = path.replace('/', "\\");
+    if let Some(rest) = p.strip_prefix(r"\\?\") {
+        return rest.get(..4).is_some_and(|h| h.eq_ignore_ascii_case("UNC\\"));
+    }
+    p.starts_with(r"\\") && !p.starts_with(r"\\.\")
+}
+
+/// Nätverkssökväg: UNC, eller (Windows) en enhetsbokstav som är en mappad nätverksenhet.
+pub(crate) fn is_network_path(path: &Path) -> bool {
+    let s = path.to_string_lossy();
+    if is_unc(&s) {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        let b = s.as_bytes();
+        let b = if s.starts_with(r"\\?\") { &b[4..] } else { b };
+        if b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':' {
+            #[link(name = "kernel32")]
+            extern "system" {
+                fn GetDriveTypeW(root: *const u16) -> u32;
+            }
+            let root: Vec<u16> = [b[0] as u16, b':' as u16, b'\\' as u16, 0].to_vec();
+            const DRIVE_REMOTE: u32 = 4;
+            return unsafe { GetDriveTypeW(root.as_ptr()) } == DRIVE_REMOTE;
+        }
+    }
+    false
+}
+
+/// För varningen i inställningarna: ligger den valda mappen på nätverket?
+#[tauri::command]
+pub(crate) fn is_network_folder(path: String) -> bool {
+    is_network_path(Path::new(&path))
+}
+
+/// Den gamla standardmappen bredvid exe:n, om exe:n ligger på nätverket och mappen redan har
+/// inspelningar. Gränssnittet berättar då att nya inspelningar hamnar lokalt.
+#[tauri::command]
+pub(crate) fn legacy_network_recording_dir() -> Option<String> {
+    let dir = exe_dir()?;
+    if !is_network_path(&dir) {
+        return None;
+    }
+    let old = dir.join("Transkribera-Inspelningar");
+    let has_sessions = fs::read_dir(&old).ok()?.flatten().any(|e| {
+        e.path().is_dir() && is_session_folder(&e.file_name().to_string_lossy())
+    });
+    has_sessions.then(|| old.to_string_lossy().into_owned())
 }
 
 #[tauri::command]
@@ -621,5 +681,25 @@ mod delete_recording_tests {
         assert!(validate_recording_path(&base, &sneaky).is_err());
         let _ = fs::remove_dir_all(&base);
         let _ = fs::remove_dir_all(&elsewhere);
+    }
+}
+
+#[cfg(test)]
+mod network_path_tests {
+    use super::is_unc;
+
+    #[test]
+    fn unc_kanns_igen() {
+        assert!(is_unc(r"\\jkp.ltjkpg.se\gem\Home03\lunte\Skrivbord"));
+        assert!(is_unc(r"\\?\UNC\server\share\mapp"));
+        assert!(is_unc("//server/share"));
+    }
+
+    #[test]
+    fn lokala_sokvagar_ar_inte_unc() {
+        assert!(!is_unc(r"C:\Users\lunte\Downloads"));
+        assert!(!is_unc(r"\\?\C:\Users\lunte"));
+        assert!(!is_unc(r"\\.\pipe\x"));
+        assert!(!is_unc("/Users/patrik"));
     }
 }
