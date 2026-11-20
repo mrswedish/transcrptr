@@ -57,7 +57,7 @@ Standardmodellen **Snabbast** är [Pianissimo](https://klang.ai/pianissimo-sv/) 
 
 ## 🖥️ Plattformsstöd
 
-Windows är det stödda målet. Inspelning och mötesljud fungerar bara i Windows-versionen; på Mac pausas utvecklingen tills vidare (filimport och transkribering finns kvar i koden men testas inte).
+Windows är det stödda målet. Inspelning och systemljud fungerar bara i Windows-versionen; på Mac pausas utvecklingen tills vidare (filimport och transkribering finns kvar i koden men testas inte).
 
 ## 📦 Välj rätt modell
 
@@ -110,11 +110,11 @@ Kulturum => Qulturum          ← exakt felstavning som ska bli rätt ord
 
 Listorna ligger i filen `ordlistor.json` i appens datamapp, så de kan säkerhetskopieras.
 
-## 🎙️ Spela in möten — Mötesljud (Windows)
+## 🎙️ Spela in möten — Systemljud (Windows)
 
 Det finns två sätt att spela in både din mikrofon och datorns ljud (Teams, Zoom, Spotify m.fl.):
 
-| | **Spela in mötesljud** *(WASAPI Loopback)* | **Stereo Mix** *(Windows-funktion)* |
+| | **Spela in systemljud** *(WASAPI Loopback)* | **Stereo Mix** *(Windows-funktion)* |
 |---|---|---|
 | **Kräver inställning i Windows** | Nej | Ja (engångsinställning) |
 | **Windows-version** | Windows 7+ | Alla versioner |
@@ -122,11 +122,11 @@ Det finns två sätt att spela in både din mikrofon och datorns ljud (Teams, Zo
 | **Datorns ljud** | Ja | Ja |
 | **Drivrutinsstöd** | Oberoende av hårdvara | Beror på ljudkortet |
 
-### Alternativ 1: Spela in mötesljud (rekommenderas)
+### Alternativ 1: Spela in systemljud (rekommenderas)
 
-Kryssa i **Spela in mötesljud** i huvudfönstret, intill mikrofonvalet, innan du trycker **Spela in**. Det är inte en inställning i kugghjulsmenyn. Transkribera använder **klassisk WASAPI Endpoint Loopback** för att fånga datorns ljud digitalt — oberoende av hårdvara och drivrutiner.
+Kryssa i **Spela in systemljud** i huvudfönstret, intill mikrofonvalet, innan du trycker **Spela in**. Det är inte en inställning i kugghjulsmenyn. Transkribera använder **klassisk WASAPI Endpoint Loopback** för att fånga datorns ljud digitalt — oberoende av hårdvara och drivrutiner.
 
-**Hur det fungerar:** Transkribera lyssnar automatiskt på Windows standardljudenhet (t.ex. hörlurar eller högtalare) **och** på kommunikationsenheten (den enhet Teams, Zoom m.fl. använder). Om de är olika enheter — t.ex. Jabra Speak för möten men inbyggda högtalare för övrigt — fångas båda och mixas automatiskt. Under inspelning står **Mötesljud med** i inspelningsraden, vilket bekräftar att datorns ljud spelas in. Är rutan inte ikryssad visas en påminnelse om att bara din egen mikrofon spelas in.
+**Hur det fungerar:** Transkribera lyssnar automatiskt på Windows standardljudenhet (t.ex. hörlurar eller högtalare) **och** på kommunikationsenheten (den enhet Teams, Zoom m.fl. använder). Om de är olika enheter — t.ex. Jabra Speak för möten men inbyggda högtalare för övrigt — fångas båda och mixas automatiskt. Under inspelning står **Systemljud med** i inspelningsraden, vilket bekräftar att datorns ljud spelas in. Är rutan inte ikryssad visas en påminnelse om att bara din egen mikrofon spelas in.
 
 > [!NOTE]
 > Fungerar från Windows 7 och uppåt — inget behov av en specifik Windows-version.
@@ -136,7 +136,7 @@ Kryssa i **Spela in mötesljud** i huvudfönstret, intill mikrofonvalet, innan d
 
 ### Alternativ 2: Stereo Mix (alternativ metod)
 
-Stereo Mix är en virtuell Windows-enhet som fångar allt systemljud och mixar det med valfri mikrofon. Kräver en engångsinställning i Windows. En guide med steg finns också i appen under **Inställningar → Inspelningar → Hjälp med mötesljud**.
+Stereo Mix är en virtuell Windows-enhet som fångar allt systemljud och mixar det med valfri mikrofon. Kräver en engångsinställning i Windows. En guide med steg finns också i appen under **Inställningar → Inspelningar → Hjälp med systemljud**.
 
 1. **Öppna ljudinställningar:** Högerklicka på ljudikonen i aktivitetsfältet → välj **"Ljudinställningar"**.
 2. **Hitta detaljerade steg:** Scrolla längst ner och klicka på **"Mer ljudinställningar"** (viktigt för Windows 11).
@@ -149,7 +149,7 @@ Stereo Mix är en virtuell Windows-enhet som fångar allt systemljud och mixar d
 > Starta alltid mötet och se till att ljud spelas **innan** du trycker Spela in i Transkribera.
 
 > [!NOTE]
-> Syns inte Stereo Mix? Din dators ljudkort saknar stöd för det. Använd **Spela in mötesljud** i stället.
+> Syns inte Stereo Mix? Din dators ljudkort saknar stöd för det. Använd **Spela in systemljud** i stället.
 
 ## 📥 Ladda ner och installera (Windows)
 
@@ -223,7 +223,7 @@ Transkribera bygger på **Tauri 2** — en Rust-backend kombinerad med ett webbf
 | **Ordlistor** | `vocabulary.rs` | Lagring i `ordlistor.json` och efterkorrigering av transkriptet |
 | **Ljudavkodning (fil)** | Symphonia (Rust) | Avkodar MP3, M4A/AAC, WAV, OGG, FLAC strömmande, utan JS-heap |
 | **Mikrofon (inspelning)** | Webbläsarens `getUserMedia` + AudioWorklet | Mikrofonljudet skickas som rå binär f32-data till Rust (`append_mic_chunk`) |
-| **Mötesljud (Windows)** | WASAPI Endpoint Loopback | Fångar eConsole + eCommunications, skrivs direkt till disk i Rust |
+| **Systemljud (Windows)** | WASAPI Endpoint Loopback | Fångar eConsole + eCommunications, skrivs direkt till disk i Rust |
 | **WAV-kodning** | hound (Rust) | Skriver 16-bit PCM-WAV direkt till disk |
 | **Frontend** | Vanilla JS + Tailwind CSS 3 | Beroendefritt UI med lokala typsnitt (IBM Plex) och inbyggda ikoner |
 
@@ -243,7 +243,7 @@ Transkribera löser detta genom att flytta all tung bearbetning till Rust:
 
 **Inspelning — direkt till disk:**
 - Allt inspelat material streamas till en sessionsmapp (`inspelning-…`) medan du spelar in, så inget går förlorat vid en krasch.
-- Mikrofonen skrivs till `mic.wav`, mötesljudet till `lb_console.wav` och `lb_comms.wav`. När du stoppar mixas spåren ihop till `recording.wav`.
+- Mikrofonen skrivs till `mic.wav`, systemljudet till `lb_console.wav` och `lb_comms.wav`. När du stoppar mixas spåren ihop till `recording.wav`.
 - Avbryts en inspelning mixas råspåren ihop när du öppnar den i listan över senaste inspelningar.
 
 ### Dataflöde — filimport
@@ -272,7 +272,7 @@ Fil på disk (MP3 / M4A / WAV / OGG / FLAC / …)
 ```
 Mikrofon ──► getUserMedia + AudioWorklet ──► append_mic_chunk ──► mic.wav
                                                                        │
-Mötesljud ─► WASAPI Endpoint Loopback ─────────────────────► lb_console.wav / lb_comms.wav
+Systemljud ─► WASAPI Endpoint Loopback ─────────────────────► lb_console.wav / lb_comms.wav
                                                                        │
                                   stopp: mix + resample ───────────────┘
                                                       │

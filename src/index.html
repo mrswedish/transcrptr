@@ -43,7 +43,7 @@
         <span class="btn-record-label">Spela in</span>
       </button>
 
-      <!-- Vila: mikrofon och mötesljud. Döljs under inspelning. -->
+      <!-- Vila: mikrofon och systemljud. Döljs under inspelning. -->
       <div id="idle-hint" class="flex-1 min-w-0 flex flex-wrap items-center gap-x-4 gap-y-2">
         <div class="flex items-center gap-2 min-w-0 flex-1 max-w-sm">
           <label for="mic-select" class="text-sm text-muted shrink-0">Mikrofon</label>
@@ -55,17 +55,17 @@
           title="Slå på för möten i Teams, Zoom m.fl. — annars spelas bara din egen mikrofon in"
           class="hidden items-center gap-2 cursor-pointer text-sm select-none">
           <input type="checkbox" id="wasapi-toggle" class="w-5 h-5 accent-primary cursor-pointer">
-          <span>Spela in mötesljud</span>
+          <span>Spela in systemljud</span>
         </label>
         <label id="speakers-quick" class="flex items-center gap-2 cursor-pointer text-sm select-none"
           title="Märker vem som säger vad. Tar några minuter extra per timme ljud. Modellerna (ca 33 MB) hämtas första gången.">
           <input type="checkbox" id="speakers-toggle" class="w-5 h-5 accent-primary cursor-pointer">
           <span>Identifiera talare</span>
         </label>
-        <!-- Syns bara när mötesljud är av. Det enda valet som kan förstöra en hel
+        <!-- Syns bara när systemljud är av. Det enda valet som kan förstöra en hel
              inspelning — glömmer man det får man bara sin egen röst. -->
         <p id="wasapi-hint" class="hidden w-full text-sm text-muted">
-          Bara din mikrofon spelas in. Slå på mötesljud för att även få med vad andra säger i Teams eller Zoom.
+          Bara din mikrofon spelas in. Slå på systemljud för att även få med vad andra säger i Teams eller Zoom.
         </p>
       </div>
 
@@ -73,7 +73,7 @@
       <div id="recording-status" class="hidden flex items-center gap-4 flex-1 min-w-0">
         <div id="eq-bar" class="meter" aria-hidden="true"><div class="eq-col"></div></div>
         <span id="recording-status-text" class="text-sm font-medium" role="status">Spelar in</span>
-        <span id="loopback-indicator" class="hidden text-sm text-muted">Mötesljud med</span>
+        <span id="loopback-indicator" class="hidden text-sm text-muted">Systemljud med</span>
         <div class="flex-1"></div>
         <span class="font-mono text-sm tabular-nums" id="recording-timer">00:00:00</span>
         <span class="font-mono text-sm text-muted tabular-nums" id="recording-size">0 MB</span>
@@ -315,7 +315,7 @@
 
           <button id="btn-stereo-mix-help" type="button" class="hidden btn btn-sm mt-4">
             <span class="material-symbols-outlined">info</span>
-            <span>Hjälp med mötesljud</span>
+            <span>Hjälp med systemljud</span>
           </button>
 
           <div class="mt-6">
@@ -331,38 +331,19 @@
         <!-- Modell -->
         <section class="section">
           <h3 class="section-title">Modell</h3>
-          <p class="hint mb-3">Nedladdade modeller. Klicka på en för att använda den.</p>
-          <div id="model-list" class="flex flex-col gap-2 max-h-48 overflow-y-auto">
-            <p class="hint">Laddar modeller…</p>
-          </div>
-          <div id="model-cleanup" class="hidden mt-3">
-            <p id="model-cleanup-text" class="hint mb-2"></p>
-            <button id="btn-cleanup-models" type="button" class="btn btn-sm">
+          <p class="hint mb-3">Klicka på en modell för att använda den. En modell som inte finns på datorn laddas ned först.</p>
+          <ul id="model-list" class="flex flex-col gap-2" aria-label="Modeller">
+            <li class="hint">Laddar modeller…</li>
+          </ul>
+          <div id="model-legacy" class="hidden mt-5">
+            <h4 class="text-sm font-semibold mb-1">Äldre modeller</h4>
+            <p class="hint mb-2">Hämtade med en tidigare version. De fungerar fortfarande men behövs inte längre.</p>
+            <ul id="model-legacy-list" class="flex flex-col gap-2"></ul>
+            <button id="btn-cleanup-models" type="button" class="btn btn-sm mt-3">
               <span class="material-symbols-outlined">delete</span>
-              <span>Rensa oanvända modeller</span>
+              <span id="model-cleanup-text">Ta bort äldre modeller</span>
             </button>
           </div>
-
-          <h4 class="text-sm font-semibold mt-6 mb-2">Ladda ned en modell</h4>
-          <div class="flex flex-col gap-2" id="quality-picker" role="group" aria-label="Typ av modell">
-            <button type="button" data-quality="fast" class="quality-btn choice">
-              <span class="choice-title">Snabbast <span class="font-normal text-muted">· rekommenderas, endast svenska</span></span>
-              <span class="choice-desc">Körs på processorn och är oftast snabbast på vanliga datorer.</span>
-            </button>
-            <button type="button" data-quality="accurate" class="quality-btn choice">
-              <span class="choice-title">Noggrann <span class="font-normal text-muted">· endast svenska</span></span>
-              <span class="choice-desc">Högre noggrannhet på svenska, men tar längre tid.</span>
-            </button>
-            <button type="button" data-quality="multi" class="quality-btn choice">
-              <span class="choice-title">Flera språk</span>
-              <span class="choice-desc">För engelska, blandspråkigt eller internationella möten.</span>
-            </button>
-          </div>
-
-          <button id="btn-download-model" class="btn btn-primary mt-4 w-full">
-            <span class="material-symbols-outlined">download</span>
-            <span class="download-label">Ladda ned</span>
-          </button>
         </section>
 
         <!-- Uppdateringar -->
@@ -548,12 +529,12 @@
     </div>
   </div>
 
-  <!-- Guide: spela in mötesljud -->
+  <!-- Guide: spela in systemljud -->
   <div id="stereo-mix-modal" class="hidden fixed inset-0 bg-black/40 z-[300] flex justify-center items-center"
     role="dialog" aria-modal="true" aria-labelledby="stereo-title">
     <div class="dialog w-11/12 max-w-lg flex flex-col max-h-[90dvh]">
       <div class="flex items-center justify-between h-12 px-5 border-b border-line shrink-0">
-        <h2 id="stereo-title" class="text-[15px] font-semibold">Spela in mötesljud</h2>
+        <h2 id="stereo-title" class="text-[15px] font-semibold">Spela in systemljud</h2>
         <button id="btn-close-stereo-mix" class="btn btn-ghost btn-sm btn-icon-only" aria-label="Stäng guiden">
           <span class="material-symbols-outlined">close</span>
         </button>

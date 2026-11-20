@@ -21,7 +21,7 @@ Första gången hämtar appen språkmodellen **Snabbast** (ca 0,7 GB). Det behö
 ![Under inspelning](docs/img/inspelning.png)
 
 1. Välj din **mikrofon** (oftast räcker "Systemets standardmikrofon").
-2. Ska du spela in ett digitalt möte i Teams eller Zoom? Kryssa i **Spela in mötesljud**, annars hörs bara din egen röst.
+2. Ska du spela in ett digitalt möte i Teams eller Zoom? Kryssa i **Spela in systemljud**, annars hörs bara din egen röst.
 3. Tryck **Spela in**. Tryck **Stoppa** när du är klar.
 4. Välj **Transkribera nu**, eller **Spara för senare** om du vill transkribera en annan gång. Ljudet ligger då kvar på disken.
 
@@ -58,4 +58,4 @@ Kryssa i **Identifiera talare** *innan* du transkriberar. Första gången hämta
 
 **Gör om.** Vill du prova en annan modell? Byt under **Inställningar → Modell** och tryck **Gör om**.
 
-**Går något fel?** Kraschar transkriberingen eller fungerar inte mötesljudet? Se [README](README.md#om-transkriberingen-kraschar). Under **Inställningar → Felsökning** kopierar du loggen med **Kopiera loggen** och klistrar in den i ett mejl till den som stöttar appen.
+**Går något fel?** Kraschar transkriberingen eller fungerar inte systemljudet? Se [README](README.md#om-transkriberingen-kraschar). Under **Inställningar → Felsökning** kopierar du loggen med **Kopiera loggen** och klistrar in den i ett mejl till den som stöttar appen.

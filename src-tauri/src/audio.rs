@@ -520,7 +520,7 @@ impl AudioRecorder {
 // summerar med mic-buffer (in-memory), skalar och skriver till utfil.
 // Peak memory: ~64 KB (BufWriter + några samples). Hanterar timmar utan OOM.
 // Om endast en källa på disk har data (t.ex. enbart mic.wav vid inspelning utan
-// mötesljud) döps filen om direkt på 0 ms utan onödig omkodning.
+// systemljud) döps filen om direkt på 0 ms utan onödig omkodning.
 // ─────────────────────────────────────────────────────────────────────────────
 fn mix_to_wav_streaming(
     mic_in_memory: &[f32],

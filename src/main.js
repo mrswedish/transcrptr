@@ -171,7 +171,6 @@ const btnSettings = document.getElementById("btn-settings");
 const settingsModal = document.getElementById("settings-modal");
 const btnCloseSettings = document.getElementById("btn-close-settings");
 const btnSaveSettings = document.getElementById("btn-save-settings");
-const btnDownloadModel = document.getElementById("btn-download-model");
 const selLanguage = document.getElementById("transcription-language");
 const selMic = document.getElementById("mic-select");
 const eqBar = document.getElementById("eq-bar");
@@ -211,8 +210,6 @@ let modelRevision = "standard";
 let modelQuantized = true;
 
 // Download picker state (independent from active model)
-let dlSize = "pianissimo";
-let dlRevision = "standard";
 let transcriptionLanguage = "sv";
 
 // Personlig ordlista
@@ -255,7 +252,7 @@ let recordingTimerInterval = null;
 let estimatedRecordingSize = 0;
 let lastTranscribedPath = null; // Senast transkriberade filen — "Gör om" kör om den via Rust
 
-// Hjälptexten visas bara när mötesljud är av, och bara där växeln finns (Windows).
+// Hjälptexten visas bara när systemljud är av, och bara där växeln finns (Windows).
 function syncWasapiVisual() {
   const wasapiToggle = document.getElementById("wasapi-toggle");
   const wasapiQuickEl = document.getElementById("wasapi-quick");
@@ -305,10 +302,6 @@ function loadSettings() {
 
   renderVocab();
 
-  // Sync pill pickers to current state
-  // Spegla sparad modell i kvalitetsvalet
-  const savedQuality = modelSize === "pianissimo" ? "fast" : modelSize === "turbo" ? "multi" : "accurate";
-  if (typeof applyQuality === "function") applyQuality(savedQuality);
   if (selLanguage) selLanguage.value = transcriptionLanguage;
 
   updateFooter();
@@ -688,7 +681,7 @@ async function initialize() {
       wasapiQuick.classList.remove('hidden');
       wasapiQuick.classList.add('flex');
     }
-    // Växeln blev synlig först nu — visa hjälptexten om mötesljud är avslaget.
+    // Växeln blev synlig först nu — visa hjälptexten om systemljud är avslaget.
     const wasapiHint = document.getElementById('wasapi-hint');
     if (wasapiHint) wasapiHint.classList.toggle('hidden', wasapiEnabled);
     document.getElementById('gpu-section')?.classList.remove('hidden');
@@ -790,37 +783,184 @@ function setupV11Handlers() {
 
 }
 
-// Modeller som motsvarar de tre valen i inställningarna. Allt annat (large, ordagrann,
-// icke-kvantiserad medium) är kvar från äldre versioner och kan rensas.
+// ─────────────────────────────────────────────────────────────────────────────
+// Modeller: en lista med de tre valen. Varje rad visar om modellen finns på datorn,
+// och har knappar för att ladda ned eller ta bort den. Klick på raden väljer modellen
+// (och laddar ned den först om den saknas). Allt annat som ligger på disken (large,
+// ordagrann, icke-kvantiserad medium) kommer från äldre versioner och visas separat.
+// ─────────────────────────────────────────────────────────────────────────────
+const MODEL_CHOICES = [
+  { size: "pianissimo", title: "Snabbast", tag: "rekommenderas, endast svenska",
+    desc: "Körs på processorn och är oftast snabbast på vanliga datorer." },
+  { size: "medium", title: "Noggrann", tag: "endast svenska",
+    desc: "Högre noggrannhet på svenska, men tar längre tid." },
+  { size: "turbo", title: "Flera språk", tag: "",
+    desc: "För engelska, blandspråkigt eller internationella möten." },
+];
+
+function choiceMatches(choice, m) {
+  return m.size === choice.size && (choice.size !== "medium" || (m.quantized && m.revision === "standard"));
+}
 function isCurrentModel(m) {
-  return m.size === "pianissimo" || m.size === "turbo"
-    || (m.size === "medium" && m.quantized && m.revision === "standard");
+  return MODEL_CHOICES.some(c => choiceMatches(c, m));
 }
 function isActiveModel(m) {
   return m.size === modelSize && m.revision === modelRevision && m.quantized === modelQuantized;
 }
-let unusedModels = [];
-function updateModelCleanup(models) {
-  const box = document.getElementById("model-cleanup");
-  const text = document.getElementById("model-cleanup-text");
-  if (!box || !text) return;
-  unusedModels = models.filter(m => !isCurrentModel(m) && !isActiveModel(m));
-  const total = unusedModels.reduce((n, m) => n + m.size_bytes, 0);
-  box.classList.toggle("hidden", unusedModels.length === 0);
-  text.textContent = unusedModels.length === 1
-    ? `1 modell används inte längre (${formatSize(total)}).`
-    : `${unusedModels.length} modeller används inte längre (${formatSize(total)}).`;
+
+function activateModel(m, name) {
+  modelSize = m.size;
+  modelRevision = m.revision;
+  modelQuantized = m.quantized;
+  localStorage.setItem("modelSize", modelSize);
+  localStorage.setItem("modelRevision", modelRevision);
+  localStorage.setItem("modelQuantized", modelQuantized.toString());
+  updateFooter();
+  updateEngineLanguageNote();
+  refreshModelList();
+  updateBadge(`Redo (${name})`, "ready");
+  announce(`${name} används nu.`);
 }
+
+async function deleteModel(m, name) {
+  const ok = await showConfirm(
+    `${name} (${formatSize(m.size_bytes)}) tas bort från datorn. Du kan ladda ned den igen senare.`,
+    "Ta bort modell", "Ta bort");
+  if (!ok) return;
+  try {
+    await invoke("delete_model", { size: m.size, quantized: m.quantized, revision: m.revision });
+    logToFile(`modell: raderade ${m.name}`);
+    if (isActiveModel(m)) updateBadge("Ingen modell vald", "error");
+    announce(`${name} är borttagen.`);
+  } catch (e) {
+    logToFile(`modell: kunde inte radera ${m.name}: ${e}`);
+    await message(`Kunde inte ta bort ${name}: ${e}`, { title: "Fel", kind: "error" });
+  }
+  refreshModelList();
+  updateFooter();
+}
+
+function iconButton(icon, label, onClick, extra = "") {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = `btn btn-ghost btn-sm btn-icon-only ${extra}`.trim();
+  b.setAttribute("aria-label", label);
+  b.title = label;
+  b.innerHTML = `<span class="material-symbols-outlined">${icon}</span>`;
+  b.addEventListener("click", (e) => { e.stopPropagation(); onClick(); });
+  return b;
+}
+
+// En rad: valbar yta till vänster, ikonknappar till höger.
+function modelRow({ title, tag, desc, status, active, onPick, actions }) {
+  const li = document.createElement("li");
+  li.className = `model-row${active ? " is-active" : ""}`;
+
+  const pick = document.createElement("button");
+  pick.type = "button";
+  pick.className = "model-pick";
+  pick.setAttribute("aria-pressed", String(active));
+  pick.addEventListener("click", onPick);
+
+  const t = document.createElement("span");
+  t.className = "choice-title";
+  t.textContent = title;
+  if (tag) {
+    const tg = document.createElement("span");
+    tg.className = "font-normal text-muted";
+    tg.textContent = ` · ${tag}`;
+    t.appendChild(tg);
+  }
+  pick.appendChild(t);
+  if (desc) {
+    const d = document.createElement("span");
+    d.className = "choice-desc";
+    d.textContent = desc;
+    pick.appendChild(d);
+  }
+  const s = document.createElement("span");
+  s.className = `model-status${active ? " is-active" : ""}`;
+  s.textContent = status;
+  pick.appendChild(s);
+  li.appendChild(pick);
+
+  const box = document.createElement("div");
+  box.className = "model-actions";
+  actions.forEach(a => box.appendChild(a));
+  li.appendChild(box);
+  return li;
+}
+
+let legacyModels = [];
+
+async function refreshModelList() {
+  if (!modelList) return;
+  let models;
+  try {
+    models = await invoke("get_available_models");
+  } catch (err) {
+    console.error("Kunde inte ladda modellistan:", err);
+    return;
+  }
+  modelList.innerHTML = "";
+
+  for (const c of MODEL_CHOICES) {
+    const m = models.find(x => choiceMatches(c, x));
+    const active = !!m && isActiveModel(m);
+    const status = !m
+      ? `Inte nedladdad · ca ${formatMb(modelSizeMb(c.size, true))}`
+      : active ? `Används · ${formatSize(m.size_bytes)}` : `Nedladdad · ${formatSize(m.size_bytes)}`;
+    const actions = m
+      ? [iconButton("delete", `Ta bort ${c.title}`, () => deleteModel(m, c.title), "btn-danger")]
+      : [iconButton("download", `Ladda ned ${c.title}`, () => startModelDownload(c.size))];
+    modelList.appendChild(modelRow({
+      title: c.title, tag: c.tag, desc: c.desc, status, active, actions,
+      onPick: () => {
+        if (!m) startModelDownload(c.size);
+        else if (!active) activateModel(m, c.title);
+      },
+    }));
+  }
+
+  // Äldre modeller från tidigare versioner.
+  legacyModels = models.filter(m => !isCurrentModel(m));
+  const legacyBox = document.getElementById("model-legacy");
+  const legacyList = document.getElementById("model-legacy-list");
+  if (legacyBox && legacyList) {
+    legacyList.innerHTML = "";
+    legacyBox.classList.toggle("hidden", legacyModels.length === 0);
+    for (const m of legacyModels) {
+      const active = isActiveModel(m);
+      legacyList.appendChild(modelRow({
+        title: m.name, tag: "", desc: "",
+        status: active ? `Används · ${formatSize(m.size_bytes)}` : formatSize(m.size_bytes),
+        active,
+        actions: [iconButton("delete", `Ta bort ${m.name}`, () => deleteModel(m, m.name), "btn-danger")],
+        onPick: () => { if (!active) activateModel(m, m.name); },
+      }));
+    }
+    const removable = legacyModels.filter(m => !isActiveModel(m));
+    const btn = document.getElementById("btn-cleanup-models");
+    const text = document.getElementById("model-cleanup-text");
+    if (btn) btn.classList.toggle("hidden", removable.length === 0);
+    if (text) {
+      const total = removable.reduce((n, m) => n + m.size_bytes, 0);
+      text.textContent = `Ta bort äldre modeller (${formatSize(total)})`;
+    }
+  }
+}
+
 document.getElementById("btn-cleanup-models")?.addEventListener("click", async () => {
-  if (unusedModels.length === 0) return;
-  const total = unusedModels.reduce((n, m) => n + m.size_bytes, 0);
-  const list = unusedModels.map(m => `• ${m.name} (${formatSize(m.size_bytes)})`).join("\n");
+  const removable = legacyModels.filter(m => !isActiveModel(m));
+  if (removable.length === 0) return;
+  const total = removable.reduce((n, m) => n + m.size_bytes, 0);
+  const list = removable.map(m => `• ${m.name} (${formatSize(m.size_bytes)})`).join("\n");
   const ok = await showConfirm(
     `Följande modeller tas bort (${formatSize(total)}):\n${list}\n\nDen modell du använder just nu behålls. Du kan ladda ned dem igen vid behov.`,
-    "Rensa oanvända modeller", "Radera");
+    "Ta bort äldre modeller", "Ta bort");
   if (!ok) return;
   let failed = 0;
-  for (const m of unusedModels) {
+  for (const m of removable) {
     try {
       await invoke("delete_model", { size: m.size, quantized: m.quantized, revision: m.revision });
       logToFile(`rensa modeller: raderade ${m.name}`);
@@ -830,84 +970,9 @@ document.getElementById("btn-cleanup-models")?.addEventListener("click", async (
     }
   }
   await refreshModelList();
-  announce(failed ? `${failed} modeller kunde inte raderas.` : "Oanvända modeller är raderade.");
-  if (failed) await message(`${failed} modeller kunde inte raderas.`, { title: "Rensning misslyckades", kind: "error" });
+  announce(failed ? `${failed} modeller kunde inte tas bort.` : "Äldre modeller är borttagna.");
+  if (failed) await message(`${failed} modeller kunde inte tas bort.`, { title: "Borttagningen misslyckades", kind: "error" });
 });
-
-async function refreshModelList() {
-  if (!modelList) return;
-  try {
-    const models = await invoke("get_available_models");
-    modelList.innerHTML = "";
-
-    if (models.length === 0) {
-      modelList.innerHTML = '<p class="hint">Inga modeller nedladdade ännu.</p>';
-      return;
-    }
-
-    updateModelCleanup(models);
-
-    models.forEach(m => {
-      const isActive = m.size === modelSize && m.revision === modelRevision && m.quantized === modelQuantized;
-
-      function activateModel() {
-        if (isActive) return;
-        modelSize = m.size;
-        modelRevision = m.revision;
-        modelQuantized = m.quantized;
-        localStorage.setItem("modelSize", modelSize);
-        localStorage.setItem("modelRevision", modelRevision);
-        localStorage.setItem("modelQuantized", modelQuantized.toString());
-        updateFooter();
-        refreshModelList();
-        updateBadge(`Redo (${m.name})`, "ready");
-      }
-
-      const div = document.createElement("div");
-      div.className = `model-row ${isActive ? "is-active" : "is-clickable"}`;
-      if (!isActive) div.onclick = activateModel;
-
-      const info = document.createElement("div");
-      info.className = "flex flex-col min-w-0";
-
-      const nameEl = document.createElement("span");
-      nameEl.className = "text-sm font-semibold";
-      nameEl.innerText = m.name + (isActive ? " (används)" : "");
-
-      const sizeEl = document.createElement("span");
-      sizeEl.className = "text-xs text-muted";
-      sizeEl.innerText = formatSize(m.size_bytes);
-
-      info.appendChild(nameEl);
-      info.appendChild(sizeEl);
-      div.appendChild(info);
-
-      const actions = document.createElement("div");
-      actions.className = "flex items-center gap-1 shrink-0";
-
-      const delBtn = document.createElement("button");
-      delBtn.className = "btn btn-ghost btn-sm btn-icon-only btn-danger";
-      delBtn.setAttribute("aria-label", `Ta bort ${m.name}`);
-      delBtn.innerHTML = '<span class="material-symbols-outlined">delete</span>';
-      delBtn.onclick = async (e) => {
-        e.stopPropagation();
-        if (confirm(`Ta bort ${m.name}?`)) {
-          await invoke("delete_model", { size: m.size, quantized: m.quantized, revision: m.revision });
-          // If we deleted the active model, clear badge
-          if (isActive) updateBadge("Ingen modell vald", "error");
-          refreshModelList();
-          updateFooter();
-        }
-      };
-      actions.appendChild(delBtn);
-      div.appendChild(actions);
-
-      modelList.appendChild(div);
-    });
-  } catch (err) {
-    console.error("Kunde inte ladda modellistan:", err);
-  }
-}
 
 function formatSize(bytes) {
   if (bytes === 0) return "0 B";
@@ -1111,50 +1176,6 @@ function formatMb(mb) {
   return mb >= 1000 ? `${(mb / 1000).toFixed(1).replace(".0", "")} GB` : `${mb} MB`;
 }
 
-// Visar nedladdningsstorleken på knappen så den syns innan man klickar.
-function updateDownloadButtonLabel() {
-  const btn = document.getElementById("btn-download-model");
-  if (!btn) return;
-  const label = btn.querySelector(".download-label");
-  if (!label) return;
-  label.textContent = `Ladda ner · ${formatMb(modelSizeMb(dlSize, true))}`;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Modellval — tre namngivna alternativ i stället för att låta användaren kombinera
-// storlek, stil och format själv. Varje val motsvarar en färdig kombination (alltid
-// kvantiserad och standardstil). Äldre nedladdade varianter (large, ordagrann) fungerar
-// fortfarande om de redan finns, och kan rensas med "Rensa oanvända modeller".
-// ─────────────────────────────────────────────────────────────────────────────
-const QUALITY_PRESETS = {
-  fast:     { size: "pianissimo" },                   // Pianissimo: svenska, CPU
-  accurate: { size: "medium" },                       // KB-Whisper medium, svenska
-  multi:    { size: "turbo" },                        // Whisper Turbo, flera språk
-};
-let dlQuality = "fast";
-
-const QUALITY_ACTIVE = "quality-btn choice is-selected";
-const QUALITY_IDLE   = "quality-btn choice";
-
-function applyQuality(quality) {
-  const preset = QUALITY_PRESETS[quality] ?? QUALITY_PRESETS.accurate;
-  dlQuality = quality;
-  dlSize = preset.size;
-
-  dlRevision = "standard";
-
-  document.querySelectorAll("[data-quality]").forEach(b => {
-    b.className = b.dataset.quality === quality ? QUALITY_ACTIVE : QUALITY_IDLE;
-    b.setAttribute("aria-pressed", String(b.dataset.quality === quality));
-  });
-  updateDownloadButtonLabel();
-}
-
-document.querySelectorAll("[data-quality]").forEach(btn => {
-  btn.addEventListener("click", () => applyQuality(btn.dataset.quality));
-});
-
-applyQuality(dlQuality);
 
 // -------------------------------------------------------------
 // Settings Logic
@@ -1246,43 +1267,41 @@ btnSaveSettings.addEventListener("click", async () => {
   updateFooter();
 });
 
-// "Ladda ner vald modell" — always downloads the selected combination.
+// Laddar ned en modell från modellistan och börjar använda den.
 // Skyddar mot oavsiktliga stora hämtningar: visar storleken, bekräftar över 1 GB
 // och varnar om disken inte räcker. Tidigare startade nedladdningen direkt utan
 // någon kontroll — man kunde dra ner 3 GB av misstag.
 const LARGE_DOWNLOAD_MB = 1000;
 
-if (btnDownloadModel) {
-  btnDownloadModel.addEventListener("click", async () => {
-    const quantized = true;
-    const sizeMb = modelSizeMb(dlSize, quantized);
-    const sizeText = formatMb(sizeMb);
+async function startModelDownload(size) {
+  const quantized = true;
+  const sizeMb = modelSizeMb(size, quantized);
+  const sizeText = formatMb(sizeMb);
 
-    // Diskkontroll — behövs plats för modellen plus lite marginal.
-    try {
-      const info = await invoke("get_disk_info");
-      const freeMb = info.available_space / 1048576;
-      if (freeMb < sizeMb * 1.1) {
-        await message(
-          `Modellen behöver ${sizeText} men det finns bara ${formatMb(Math.round(freeMb))} ledigt.\n\n` +
-          "Frigör utrymme och försök igen, eller välj en mindre modell.",
-          { title: "För lite diskutrymme", kind: "error" });
-        return;
-      }
-    } catch (_) { /* diskinfo är icke-kritisk — fortsätt */ }
-
-    // Bekräfta stora nedladdningar.
-    if (sizeMb >= LARGE_DOWNLOAD_MB) {
-      const ok = await showConfirm(
-        `Modellen är ${sizeText} och laddas ner en gång. Det kan ta en stund på en långsam ` +
-        "uppkoppling, och appen är upptagen under tiden.\n\nVill du fortsätta?",
-        "Ladda ner modell");
-      if (!ok) return;
+  // Diskkontroll — behövs plats för modellen plus lite marginal.
+  try {
+    const info = await invoke("get_disk_info");
+    const freeMb = info.available_space / 1048576;
+    if (freeMb < sizeMb * 1.1) {
+      await message(
+        `Modellen behöver ${sizeText} men det finns bara ${formatMb(Math.round(freeMb))} ledigt.\n\n` +
+        "Frigör utrymme och försök igen, eller välj en mindre modell.",
+        { title: "För lite diskutrymme", kind: "error" });
+      return;
     }
+  } catch (_) { /* diskinfo är icke-kritisk — fortsätt */ }
 
-    settingsModal.classList.add("hidden");
-    await downloadAndActivate(dlSize, dlRevision, quantized);
-  });
+  // Bekräfta stora nedladdningar.
+  if (sizeMb >= LARGE_DOWNLOAD_MB) {
+    const ok = await showConfirm(
+      `Modellen är ${sizeText} och laddas ner en gång. Det kan ta en stund på en långsam ` +
+      "uppkoppling, och appen är upptagen under tiden.\n\nVill du fortsätta?",
+      "Ladda ner modell");
+    if (!ok) return;
+  }
+
+  settingsModal.classList.add("hidden");
+  await downloadAndActivate(size, "standard", quantized);
 }
 
 // Redo transcription with different model

@@ -167,7 +167,7 @@ fil användaren själv valt, och bara för läsning (`allow_asset_path`).
 
 Loopback-funktionen spelar in **allt ljud som spelas upp på datorn** — inklusive Teams- och
 Zoom-möten. Det är funktionens syfte, men värt att notera ur inspelningsjuridiskt perspektiv.
-Den är avstängd som standard och styrs av användaren via kryssrutan **Spela in mötesljud** i huvudfönstret.
+Den är avstängd som standard och styrs av användaren via kryssrutan **Spela in systemljud** i huvudfönstret.
 
 Appen lyssnar på två ljudutgångar samtidigt om standardenheten och kommunikationsenheten
 skiljer sig åt — vanligt när headset används för samtal och högtalare för övrigt.
