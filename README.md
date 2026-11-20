@@ -52,7 +52,7 @@ Standardmodellen **Snabbast** är [Pianissimo](https://klang.ai/pianissimo-sv/) 
 - **〰️ Osäkra ord (Whisper):** Ord med låg igenkänningssäkerhet får en prickad understrykning i segmentvyn. Tröskelvärdet justeras under Avancerat i inställningarna.
 - **💾 Spara:** Exportera text som `.txt` eller spara inspelningen som en ny `.wav`-fil (originalet ligger redan kvar i sessionsmappen).
 - **🗑️ Rensa inspelningar:** Radera alla sparade sessionsmappar med ett klick i inställningarna. Visar antal och total storlek först, och rör bara inspelningsmappar — sparade textfiler och exporterade ljudfiler lämnas orörda.
-- **📊 Modellhantering:** Se, ladda ner och ta bort modeller i inställningarna.
+- **📊 Modellhantering:** Välj, ladda ned och ta bort modeller i samma lista i inställningarna.
 - **💿 Diskhantering:** Inställningarna visar hur mycket plats dina inspelningar tar, och appen varnar om diskutrymmet är lågt innan du startar en lång inspelning.
 
 ## 🖥️ Plattformsstöd
@@ -61,7 +61,7 @@ Windows är det stödda målet. Inspelning och systemljud fungerar bara i Window
 
 ## 📦 Välj rätt modell
 
-Byt modell under **Inställningar → Modell**. Där finns tre färdiga val, och du kan ladda ner flera och byta med ett klick.
+Byt modell under **Inställningar → Modell**. Där visas de tre valen i en lista. Varje rad visar om modellen används, är nedladdad eller inte är nedladdad ännu. Klicka på en rad för att använda modellen; saknas den laddas den ned först. Ikonerna till höger laddar ned eller tar bort modellen.
 
 | Val i appen | Modell | Storlek | Språk | Passar för |
 |---|---|---|---|---|
@@ -83,7 +83,7 @@ Modellvikterna licensieras under [CC BY 4.0](https://creativecommons.org/license
 
 [KB-whisper](https://huggingface.co/KBLab/kb-whisper-small) från Kungliga biblioteket, specialtränad på 50 000+ timmar svenskt tal. Medium-modellen hämtas i formatet **q5_0**, som är ca 40 % mindre än standardformatet med i princip identisk kvalitet.
 
-Har du laddat ned större eller ordagranna KB-modeller i en äldre version fungerar de fortfarande. Under **Inställningar → Modell** finns knappen **Rensa oanvända modeller** som tar bort dem och frigör diskutrymme.
+Har du laddat ned större eller ordagranna KB-modeller i en äldre version fungerar de fortfarande. De visas under **Äldre modeller** i **Inställningar → Modell**, där knappen **Ta bort äldre modeller** tar bort dem och frigör diskutrymme. Den modell du använder just nu behålls.
 
 ### Whisper Turbo — "Flera språk"
 
