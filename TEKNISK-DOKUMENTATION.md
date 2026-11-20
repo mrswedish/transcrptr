@@ -50,7 +50,7 @@ Allt är **per användare**. Inget skrivs till maskingemensamma platser.
 | **Ordlistor** | `%APPDATA%\com.patriksvensk.transcrptr\ordlistor.json` | kB | En fil med alla ordlistor. Kan säkerhetskopieras. Se §3. |
 | **Loggfil** | `%LOCALAPPDATA%\com.patriksvensk.transcrptr\transcrptr.log` (och `.old.log`) | Max **4 MB** (roteras var 7:e dag eller vid 2 MB) | Diagnostik. Ligger i Local eftersom den är maskinspecifik och inte bör roama. |
 | **Inställningar** (localStorage) | `%LOCALAPPDATA%\com.patriksvensk.transcrptr\EBWebView\Default\Local Storage\` | Några MB | WebView2:s egen lagring. Se §3. |
-| **Inspelningar** | Användarvald mapp, eller default bredvid programfilen (`<mapp med .exe>\Transkribera-Inspelningar\`). Om mappen är skrivskyddad (t.ex. `C:\Program Files`) eller ligger på en nätverksdisk (UNC eller mappad enhet, från v2.4.2) faller appen automatiskt tillbaka till `%LOCALAPPDATA%\com.patriksvensk.transcrptr\Transkribera-Inspelningar\`. | **~115 MB per timme** | Medvetet nära användaren när det går, med skrivbar fallback för MSI-installationer. |
+| **Inspelningar** | Användarvald mapp, eller default bredvid programfilen (`<mapp med .exe>\Transkribera-Inspelningar\`). Om mappen är skrivskyddad (t.ex. `C:\Program Files`) eller ligger på en nätverksdisk (UNC eller mappad enhet, från v2.4.3) faller appen automatiskt tillbaka till `%LOCALAPPDATA%\com.patriksvensk.transcrptr\Transkribera-Inspelningar\`. | **~115 MB per timme** | Medvetet nära användaren när det går, med skrivbar fallback för MSI-installationer. |
 | **Exporterad text/ljud** | Där användaren väljer i spardialogen | Varierar | Användarstyrt. |
 
 ### Sessionsmappar
@@ -238,7 +238,7 @@ skiljer sig åt enligt tabellen nedan; rekommendationen är NSIS-setup.
 
 ### MSI-installation och skrivskyddade programkataloger
 
-Standardmappen för inspelningar utgår från mappen där programfilen ligger, men verifieras med ett skrivtest vid uppstart. Vid MSI-installation i `C:\Program Files\Transkribera\` är mappen skrivskyddad för vanliga användare, varpå appen automatiskt faller tillbaka till `%LOCALAPPDATA%\com.patriksvensk.transcrptr\Transkribera-Inspelningar\`. Samma fallback gäller från v2.4.2 när programfilen ligger på en nätverksdisk (UNC-sökväg eller mappad nätverksenhet, `GetDriveTypeW` = `DRIVE_REMOTE`).
+Standardmappen för inspelningar utgår från mappen där programfilen ligger, men verifieras med ett skrivtest vid uppstart. Vid MSI-installation i `C:\Program Files\Transkribera\` är mappen skrivskyddad för vanliga användare, varpå appen automatiskt faller tillbaka till `%LOCALAPPDATA%\com.patriksvensk.transcrptr\Transkribera-Inspelningar\`. Samma fallback gäller från v2.4.3 när programfilen ligger på en nätverksdisk (UNC-sökväg eller mappad nätverksenhet, `GetDriveTypeW` = `DRIVE_REMOTE`).
 
 ---
 
@@ -331,7 +331,7 @@ Det är den enda vägen för JavaScript att nå filsystem eller ljudenheter.
 som kan krascha hårt. Utan detta skulle en segfault ta ner hela programmet.
 
 **`catch_unwind` fångar bara Rust-panik**, inte inbyggda krascher (åtkomstfel i en drivrutin,
-otillåten instruktion). Därför finns från v2.4.2 tre lager till:
+otillåten instruktion). Därför finns från v2.4.3 tre lager till:
 
 - **Kraschloggning** (`logging.rs install_crash_logging`): en panikhook och ett Windows-undantagsfilter
   (`SetUnhandledExceptionFilter`) skriver `KRASCH: undantag 0x<kod> på adress … i <modul>` till

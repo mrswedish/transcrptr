@@ -165,7 +165,7 @@ Du kan söka manuellt eller stänga av den automatiska kontrollen under **Instä
 
 Pianissimo ("Snabbast") använder inte grafikkortet, så det här gäller bara **Whisper-modellerna** (Noggrann och Flera språk). Det enklaste är då att byta till **Snabbast** under Inställningar → Modell.
 
-Sedan v2.4.2 skyddar appen sig själv på tre sätt:
+Sedan v2.4.3 skyddar appen sig själv på tre sätt:
 
 - **Kraschvakt:** dör appen mitt i en transkribering visar den en rad om det vid nästa start, och har Whisper kört på grafikkortet stängs GPU-acceleration av automatiskt.
 - **Intel-grafik:** på datorer som bara har Intel-grafik kör Whisper på processorn som standard, eftersom Intels Vulkan-drivrutiner har kraschat Whisper. Det går att slå på under Inställningar → Avancerat.
@@ -183,7 +183,7 @@ Om problemet kvarstår: öppna **Inställningar → Felsökning**, tryck **Kopie
 
 Sökvägen under **Inställningar → Inspelningar → Mapp** används både som **streamningsmapp** under inspelning och som plats för den färdiga `recording.wav`. Varje inspelning får en egen undermapp (`inspelning-ÅÅÅÅMMDD-TTMMSS`). Som standard används mappen `Transkribera-Inspelningar` bredvid `Transkribera-portable.exe` (vanligen i din Downloads-mapp), eftersom företagsdatorer ofta omdirigerar Documents till en nätverksdisk, vilket gör skrivningar där långsamma och riskabla under långa inspelningar.
 
-Ligger programfilen på en **nätverksdisk** (till exempel ett skrivbord som omdirigerats till `\\server\...`) sparas inspelningarna sedan v2.4.2 i stället lokalt i `%LOCALAPPDATA%\com.patriksvensk.transcrptr\Transkribera-Inspelningar`. Tidigare inspelningar ligger kvar där de var, och appen säger en gång var de finns. Väljer du själv en mapp på nätverket visas en varning under mappvalet.
+Ligger programfilen på en **nätverksdisk** (till exempel ett skrivbord som omdirigerats till `\\server\...`) sparas inspelningarna sedan v2.4.3 i stället lokalt i `%LOCALAPPDATA%\com.patriksvensk.transcrptr\Transkribera-Inspelningar`. Tidigare inspelningar ligger kvar där de var, och appen säger en gång var de finns. Väljer du själv en mapp på nätverket visas en varning under mappvalet.
 
 **Tips:** Välj alltid en lokal mapp (t.ex. `C:\Users\<dittnamn>\Downloads`) — undvik UNC-paths (`\\server\...`) eftersom skrivningar mot nätverksdisk under pågående inspelning kan hänga och tappa hela inspelningen. Lägg också helst själva `Transkribera-portable.exe` i Hämtade filer och bara en **genväg** på skrivbordet.
 
