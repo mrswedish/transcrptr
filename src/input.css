@@ -210,6 +210,18 @@ body {
   .model-row.is-active { border-color: rgb(var(--c-primary)); background: rgb(var(--c-tone)); }
   .model-row.is-clickable { cursor: pointer; }
   .model-row.is-clickable:hover { background: rgb(var(--c-tone)); }
+  /* Modellistan: valbar yta + ikonknappar i samma rad */
+  #model-list .model-row, #model-legacy-list .model-row { padding: 0; gap: 0; align-items: stretch; }
+  .model-pick {
+    flex: 1; min-width: 0; text-align: left; padding: 10px 12px; cursor: pointer;
+    color: rgb(var(--c-muted)); background: transparent; border: 0;
+  }
+  .model-row:not(.is-active):hover { background: rgb(var(--c-tone)); }
+  .model-row.is-active .model-pick { cursor: default; color: rgb(var(--c-ink)); }
+  .model-pick:focus-visible { outline: 2px solid rgb(var(--c-primary)); outline-offset: -2px; }
+  .model-status { display: block; margin-top: 4px; font-size: 12px; color: rgb(var(--c-muted)); }
+  .model-status.is-active { color: rgb(var(--c-primary)); font-weight: 600; }
+  .model-actions { display: flex; align-items: center; gap: 2px; padding: 0 6px; flex-shrink: 0; }
 
   /* Dialog */
   .dialog {

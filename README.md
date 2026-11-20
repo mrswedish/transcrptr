@@ -57,7 +57,7 @@ Standardmodellen **Snabbast** är [Pianissimo](https://klang.ai/pianissimo-sv/) 
 
 ## 🖥️ Plattformsstöd
 
-Windows är det stödda målet. Inspelning och mötesljud fungerar bara i Windows-versionen; på Mac pausas utvecklingen tills vidare (filimport och transkribering finns kvar i koden men testas inte).
+Windows är det stödda målet. Inspelning och systemljud fungerar bara i Windows-versionen; på Mac pausas utvecklingen tills vidare (filimport och transkribering finns kvar i koden men testas inte).
 
 ## 📦 Välj rätt modell
 
@@ -110,11 +110,11 @@ Kulturum => Qulturum          ← exakt felstavning som ska bli rätt ord
 
 Listorna ligger i filen `ordlistor.json` i appens datamapp, så de kan säkerhetskopieras.
 
-## 🎙️ Spela in möten — Mötesljud (Windows)
+## 🎙️ Spela in möten — Systemljud (Windows)
 
 Det finns två sätt att spela in både din mikrofon och datorns ljud (Teams, Zoom, Spotify m.fl.):
 
-| | **Spela in mötesljud** *(WASAPI Loopback)* | **Stereo Mix** *(Windows-funktion)* |
+| | **Spela in systemljud** *(WASAPI Loopback)* | **Stereo Mix** *(Windows-funktion)* |
 |---|---|---|
 | **Kräver inställning i Windows** | Nej | Ja (engångsinställning) |
 | **Windows-version** | Windows 7+ | Alla versioner |
@@ -122,11 +122,11 @@ Det finns två sätt att spela in både din mikrofon och datorns ljud (Teams, Zo
 | **Datorns ljud** | Ja | Ja |
 | **Drivrutinsstöd** | Oberoende av hårdvara | Beror på ljudkortet |
 
-### Alternativ 1: Spela in mötesljud (rekommenderas)
+### Alternativ 1: Spela in systemljud (rekommenderas)
 
-Kryssa i **Spela in mötesljud** i huvudfönstret, intill mikrofonvalet, innan du trycker **Spela in**. Det är inte en inställning i kugghjulsmenyn. Transkribera använder **klassisk WASAPI Endpoint Loopback** för att fånga datorns ljud digitalt — oberoende av hårdvara och drivrutiner.
+Kryssa i **Spela in systemljud** i huvudfönstret, intill mikrofonvalet, innan du trycker **Spela in**. Det är inte en inställning i kugghjulsmenyn. Transkribera använder **klassisk WASAPI Endpoint Loopback** för att fånga datorns ljud digitalt — oberoende av hårdvara och drivrutiner.
 
-**Hur det fungerar:** Transkribera lyssnar automatiskt på Windows standardljudenhet (t.ex. hörlurar eller högtalare) **och** på kommunikationsenheten (den enhet Teams, Zoom m.fl. använder). Om de är olika enheter — t.ex. Jabra Speak för möten men inbyggda högtalare för övrigt — fångas båda och mixas automatiskt. Under inspelning står **Mötesljud med** i inspelningsraden, vilket bekräftar att datorns ljud spelas in. Är rutan inte ikryssad visas en påminnelse om att bara din egen mikrofon spelas in.
+**Hur det fungerar:** Transkribera lyssnar automatiskt på Windows standardljudenhet (t.ex. hörlurar eller högtalare) **och** på kommunikationsenheten (den enhet Teams, Zoom m.fl. använder). Om de är olika enheter — t.ex. Jabra Speak för möten men inbyggda högtalare för övrigt — fångas båda och mixas automatiskt. Under inspelning står **Systemljud med** i inspelningsraden, vilket bekräftar att datorns ljud spelas in. Är rutan inte ikryssad visas en påminnelse om att bara din egen mikrofon spelas in.
 
 > [!NOTE]
 > Fungerar från Windows 7 och uppåt — inget behov av en specifik Windows-version.
@@ -136,7 +136,7 @@ Kryssa i **Spela in mötesljud** i huvudfönstret, intill mikrofonvalet, innan d
 
 ### Alternativ 2: Stereo Mix (alternativ metod)
 
-Stereo Mix är en virtuell Windows-enhet som fångar allt systemljud och mixar det med valfri mikrofon. Kräver en engångsinställning i Windows. En guide med steg finns också i appen under **Inställningar → Inspelningar → Hjälp med mötesljud**.
+Stereo Mix är en virtuell Windows-enhet som fångar allt systemljud och mixar det med valfri mikrofon. Kräver en engångsinställning i Windows. En guide med steg finns också i appen under **Inställningar → Inspelningar → Hjälp med systemljud**.
 
 1. **Öppna ljudinställningar:** Högerklicka på ljudikonen i aktivitetsfältet → välj **"Ljudinställningar"**.
 2. **Hitta detaljerade steg:** Scrolla längst ner och klicka på **"Mer ljudinställningar"** (viktigt för Windows 11).
@@ -149,7 +149,7 @@ Stereo Mix är en virtuell Windows-enhet som fångar allt systemljud och mixar d
 > Starta alltid mötet och se till att ljud spelas **innan** du trycker Spela in i Transkribera.
 
 > [!NOTE]
-> Syns inte Stereo Mix? Din dators ljudkort saknar stöd för det. Använd **Spela in mötesljud** i stället.
+> Syns inte Stereo Mix? Din dators ljudkort saknar stöd för det. Använd **Spela in systemljud** i stället.
 
 ## 📥 Ladda ner och installera (Windows)
 
@@ -165,19 +165,27 @@ Du kan söka manuellt eller stänga av den automatiska kontrollen under **Instä
 
 Pianissimo ("Snabbast") använder inte grafikkortet, så det här gäller bara **Whisper-modellerna** (Noggrann och Flera språk). Det enklaste är då att byta till **Snabbast** under Inställningar → Modell.
 
+Sedan v2.4.3 skyddar appen sig själv på tre sätt:
+
+- **Kraschvakt:** dör appen mitt i en transkribering visar den en rad om det vid nästa start, och har Whisper kört på grafikkortet stängs GPU-acceleration av automatiskt.
+- **Intel-grafik:** på datorer som bara har Intel-grafik kör Whisper på processorn som standard, eftersom Intels Vulkan-drivrutiner har kraschat Whisper. Det går att slå på under Inställningar → Avancerat.
+- **Loggad krasch:** loggfilen får en rad `KRASCH: undantag 0x… i <modul>` som visar vilken komponent som föll.
+
 På datorer med **flera grafikkort eller en NPU** (t.ex. laptop med Intel Arc + NVIDIA, eller Intel AI Boost) kan Vulkan välja "fel" grafikkort och appen kraschar tyst när transkriberingen startar. Workaround:
 
 1. Öppna **Inställningar → Avancerat**.
 2. Ange ett **GPU-index** under GPU-acceleration: testa `0`, sedan `1`, sedan `2` osv tills transkriberingen fungerar — detta tvingar Whisper att bara använda just det grafikkortet.
 3. Om inget GPU-index fungerar: sänk **CPU-trådar för Whisper** till **4** och stäng av **GPU-acceleration** — det är långsammare men ska inte krascha.
 
-Om problemet kvarstår: öppna **Inställningar → Avancerat → Öppna loggfil** och skicka loggens innehåll för diagnostik.
+Om problemet kvarstår: öppna **Inställningar → Felsökning**, tryck **Kopiera loggen** och klistra in den i ett mejl. Där finns också **Öppna loggfil**, **Visa i Utforskaren** och filens sökväg.
 
 ### Mapp för inspelningar
 
 Sökvägen under **Inställningar → Inspelningar → Mapp** används både som **streamningsmapp** under inspelning och som plats för den färdiga `recording.wav`. Varje inspelning får en egen undermapp (`inspelning-ÅÅÅÅMMDD-TTMMSS`). Som standard används mappen `Transkribera-Inspelningar` bredvid `Transkribera-portable.exe` (vanligen i din Downloads-mapp), eftersom företagsdatorer ofta omdirigerar Documents till en nätverksdisk, vilket gör skrivningar där långsamma och riskabla under långa inspelningar.
 
-**Tips:** Välj alltid en lokal mapp (t.ex. `C:\Users\<dittnamn>\Downloads`) — undvik UNC-paths (`\\server\...`) eftersom skrivningar mot nätverksdisk under pågående inspelning kan hänga och tappa hela inspelningen.
+Ligger programfilen på en **nätverksdisk** (till exempel ett skrivbord som omdirigerats till `\\server\...`) sparas inspelningarna sedan v2.4.3 i stället lokalt i `%LOCALAPPDATA%\com.patriksvensk.transcrptr\Transkribera-Inspelningar`. Tidigare inspelningar ligger kvar där de var, och appen säger en gång var de finns. Väljer du själv en mapp på nätverket visas en varning under mappvalet.
+
+**Tips:** Välj alltid en lokal mapp (t.ex. `C:\Users\<dittnamn>\Downloads`) — undvik UNC-paths (`\\server\...`) eftersom skrivningar mot nätverksdisk under pågående inspelning kan hänga och tappa hela inspelningen. Lägg också helst själva `Transkribera-portable.exe` i Hämtade filer och bara en **genväg** på skrivbordet.
 
 **Öppna en gammal eller avbruten inspelning:** Klicka **Öppna** i appens överkant. Där ligger en lista över dina senaste inspelningar; välj en så öppnas den. Inspelningar som avbröts (till exempel om appen kraschade) är markerade och återställs automatiskt när du öppnar dem — råspåren mixas ihop till en spelbar inspelning. Vid start visar appen också en rad om den hittar en avbruten inspelning.
 
@@ -215,7 +223,7 @@ Transkribera bygger på **Tauri 2** — en Rust-backend kombinerad med ett webbf
 | **Ordlistor** | `vocabulary.rs` | Lagring i `ordlistor.json` och efterkorrigering av transkriptet |
 | **Ljudavkodning (fil)** | Symphonia (Rust) | Avkodar MP3, M4A/AAC, WAV, OGG, FLAC strömmande, utan JS-heap |
 | **Mikrofon (inspelning)** | Webbläsarens `getUserMedia` + AudioWorklet | Mikrofonljudet skickas som rå binär f32-data till Rust (`append_mic_chunk`) |
-| **Mötesljud (Windows)** | WASAPI Endpoint Loopback | Fångar eConsole + eCommunications, skrivs direkt till disk i Rust |
+| **Systemljud (Windows)** | WASAPI Endpoint Loopback | Fångar eConsole + eCommunications, skrivs direkt till disk i Rust |
 | **WAV-kodning** | hound (Rust) | Skriver 16-bit PCM-WAV direkt till disk |
 | **Frontend** | Vanilla JS + Tailwind CSS 3 | Beroendefritt UI med lokala typsnitt (IBM Plex) och inbyggda ikoner |
 
@@ -235,7 +243,7 @@ Transkribera löser detta genom att flytta all tung bearbetning till Rust:
 
 **Inspelning — direkt till disk:**
 - Allt inspelat material streamas till en sessionsmapp (`inspelning-…`) medan du spelar in, så inget går förlorat vid en krasch.
-- Mikrofonen skrivs till `mic.wav`, mötesljudet till `lb_console.wav` och `lb_comms.wav`. När du stoppar mixas spåren ihop till `recording.wav`.
+- Mikrofonen skrivs till `mic.wav`, systemljudet till `lb_console.wav` och `lb_comms.wav`. När du stoppar mixas spåren ihop till `recording.wav`.
 - Avbryts en inspelning mixas råspåren ihop när du öppnar den i listan över senaste inspelningar.
 
 ### Dataflöde — filimport
@@ -264,7 +272,7 @@ Fil på disk (MP3 / M4A / WAV / OGG / FLAC / …)
 ```
 Mikrofon ──► getUserMedia + AudioWorklet ──► append_mic_chunk ──► mic.wav
                                                                        │
-Mötesljud ─► WASAPI Endpoint Loopback ─────────────────────► lb_console.wav / lb_comms.wav
+Systemljud ─► WASAPI Endpoint Loopback ─────────────────────► lb_console.wav / lb_comms.wav
                                                                        │
                                   stopp: mix + resample ───────────────┘
                                                       │

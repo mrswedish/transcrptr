@@ -58,13 +58,17 @@ jobs:
       - name: Hämta onnxruntime.dll
         shell: pwsh
         run: |
+          # Microsofts officiella NuGet-paket (GitHub-releasen för microsoft/onnxruntime svarade 404
+          # i november 2026). Samma DLL som tidigare: 14 148 680 byte.
           $ver = "1.24.2"
-          $sha = "8e3e9c826375352e29cb2614fe44f3d7a4b0ff7b8028ad7a456af9d949a7e8b0"
-          Invoke-WebRequest "https://github.com/microsoft/onnxruntime/releases/download/v$ver/onnxruntime-win-x64-$ver.zip" -OutFile ort.zip -MaximumRetryCount 5 -RetryIntervalSec 10
-          if ((Get-FileHash ort.zip -Algorithm SHA256).Hash.ToLower() -ne $sha) { throw "Fel kontrollsumma för onnxruntime" }
+          $pkgSha = "782564d3d68e87269ea1812cc94710ad06fe014faf093f01a6f89d0bd58719d3"
+          $dllSha = "114947d633e6844ce3c4b51ef6678f776628571d08a5763859c61642c8dcca9c"
+          Invoke-WebRequest "https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime/$ver/microsoft.ml.onnxruntime.$ver.nupkg" -OutFile ort.zip -MaximumRetryCount 5 -RetryIntervalSec 10
+          if ((Get-FileHash ort.zip -Algorithm SHA256).Hash.ToLower() -ne $pkgSha) { throw "Fel kontrollsumma för onnxruntime-paketet" }
           Expand-Archive ort.zip -DestinationPath ort-extract
           New-Item -ItemType Directory -Force src-tauri/embedded | Out-Null
-          Copy-Item "ort-extract/onnxruntime-win-x64-$ver/lib/onnxruntime.dll" src-tauri/embedded/onnxruntime.dll
+          Copy-Item "ort-extract/runtimes/win-x64/native/onnxruntime.dll" src-tauri/embedded/onnxruntime.dll
+          if ((Get-FileHash src-tauri/embedded/onnxruntime.dll -Algorithm SHA256).Hash.ToLower() -ne $dllSha) { throw "Fel kontrollsumma för onnxruntime.dll" }
           (Get-Item src-tauri/embedded/onnxruntime.dll).Length
 
       - name: Build and Release Tauri App
@@ -78,6 +82,15 @@ jobs:
           CXXFLAGS: /MT
           CMAKE_POLICY_DEFAULT_CMP0091: NEW
           CMAKE_MSVC_RUNTIME_LIBRARY: MultiThreaded
+          # whisper.cpp optimeras annars för byggmaskinens processor (GGML_NATIVE=ON). Har den
+          # AVX-512 kraschar Whisper tyst på datorer utan (de flesta Intel-laptops). Bygg för AVX2,
+          # som alla x86-processorer sedan ca 2013 har. whisper-rs-sys skickar GGML_* till CMake.
+          GGML_NATIVE: 'OFF'
+          GGML_AVX: 'ON'
+          GGML_AVX2: 'ON'
+          GGML_FMA: 'ON'
+          GGML_F16C: 'ON'
+          GGML_AVX512: 'OFF'
         with:
           tagName: transcrptr-v__VERSION__
           releaseName: 'Transkribera v__VERSION__'

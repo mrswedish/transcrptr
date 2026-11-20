@@ -99,6 +99,15 @@ pub(crate) fn vocab_dir(app: AppHandle) -> Result<String, String> {
     Ok(p.parent().map(|d| d.to_string_lossy().to_string()).unwrap_or_default())
 }
 
+/// Öppnar ordlistemappen i Utforskaren (från Rust, se `logging::open_log_file`).
+#[tauri::command]
+pub(crate) fn open_vocab_dir(app: AppHandle) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let dir = vocab_dir(app.clone())?;
+    let _ = std::fs::create_dir_all(&dir);
+    app.opener().open_path(dir, None::<&str>).map_err(|e| format!("Kunde inte öppna mappen: {e}"))
+}
+
 /// Lägger till en rad i en ordlista (eller första aktiva/första listan; skapar "Min ordlista"
 /// om det inte finns någon). Med `alias` blir raden "alias => term".
 #[tauri::command]
